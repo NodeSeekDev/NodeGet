@@ -1,0 +1,17 @@
+[package]
+name = "NodeGet"
+version = "0.0.1"
+edition = "2024"
+description = "Next-generation server monitoring and management tools"
+license = "AGPL-3"
+readme = "README.md"
+repository = "https://github.com/NodeSeekDev/NodeGet"
+categories = ["asynchronous", "command-line-utilities", "network-programming", "os"]
+
+[profile]
+dev = { opt-level = 0, debug = true, debug-assertions = true, overflow-checks = true, lto = false, panic = "unwind", incremental = true, codegen-units = 256, rpath = false }
+release = { opt-level = 3, debug = false, debug-assertions = false, overflow-checks = false, lto = false, panic = "unwind", incremental = false, codegen-units = 16,rpath = false }
+fastest = { inherits = "dev", opt-level = 0, debug = 0, debug-assertions = true, overflow-checks = true, lto = false, panic = "unwind", incremental = true, codegen-units = 512, rpath = false }
+minimal = { inherits = "release", opt-level = "z", lto = true, codegen-units = 1, panic = "abort", debug = false, strip = true, debug-assertions = false, overflow-checks = false }
+
+[dependencies]
