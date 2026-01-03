@@ -15,6 +15,7 @@ use tokio::time::Instant;
 
 mod database;
 mod monitoring;
+mod utils;
 
 #[tokio::main]
 async fn main() {

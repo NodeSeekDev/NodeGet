@@ -1,6 +1,19 @@
 // 若数据量字段中未注明单位，则以字节 (Bytes) 为单位
 // 若速度字段中未注明单位，则以字节每秒 (Bytes per second) 为单位
 
+struct StaticMonitoringDataForDatabase {
+    pub id: u64,
+    pub node_uuid: uuid::Uuid,
+    pub data: StaticMonitoringData,
+    pub time: u128,
+}
+
+struct DynamicMonitoringDataForDatabase {
+    pub id: u64,
+    pub data: DynamicMonitoringData,
+    pub time: u128,
+}
+
 #[derive(Debug, Clone)]
 pub struct StaticMonitoringData {
     pub cpu: StaticCPUData,
@@ -19,7 +32,6 @@ pub struct DynamicMonitoringData {
 
 #[derive(Debug, Clone)]
 pub struct StaticCPUData {
-    // 不变
     pub physical_cores: u64,
     pub logical_cores: u64,
     pub per_core: Vec<StaticPerCpuCoreData>,
