@@ -15,3 +15,17 @@ fastest = { inherits = "dev", opt-level = 0, debug = 0, debug-assertions = true,
 minimal = { inherits = "release", opt-level = "z", lto = true, codegen-units = 1, panic = "abort", debug = false, strip = true, debug-assertions = false, overflow-checks = false }
 
 [dependencies]
+tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+parking_lot = "0.12.5"
+
+# Dependency for system information
+sysinfo = { version = "0.37.2", default-features = false, features = ["multithread", "windows", "disk", "network", "system"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.175"
+heim-virt = "0.1.0-alpha.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+raw-cpuid = "11.5.0"
+netstat2 = "0.11.2"
+windows-sys = { version = "0.61.2", default-features = false, features = ["Win32_Foundation", "Win32_System_ProcessStatus"] }
