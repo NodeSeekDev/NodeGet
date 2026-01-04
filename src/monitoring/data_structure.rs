@@ -3,14 +3,18 @@
 
 use serde::{Deserialize, Serialize};
 
-struct StaticMonitoringDataForDatabase {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaticMonitoringDataForDatabase {
     pub id: u64,
+    pub uuid: uuid::Uuid,
     pub data: StaticMonitoringData,
     pub time: u128,
 }
 
-struct DynamicMonitoringDataForDatabase {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DynamicMonitoringDataForDatabase {
     pub id: u64,
+    pub uuid: uuid::Uuid,
     pub data: DynamicMonitoringData,
     pub time: u128,
 }

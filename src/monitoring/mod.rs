@@ -5,6 +5,7 @@ use tokio::sync::OnceCell;
 use tokio::time::Instant;
 
 pub mod data_structure;
+pub mod database;
 pub mod impls;
 mod network_connections;
 mod process;

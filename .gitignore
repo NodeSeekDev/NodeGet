@@ -3,3 +3,5 @@
 /.idea
 /.env
 /list_all_rs_file.py
+/.venv
+/code.md
