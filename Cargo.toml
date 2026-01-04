@@ -17,6 +17,8 @@ minimal = { inherits = "release", opt-level = "z", lto = true, codegen-units = 1
 [dependencies]
 tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 parking_lot = "0.12.5"
+auto-launch = "0.5"
+dotenvy = "0.15.7"
 
 # Dependency for system information
 sysinfo = { version = "0.37.2", default-features = false, features = ["multithread", "windows", "disk", "network", "system"] }

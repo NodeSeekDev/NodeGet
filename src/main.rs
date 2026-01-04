@@ -14,9 +14,11 @@ use crate::monitoring::data_structure::MonitoringData;
 use tokio::time::Instant;
 
 mod monitoring;
+mod launch;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    app_start()?;
     loop {
         let start = Instant::now();
         let all = MonitoringData::refresh_and_get().await;
@@ -26,4 +28,8 @@ async fn main() {
         println!("Size: {} Bytes", size_of_val(&all));
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
+}
+//app_start for app start action  init config parser args etc...
+fn app_start() -> Result<(), Box<dyn std::error::Error>> {
+    launch::app_launch()
 }
