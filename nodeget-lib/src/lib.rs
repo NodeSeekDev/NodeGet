@@ -11,4 +11,4 @@
 )]
 
 pub mod monitoring;
-mod utils;
+pub mod utils;
