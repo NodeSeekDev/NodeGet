@@ -1,8 +1,5 @@
-use crate::monitoring::data_structure::{
-    DynamicCPUData, DynamicLoadData, DynamicMonitoringData, DynamicNetworkData,
-    DynamicPerCpuCoreData, DynamicPerDiskData, DynamicPerNetworkInterfaceData, DynamicRamData,
-    DynamicSystemData, StaticCPUData, StaticMonitoringData, StaticPerCpuCoreData, StaticSystemData,
-};
+use nodeget_lib::monitoring::data_structure::*;
+use nodeget_lib::monitoring::data_structure::DiskKind::{Hdd, Ssd, Unknown};
 use crate::monitoring::network_connections::calc_connections;
 use crate::monitoring::process::count_processes;
 use crate::monitoring::virtualization_detect::detect_virtualization;
@@ -10,10 +7,15 @@ use crate::monitoring::{refresh_global_disk, refresh_global_network, refresh_glo
 use parking_lot::{Mutex, MutexGuard};
 use sysinfo::{DiskKind, System};
 use tokio::sync::OnceCell;
+
+pub trait Monitor {
+    async fn refresh_and_get() -> Self;
+}
+
 // Monitoring (ALL)
 
-impl StaticMonitoringData {
-    pub async fn get() -> Self {
+impl Monitor for StaticMonitoringData {
+    async fn refresh_and_get() -> Self {
         let system_data = tokio::join!(StaticDataFromSystem::get()).0;
         StaticMonitoringData {
             cpu: system_data.0.clone(),
@@ -22,8 +24,8 @@ impl StaticMonitoringData {
     }
 }
 
-impl DynamicMonitoringData {
-    pub async fn refresh_and_get() -> Self {
+impl Monitor for DynamicMonitoringData {
+    async fn refresh_and_get() -> Self {
         let system_data = tokio::join!(DynamicDataFromSystem::refresh_and_get()).0;
         let handle_disk = tokio::spawn(DataFromDisk::refresh_and_get());
         let handle_network = tokio::spawn(DataFromNetwork::refresh_and_get());
@@ -211,10 +213,10 @@ impl DataFromDisk {
 
                 DynamicPerDiskData {
                     kind: match disk.kind() {
-                        DiskKind::HDD => crate::monitoring::data_structure::DiskKind::Hdd,
-                        DiskKind::SSD => crate::monitoring::data_structure::DiskKind::Ssd,
+                        DiskKind::HDD => Hdd,
+                        DiskKind::SSD => Ssd,
                         DiskKind::Unknown(_) => {
-                            crate::monitoring::data_structure::DiskKind::Unknown
+                            Unknown
                         }
                     },
                     name: disk.name().to_string_lossy().into_owned(),

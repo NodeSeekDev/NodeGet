@@ -1,9 +1,7 @@
 // 若数据量字段中未注明单位，则以字节 (Bytes) 为单位
 // 若速度字段中未注明单位，则以字节每秒 (Bytes per second) 为单位
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StaticMonitoringDataForDatabase {
     pub id: u64,
     pub uuid: uuid::Uuid,
@@ -11,7 +9,7 @@ pub struct StaticMonitoringDataForDatabase {
     pub time: u128,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DynamicMonitoringDataForDatabase {
     pub id: u64,
     pub uuid: uuid::Uuid,
@@ -19,13 +17,13 @@ pub struct DynamicMonitoringDataForDatabase {
     pub time: u128,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StaticMonitoringData {
     pub cpu: StaticCPUData,
     pub system: StaticSystemData,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DynamicMonitoringData {
     pub cpu: DynamicCPUData,
     pub ram: DynamicRamData,
@@ -35,20 +33,20 @@ pub struct DynamicMonitoringData {
     pub network: DynamicNetworkData,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StaticCPUData {
     pub physical_cores: u64,
     pub logical_cores: u64,
     pub per_core: Vec<StaticPerCpuCoreData>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DynamicCPUData {
     pub per_core: Vec<DynamicPerCpuCoreData>,
     pub total_cpu_usage: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StaticPerCpuCoreData {
     pub id: u32,
     pub name: String,
@@ -56,14 +54,14 @@ pub struct StaticPerCpuCoreData {
     pub brand: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DynamicPerCpuCoreData {
     pub id: u32,
     pub cpu_usage: f64,
     pub frequency_mhz: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DynamicRamData {
     pub total_memory: u64,
     pub available_memory: u64,
@@ -72,14 +70,14 @@ pub struct DynamicRamData {
     pub used_swap: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DynamicLoadData {
     pub one: f64,
     pub five: f64,
     pub fifteen: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StaticSystemData {
     pub system_name: String,
     pub system_kernel: String,
@@ -92,21 +90,21 @@ pub struct StaticSystemData {
     pub virtualization: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DynamicSystemData {
     pub boot_time: u64,
     pub uptime: u64,
     pub process_count: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DiskKind {
     Hdd,
     Ssd,
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DynamicPerDiskData {
     pub kind: DiskKind,
     pub name: String,
@@ -120,14 +118,14 @@ pub struct DynamicPerDiskData {
     pub write_speed: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DynamicNetworkData {
     pub interfaces: Vec<DynamicPerNetworkInterfaceData>,
     pub udp_connections: u64,
     pub tcp_connections: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DynamicPerNetworkInterfaceData {
     pub interface_name: String,
     pub total_received: u64,    // 从上次网卡重启开始计算

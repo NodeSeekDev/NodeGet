@@ -4,3 +4,4 @@ version = "0.0.1"
 edition = "2024"
 
 [dependencies]
+uuid = { version = "1.19.0", default-features = false, features = ["std", "fast-rng", "v4"] }
