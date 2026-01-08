@@ -10,12 +10,13 @@
     dead_code
 )]
 
-use nodeget_lib::monitoring::data_structure::StaticMonitoringData;
+use nodeget_lib::monitoring::data_structure::{DynamicMonitoringData, StaticMonitoringData};
 use monitoring::impls::Monitor;
 
 mod monitoring;
 
 #[tokio::main]
 async fn main() {
-    println!("{:?}", StaticMonitoringData::refresh_and_get().await);
+    println!("{}", miniserde::json::to_string(&StaticMonitoringData::refresh_and_get().await));
+    println!("{}", miniserde::json::to_string(&DynamicMonitoringData::refresh_and_get().await));
 }

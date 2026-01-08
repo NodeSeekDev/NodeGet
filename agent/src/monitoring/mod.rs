@@ -1,13 +1,14 @@
 use parking_lot::Mutex;
 use std::time::Duration;
+use nvml_wrapper::Nvml;
 use sysinfo::{CpuRefreshKind, DiskRefreshKind, Disks, MemoryRefreshKind, Networks, System};
 use tokio::sync::OnceCell;
 use tokio::time::Instant;
 
 pub mod impls;
 mod network_connections;
-mod process;
-mod virtualization_detect;
+mod gpu;
+mod system_impls;
 // System
 
 static GLOBAL_SYSTEM: OnceCell<Mutex<System>> = OnceCell::const_new();
@@ -100,4 +101,17 @@ async fn refresh_global_network() -> Duration {
 
     *last_time = now;
     interval
+}
+
+// GPU
+
+static GLOBAL_GPU: OnceCell<Mutex<Nvml>> = OnceCell::const_new();
+
+async fn get_global_gpu() -> &'static Mutex<Nvml> {
+    GLOBAL_GPU
+        .get_or_init(|| async {
+            let nvml = Nvml::init().expect("Failed to initialize GPU Nvml");
+            Mutex::new(nvml)
+        })
+        .await
 }

@@ -9,9 +9,11 @@ nodeget-lib = { path = "../nodeget-lib", features = ["for-agent"] }
 tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 parking_lot = "0.12.5"
 uuid = { version = "1.19.0", default-features = false, features = ["std", "fast-rng", "v4"] }
+miniserde = "0.1.45"
 
 # Dependency for system information
 sysinfo = { version = "0.37.2", default-features = false, features = ["multithread", "windows", "disk", "network", "system"] }
+nvml-wrapper = "0.11.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.175"
