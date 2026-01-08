@@ -28,6 +28,7 @@ pub struct DynamicMonitoringDataForDatabase {
 pub struct StaticMonitoringData {
     pub cpu: StaticCPUData,
     pub system: StaticSystemData,
+    pub gpu: Vec<StaticGpuData>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -38,6 +39,7 @@ pub struct DynamicMonitoringData {
     pub system: DynamicSystemData,
     pub disk: Vec<DynamicPerDiskData>,
     pub network: DynamicNetworkData,
+    pub gpu: Vec<DynamicGpuData>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -139,4 +141,26 @@ pub struct DynamicPerNetworkInterfaceData {
     pub total_transmitted: u64, // 从上次网卡重启开始计算
     pub receive_speed: u64,
     pub transmit_speed: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StaticGpuData {
+    pub id: u32,
+    pub name: String,
+    pub cuda_cores: u64, // 对于非 NVIDIA 显卡，该值为 0
+    pub architecture: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DynamicGpuData {
+    pub id: u32,
+    pub used_memory: u64,
+    pub total_memory: u64,
+    pub graphics_clock_mhz: u64,
+    pub sm_clock_mhz: u64, // NV: Streaming Multiprocessor; AMD: Compute Unit
+    pub memory_clock_mhz: u64,
+    pub video_clock_mhz: u64,
+    pub utilization_gpu: u8, // GPU 占用率百分比
+    pub utilization_memory: u8, // 显存使用率百分比 (不是显存占用率，反应内存读写频率的数值)
+    pub temperature: u8,       // 摄氏度
 }
