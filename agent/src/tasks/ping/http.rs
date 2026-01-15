@@ -1,5 +1,5 @@
-use awc::error::SendRequestError;
 use awc::Client;
+use awc::error::SendRequestError;
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
 use tokio::sync::OnceCell;

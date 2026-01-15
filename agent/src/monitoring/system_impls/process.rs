@@ -1,7 +1,7 @@
 #[cfg(target_os = "windows")]
 pub fn count_processes() -> u32 {
     use windows_sys::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
-    use windows_sys::Win32::Foundation::{GetLastError, FALSE};
+    use windows_sys::Win32::Foundation::{FALSE, GetLastError};
     use windows_sys::Win32::System::ProcessStatus::EnumProcesses;
     // 初始缓冲区容量
     let mut mut_process_ids_capacity = 1024;

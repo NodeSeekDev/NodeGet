@@ -18,7 +18,7 @@ pub fn calc_connections() -> (u64, u64) {
 
 #[cfg(target_os = "windows")]
 pub fn calc_connections() -> (u64, u64) {
-    use netstat2::{iterate_sockets_info_without_pids, ProtocolFlags, ProtocolSocketInfo};
+    use netstat2::{ProtocolFlags, ProtocolSocketInfo, iterate_sockets_info_without_pids};
 
     iterate_sockets_info_without_pids(ProtocolFlags::TCP | ProtocolFlags::UDP)
         .ok()

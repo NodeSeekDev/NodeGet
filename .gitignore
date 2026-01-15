@@ -1,8 +1,9 @@
 target/
-test.db/
+test.db
 .idea/
 .env
 .DS_Store
 *.iml
 .vscode/
 Thumbs.db
+list_all_rs_file.py

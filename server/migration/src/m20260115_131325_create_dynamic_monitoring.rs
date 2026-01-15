@@ -9,37 +9,57 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(StaticMonitoringInDatabase::Table)
+                    .table(DynamicMonitoringInDatabase::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(StaticMonitoringInDatabase::Id)
+                        ColumnDef::new(DynamicMonitoringInDatabase::Id)
                             .big_integer()
                             .not_null()
                             .auto_increment()
                             .primary_key(),
                     )
                     .col(
-                        ColumnDef::new(StaticMonitoringInDatabase::Uuid)
+                        ColumnDef::new(DynamicMonitoringInDatabase::Uuid)
                             .string()
                             .not_null(),
                     )
                     .col(
-                        ColumnDef::new(StaticMonitoringInDatabase::Timestamp)
+                        ColumnDef::new(DynamicMonitoringInDatabase::Timestamp)
                             .big_integer()
                             .not_null(),
                     )
                     .col(
-                        ColumnDef::new(StaticMonitoringInDatabase::CpuData)
+                        ColumnDef::new(DynamicMonitoringInDatabase::CpuData)
                             .json_binary()
                             .not_null(),
                     )
                     .col(
-                        ColumnDef::new(StaticMonitoringInDatabase::SystemData)
+                        ColumnDef::new(DynamicMonitoringInDatabase::RamData)
                             .json_binary()
                             .not_null(),
                     )
                     .col(
-                        ColumnDef::new(StaticMonitoringInDatabase::GpuData)
+                        ColumnDef::new(DynamicMonitoringInDatabase::LoadData)
+                            .json_binary()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(DynamicMonitoringInDatabase::SystemData)
+                            .json_binary()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(DynamicMonitoringInDatabase::DiskData)
+                            .json_binary()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(DynamicMonitoringInDatabase::NetworkData)
+                            .json_binary()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(DynamicMonitoringInDatabase::GpuData)
                             .json_binary()
                             .not_null(),
                     )
@@ -52,7 +72,7 @@ impl MigrationTrait for Migration {
         manager
             .drop_table(
                 Table::drop()
-                    .table(StaticMonitoringInDatabase::Table)
+                    .table(DynamicMonitoringInDatabase::Table)
                     .to_owned(),
             )
             .await
@@ -60,14 +80,18 @@ impl MigrationTrait for Migration {
 }
 
 #[derive(DeriveIden)]
-enum StaticMonitoringInDatabase {
-    #[sea_orm(iden = "static_monitoring")]
+enum DynamicMonitoringInDatabase {
+    #[sea_orm(iden = "dynamic_monitoring")]
     Table,
     Id,
     Uuid,
     Timestamp,
 
     CpuData,
+    RamData,
+    LoadData,
     SystemData,
+    DiskData,
+    NetworkData,
     GpuData,
 }

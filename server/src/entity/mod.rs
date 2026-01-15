@@ -2,4 +2,5 @@
 
 pub mod prelude;
 
+pub mod dynamic_monitoring;
 pub mod static_monitoring;

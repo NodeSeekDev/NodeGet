@@ -9,6 +9,7 @@ nodeget-lib = { path = "../nodeget-lib", features = ["for-agent"] }
 
 # Asynchronous runtime
 tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time", "net"] }
+futures = "0.3.31"
 
 # Synchronization primitives
 parking_lot = "0.12.5"
@@ -18,7 +19,8 @@ rustls = { version = "0.23.36", default-features = false, features = ["log", "ri
 webpki-roots = "1.0.5"
 
 # Http Client
-awc = { version = "3.8.1", default-features = false, features = ["compress-gzip", "rustls-0_23-webpki-roots", "hickory-dns", ] }
+awc = { version = "3.8.1", default-features = false, features = ["compress-gzip", "rustls-0_23-webpki-roots", "hickory-dns"] }
+tokio-tungstenite = { version = "0.28.0", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
 
 # Json
 miniserde = "0.1.45"
