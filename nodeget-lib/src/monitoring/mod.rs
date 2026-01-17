@@ -1,2 +1,4 @@
 pub mod data_structure;
-// mod report;
+
+#[cfg(feature = "for-server")]
+pub mod query;

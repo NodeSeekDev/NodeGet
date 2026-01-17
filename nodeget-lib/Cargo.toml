@@ -10,6 +10,7 @@ machine-uid = "0.5.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
 toml = { version = "0.9.11", default-features = false, features = ["std", "serde", "parse"] }
+#strum = { version = "0.27.2", default-features = false, features = ["std", "derive"] }
 
 [features]
 for-agent = []

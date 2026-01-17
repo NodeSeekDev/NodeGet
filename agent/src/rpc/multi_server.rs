@@ -4,12 +4,12 @@ use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
 use log::{debug, error, info, warn};
+use nodeget_lib::config::agent::Server;
 use tokio::net::TcpStream;
 use tokio::sync::{OnceCell, RwLock, broadcast, mpsc};
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
-use nodeget_lib::config::agent::Server;
 
 // 句柄
 pub struct ServerHandle {
