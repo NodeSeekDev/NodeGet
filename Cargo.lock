@@ -2268,13 +2268,16 @@ name = "nodeget-server"
 version = "0.0.1"
 dependencies = [
  "jsonrpsee",
+ "log",
  "migration",
  "nodeget-lib",
  "parking_lot",
  "sea-orm",
  "serde",
  "serde_json",
+ "simple_logger",
  "tokio",
+ "toml 0.9.11+spec-1.1.0",
  "uuid",
 ]
 

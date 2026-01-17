@@ -16,19 +16,32 @@ use jsonrpsee::server::ServerBuilder;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{Database, DatabaseConnection};
 use std::net::SocketAddr;
+use std::str::FromStr;
+use log::{info, Level};
 use tokio::sync::OnceCell;
+use crate::config::ServerConfig;
 
 mod entity;
 mod rpc;
+mod config;
 
 static DB: OnceCell<DatabaseConnection> = OnceCell::const_new();
 
 #[tokio::main]
 async fn main() {
+    println!("Starting nodeget-server");
+
+    let config = ServerConfig::get_and_parse_config("./config.toml.example")
+        .await
+        .unwrap();
+
+    simple_logger::init_with_level(Level::from_str(&config.log_level).unwrap()).unwrap();
+
+    info!("Starting nodeget-server with config: {config:?}");
+
     let _db = DB
         .get_or_init(|| async {
-            let db_url = "sqlite://test.db?mode=rwc";
-            let db = Database::connect(db_url).await.unwrap();
+            let db = Database::connect(config.database_url).await.unwrap();
             println!("Database connected.");
             Migrator::up(&db, None).await.unwrap();
             println!("Migrations applied successfully.");
@@ -37,7 +50,7 @@ async fn main() {
         .await;
 
     let server = ServerBuilder::default()
-        .build("127.0.0.1:3000".parse::<SocketAddr>().unwrap())
+        .build(config.ws_listener.parse::<SocketAddr>().unwrap())
         .await
         .unwrap();
 

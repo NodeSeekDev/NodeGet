@@ -1,0 +1,6 @@
+log_level = "debug"
+monitoring_report_interval_ms = 1000
+
+server_uuid = "server_uuid"
+database_url = "sqlite://test.db?mode=rwc"
+ws_listener = "0.0.0.0:3000"
