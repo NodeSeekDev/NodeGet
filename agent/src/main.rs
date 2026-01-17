@@ -42,8 +42,13 @@ async fn main() {
 
     rpc::multi_server::init_connections(AGENT_CONFIG.get().unwrap().server.clone().unwrap());
 
-    tokio::join!(
-        handle_static_monitoring_data_report(),
-        handle_dynamic_monitoring_data_report()
-    );
+    tokio::spawn(async {
+        handle_static_monitoring_data_report().await;
+    });
+
+    tokio::spawn(async {
+        handle_dynamic_monitoring_data_report().await;
+    });
+
+    tokio::signal::ctrl_c().await.unwrap();
 }
