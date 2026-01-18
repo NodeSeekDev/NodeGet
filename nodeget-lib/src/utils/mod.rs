@@ -1,4 +1,6 @@
 use log::{error, warn};
+use rand::{rng, Rng};
+use rand::distr::Alphanumeric;
 
 pub mod error_message;
 pub mod version;
@@ -13,6 +15,14 @@ pub fn get_local_timestamp_ms() -> u64 {
         .unwrap_or(std::time::Duration::ZERO);
     let millis = duration.as_millis();
     u64::try_from(millis).unwrap_or(0)
+}
+
+pub fn generate_random_string(len: usize) -> String {
+    rng()
+        .sample_iter(&Alphanumeric)
+        .take(len)
+        .map(char::from)
+        .collect()
 }
 
 // Windows / MacOS / Linux 下的唯一 UUID 生成器，在同一系统下不变

@@ -1,6 +1,6 @@
 log_level = "debug"
 ws_listener = "0.0.0.0:3000"
-server_uuid = "875089ec-4efd-4255-8212-04bb6b11585e"
+server_uuid = "auto_gen"
 
 database = {
     database_url = "postgres://user:pass@host:5432/nodeget",

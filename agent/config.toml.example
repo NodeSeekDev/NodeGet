@@ -1,7 +1,7 @@
 log_level = "debug"
 monitoring_report_interval_ms = 1000
 
-agent_uuid = "f60aff7e-759a-4490-b772-22b484befda5"
+agent_uuid = "auto_gen"
 connect_timeout_ms = 1000
 
 [[server]]

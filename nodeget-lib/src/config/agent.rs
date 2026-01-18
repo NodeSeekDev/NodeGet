@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use crate::config::deserialize_uuid_or_auto;
 use tokio::fs;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -7,6 +8,7 @@ pub struct AgentConfig {
     pub log_level: String,
     pub monitoring_report_interval_ms: Option<u64>,
 
+    #[serde(deserialize_with = "deserialize_uuid_or_auto")]
     pub agent_uuid: uuid::Uuid,
     pub connect_timeout_ms: Option<u64>, // ms
     pub server: Option<Vec<Server>>,
@@ -15,7 +17,7 @@ pub struct AgentConfig {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Server {
     pub name: String, // Only For Agent
-    pub uuid: String,
+    pub uuid: uuid::Uuid,
     pub token: String,
     pub ws_url: String,
 

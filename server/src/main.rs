@@ -12,6 +12,7 @@
 use crate::db_connection::init_db_connection;
 use crate::rpc::agent::RpcServer as AgentRpcServer;
 use crate::rpc::nodeget::RpcServer as NodegetRpcServer;
+use crate::rpc::task::{RpcServer, TaskManager};
 use jsonrpsee::server::ServerBuilder;
 use log::{Level, info};
 use nodeget_lib::config::server::ServerConfig;
@@ -52,8 +53,18 @@ async fn main() {
         .await
         .unwrap();
 
+    let task_manager = TaskManager::new();
+
     let mut module = rpc::nodeget::NodegetServerRpcImpl.into_rpc();
     module.merge(rpc::agent::AgentRpcImpl.into_rpc()).unwrap();
+    module
+        .merge(
+            rpc::task::TaskRpcImpl {
+                manager: task_manager.clone(),
+            }
+            .into_rpc(),
+        )
+        .unwrap();
 
     let handle = server.start(module);
     handle.stopped().await;

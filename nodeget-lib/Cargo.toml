@@ -11,6 +11,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
 toml = { version = "0.9.11", default-features = false, features = ["std", "serde", "parse"] }
 log = { version = "0.4.29", default-features = false, features = ["std", "serde"] }
+url = { version = "2.5.8", default-features = false, features = ["std", "serde"] }
+rand = { version = "0.9.2", default-features = false, features = ["std", "log"] }
 
 [features]
 for-agent = []

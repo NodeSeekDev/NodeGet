@@ -104,22 +104,17 @@ pub async fn query_static(_token: String, data: Value) -> Value {
 
 pub async fn query_dynamic(_token: String, data: Value) -> Value {
     let process_logic = async {
-        // 1. 获取数据库连接
         let db = AgentRpcImpl::get_db()?;
 
-        // 2. 解析请求参数
         let query_req: DynamicDataQuery = from_value(data).map_err(|e| {
             error!("Unable to parse dynamic query data: {e}");
             (101, format!("Unable to parse dynamic query data: {e}"))
         })?;
 
-        // 3. 开始构建查询
         let mut query = dynamic_monitoring::Entity::find();
 
-        // 用于标记是否包含 "Last" 条件
         let mut is_last = false;
 
-        // 4. 应用过滤条件
         for cond in query_req.condition {
             match cond {
                 QueryCondition::Uuid(uuid) => {
@@ -144,7 +139,6 @@ pub async fn query_dynamic(_token: String, data: Value) -> Value {
             }
         }
 
-        // 5. 处理排序和 Limit
         if is_last {
             // 取最新的一条
             query = query
@@ -155,13 +149,11 @@ pub async fn query_dynamic(_token: String, data: Value) -> Value {
             query = query.order_by(dynamic_monitoring::Column::Timestamp, Order::Asc);
         }
 
-        // 6. 执行查询
         let models = query.all(db).await.map_err(|e| {
             error!("Database query error: {e}");
             (103, format!("Database query error: {e}"))
         })?;
 
-        // 7. 映射结果字段
         let result_list: Vec<Value> = models
             .into_iter()
             .map(|model| {
@@ -173,7 +165,6 @@ pub async fn query_dynamic(_token: String, data: Value) -> Value {
                     Value::Number(model.timestamp.into()),
                 );
 
-                // 根据请求的 fields 填充数据
                 for field in &query_req.fields {
                     match field {
                         DynamicDataQueryField::Cpu => {

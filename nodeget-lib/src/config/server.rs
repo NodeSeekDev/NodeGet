@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use crate::config::deserialize_uuid_or_auto;
 use tokio::fs;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServerConfig {
     pub log_level: String,
+    #[serde(deserialize_with = "deserialize_uuid_or_auto")]
     pub server_uuid: uuid::Uuid,
     pub ws_listener: String,
     pub database: DatabaseConfig,
