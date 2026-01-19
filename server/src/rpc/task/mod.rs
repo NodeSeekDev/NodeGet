@@ -1,0 +1,148 @@
+mod create_upload_task;
+mod query;
+
+use crate::entity::task;
+use crate::rpc::RpcHelper;
+use jsonrpsee::PendingSubscriptionSink;
+use jsonrpsee::SubscriptionMessage;
+use jsonrpsee::core::{JsonRawValue, SubscriptionResult};
+use jsonrpsee::proc_macros::rpc;
+use log::{debug, error, info};
+use migration::async_trait::async_trait;
+use nodeget_lib::task::TaskEventType;
+use nodeget_lib::task::{TaskEvent, TaskEventResponse};
+use nodeget_lib::utils::error_message::generate_error_message;
+use nodeget_lib::utils::generate_random_string;
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set};
+use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{RwLock, mpsc};
+use uuid::Uuid;
+
+#[rpc(server, namespace = "task")]
+pub trait Rpc {
+    #[subscription(name = "register_task", item = TaskEvent, unsubscribe = "unregister_task")]
+    async fn register_task(&self, uuid: Uuid) -> SubscriptionResult;
+
+    #[method(name = "create_task")]
+    async fn create_task(
+        &self,
+        token: String,
+        target_uuid: Uuid,
+        task_type: TaskEventType,
+    ) -> Value;
+
+    #[method(name = "upload_task_result")]
+    async fn upload_task_result(&self, token: String, task_response: TaskEventResponse) -> Value;
+
+    #[method(name = "query")]
+    async fn query(&self, token: String, data: Value) -> Value;
+}
+
+pub struct TaskRpcImpl {
+    pub manager: TaskManager,
+}
+
+impl RpcHelper for TaskRpcImpl {}
+
+#[async_trait]
+impl RpcServer for TaskRpcImpl {
+    async fn create_task(&self, token: String, target_uuid: Uuid, task_type: TaskEventType) -> Value {
+        create_upload_task::create_task(&self.manager, token, target_uuid, task_type).await
+    }
+
+    async fn upload_task_result(&self, token: String, task_response: TaskEventResponse) -> Value {
+        create_upload_task::upload_task_result(token, task_response).await
+    }
+
+    async fn query(&self, token: String, data: Value) -> Value  {
+        query::query(token, data).await
+    }
+
+    async fn register_task(
+        &self,
+        subscription_sink: PendingSubscriptionSink,
+        uuid: Uuid,
+    ) -> SubscriptionResult {
+        let sink = subscription_sink.accept().await?;
+        let (tx, mut rx) = mpsc::channel(32);
+        let reg_id = Uuid::new_v4();
+
+        self.manager.add_session(uuid, reg_id, tx).await;
+
+        let manager_clone = self.manager.clone();
+        let uuid_clone = uuid;
+        let reg_id_clone = reg_id;
+
+        tokio::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                let json_str = match serde_json::to_string(&msg) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("Failed to serialize task event: {e}");
+                        break;
+                    }
+                };
+
+                let Ok(raw_value) = JsonRawValue::from_string(json_str) else {
+                    error!("Failed to create JsonRawValue");
+                    break;
+                };
+
+                let sub_msg = SubscriptionMessage::from(raw_value);
+
+                if sink.send(sub_msg).await.is_err() {
+                    break;
+                }
+            }
+
+            manager_clone
+                .remove_session(&uuid_clone, &reg_id_clone)
+                .await;
+            info!("Client {uuid_clone} (RegID: {reg_id_clone}) disconnected, logic handled.");
+        });
+
+        Ok(())
+    }
+}
+
+// Task 连接池
+#[derive(Clone)]
+pub struct TaskManager {
+    peers: Arc<RwLock<HashMap<Uuid, (Uuid, mpsc::Sender<TaskEvent>)>>>,
+}
+
+impl TaskManager {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            peers: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub async fn add_session(&self, uuid: Uuid, reg_id: Uuid, tx: mpsc::Sender<TaskEvent>) {
+        self.peers.write().await.insert(uuid, (reg_id, tx));
+    }
+
+    pub async fn remove_session(&self, uuid: &Uuid, reg_id: &Uuid) {
+        let mut peers = self.peers.write().await;
+
+        if let Some((current_reg_id, _)) = peers.get(uuid)
+            && current_reg_id == reg_id {
+                peers.remove(uuid);
+            }
+    }
+
+    pub async fn send_event(&self, uuid: Uuid, event: TaskEvent) -> Result<(), (u32, String)> {
+        let peers = self.peers.read().await;
+
+        if let Some((_, tx)) = peers.get(&uuid) {
+            tx.send(event)
+                .await
+                .map_err(|_| (104, "Error sending event".to_string()))
+        } else {
+            Err((106, "Uuid not found".to_string()))
+        }
+    }
+}

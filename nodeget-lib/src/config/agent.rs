@@ -29,6 +29,7 @@ pub struct Server {
 
     pub allow_web_shell: Option<bool>,
     pub allow_edit_config: Option<bool>, // Dangerous
+    pub allow_execute: Option<bool>, // Dangerous
 }
 
 impl AgentConfig {
