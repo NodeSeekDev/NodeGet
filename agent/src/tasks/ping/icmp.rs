@@ -67,10 +67,7 @@ pub async fn ping_target(target: String) -> Result<std::time::Duration, String> 
         },
     };
 
-    let target = match target_ip {
-        None => return Err("Invalid target".to_string()),
-        Some(ip) => ip,
-    };
+    let Some(target) = target_ip else { return Err("Invalid target".to_string()) };
 
     if target.is_ipv4() {
         match ping_v4_target(target).await {

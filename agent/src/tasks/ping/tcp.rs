@@ -8,17 +8,14 @@ static PING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub async fn tcping_target(target: String) -> Result<std::time::Duration, String> {
     let target_host = match lookup_host(target).await {
-        Ok(mut addrs) => addrs.next().map(|e| e),
+        Ok(mut addrs) => addrs.next(),
         Err(e) => {
             error!("Resolving host error: {e}");
             None
         }
     };
 
-    let target = match target_host {
-        None => return Err("Invalid target".to_string()),
-        Some(ip) => ip,
-    };
+    let Some(target) = target_host else { return Err("Invalid target".to_string()) };
 
     let start = std::time::Instant::now();
     match timeout(PING_TIMEOUT, TcpStream::connect(target)).await {

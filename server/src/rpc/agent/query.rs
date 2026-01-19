@@ -1,3 +1,5 @@
+// 该文件实现 供给调用者查询 API
+
 use crate::entity::{dynamic_monitoring, static_monitoring};
 use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
@@ -14,6 +16,7 @@ pub async fn query_static(_token: String, data: Value) -> Value {
     let process_logic = async {
         let db = AgentRpcImpl::get_db()?;
 
+        // 解析请求
         let query_req: StaticDataQuery = from_value(data).map_err(|e| {
             error!("Unable to parse query data: {e}");
             (101, format!("Unable to parse query data: {e}"))

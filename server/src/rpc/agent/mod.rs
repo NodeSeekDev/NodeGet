@@ -1,3 +1,6 @@
+// Agent 是 Server Rpc 功能模板，开发请按照本模板进行
+// 该文件仅定义，不实现
+
 mod query;
 mod report;
 

@@ -1,7 +1,7 @@
 use tokio::sync::{Mutex, OnceCell};
 
 static GLOBAL_AGENT: OnceCell<Mutex<ureq::Agent>> = OnceCell::const_new();
-static PING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+static PING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub async fn httping_target(target: url::Url) -> Result<std::time::Duration, String> {
     let agent = GLOBAL_AGENT
