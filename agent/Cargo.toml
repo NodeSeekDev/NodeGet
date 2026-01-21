@@ -8,7 +8,7 @@ edition = "2024"
 nodeget-lib = { path = "../nodeget-lib", features = ["for-agent"] }
 
 # Asynchronous runtime
-tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time", "net", "fs", "signal"] }
+tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time", "net", "fs", "signal", "process"] }
 futures = "0.3.31"
 
 # Logging

@@ -8,15 +8,17 @@ use futures::{SinkExt, StreamExt};
 use log::{debug, error, info, warn};
 use nodeget_lib::config::agent::Server;
 use tokio::net::TcpStream;
-use tokio::sync::{OnceCell, RwLock, broadcast, mpsc};
+use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::{broadcast, mpsc, OnceCell, RwLock};
 use tokio::time::{sleep, timeout};
+use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 // 句柄
 pub struct ServerHandle {
-    tx: mpsc::Sender<Message>,
-    broadcast_tx: broadcast::Sender<Message>,
+    uplink_tx: broadcast::Sender<Message>,
+    downlink_tx: broadcast::Sender<Message>,
 }
 
 // 全局连接池
@@ -27,19 +29,18 @@ pub fn init_connections(servers: Vec<Server>) {
     let mut map = HashMap::new();
 
     for server in servers {
-        // 写通道
-        let (tx, rx) = mpsc::channel::<Message>(32);
-        // 广播通道
-        let (broadcast_tx, _) = broadcast::channel::<Message>(32);
+        let (uplink_tx, uplink_rx) = broadcast::channel::<Message>(32);
+
+        let (downlink_tx, _) = broadcast::channel::<Message>(32);
 
         let handle = ServerHandle {
-            tx,
-            broadcast_tx: broadcast_tx.clone(),
+            uplink_tx,
+            downlink_tx: downlink_tx.clone(),
         };
 
         map.insert(server.name.clone(), Arc::new(handle));
 
-        tokio::spawn(connection_manager(server, rx, broadcast_tx));
+        tokio::spawn(connection_manager(server, uplink_rx, downlink_tx));
     }
 
     if CONNECTION_POOL.set(RwLock::new(map)).is_err() {
@@ -52,8 +53,8 @@ pub fn init_connections(servers: Vec<Server>) {
 /// 连接生命周期维护
 async fn connection_manager(
     server: Server,
-    mut rx: mpsc::Receiver<Message>,
-    broadcast_tx: broadcast::Sender<Message>,
+    mut uplink_rx: broadcast::Receiver<Message>,
+    downlink_tx: broadcast::Sender<Message>,
 ) {
     let name = &server.name;
     let url = &server.ws_url;
@@ -94,24 +95,32 @@ async fn connection_manager(
 
         loop {
             tokio::select! {
-                // Channel -> WebSocket
-                msg_opt = rx.recv() => {
-                    if let Some(msg) = msg_opt {
-                        if let Err(e) = ws_write.send(msg).await {
-                            error!("[{name}] Write error: {e}, triggering reconnect...");
-                            break;
+                // Channel -> WebSocket (上行数据)
+                msg_res = uplink_rx.recv() => {
+                    match msg_res {
+                        Ok(msg) => {
+                            // 正常收到消息，发送给 WebSocket
+                            if let Err(e) = ws_write.send(msg).await {
+                                error!("[{name}] Write error: {e}, triggering reconnect...");
+                                break;
+                            }
                         }
-                    } else {
-                        info!("[{name}] Channel closed, manager task exiting.");
-                        return;
+                        Err(RecvError::Lagged(skipped_count)) => {
+                            warn!("[{name}] Connection lagged, dropped {skipped_count} old messages. Creating space for new data.");
+                            continue;
+                        }
+                        Err(RecvError::Closed) => {
+                            info!("[{name}] Channel closed, manager task exiting.");
+                            return;
+                        }
                     }
                 }
 
-                // WebSocket -> Broadcast Channel
+                // WebSocket -> Broadcast Channel (下行数据)
                 ws_msg_opt = ws_read.next() => {
                     match ws_msg_opt {
                         Some(Ok(msg)) => {
-                            let _ = broadcast_tx.send(msg);
+                            let _ = downlink_tx.send(msg);
                         }
                         Some(Err(e)) => {
                             error!("[{name}] Read error: {e}, triggering reconnect...");
@@ -163,10 +172,10 @@ pub async fn send_to(server_name: &str, msg: Message) -> Result<(), String> {
 
     if let Some(handle) = pool.get(server_name) {
         handle
-            .tx
+            .uplink_tx
             .send(msg)
-            .await
-            .map_err(|_| "Sending channel is closed".to_string())
+            .map(|_| ())
+            .map_err(|_| "Sending channel issue".to_string())
     } else {
         Err(format!("Server not found: {server_name}"))
     }
@@ -180,7 +189,7 @@ pub async fn subscribe_to(server_name: &str) -> Result<broadcast::Receiver<Messa
         .await;
 
     if let Some(handle) = pool.get(server_name) {
-        Ok(handle.broadcast_tx.subscribe())
+        Ok(handle.downlink_tx.subscribe())
     } else {
         Err(format!("Server not found: {server_name}"))
     }

@@ -9,6 +9,7 @@ use tokio::time;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
 pub mod ping;
+mod execute;
 
 pub async fn handle_task() {
     time::sleep(Duration::from_secs(1)).await;
@@ -99,9 +100,12 @@ pub async fn handle_task() {
                                     Err("102: Permission Denied".to_string())
                                 }
                             }
-                            TaskEventType::Execute(_) => {
+                            TaskEventType::Execute(command) => {
                                 if server.allow_execute.unwrap_or(false) {
-                                    todo!()
+                                    match execute::execute_command(command).await {
+                                        Ok(output) => Ok(TaskEventResult::Execute(output)),
+                                        Err(e) => Err(e),
+                                    }
                                 } else {
                                     Err("102: Permission Denied".to_string())
                                 }

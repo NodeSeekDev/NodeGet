@@ -12,6 +12,9 @@ pub struct AgentConfig {
     pub agent_uuid: uuid::Uuid,
     pub connect_timeout_ms: Option<u64>, // ms
     pub server: Option<Vec<Server>>,
+
+    pub exec_shell: Option<String>, // Windows cmd / Others bash or sh
+    pub exec_max_character: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
