@@ -1,6 +1,6 @@
 use crate::entity::task;
-use crate::rpc::RpcHelper;
 use crate::rpc::task::TaskRpcImpl;
+use crate::rpc::RpcHelper;
 use log::error;
 use nodeget_lib::task::query::{TaskDataQuery, TaskQueryCondition};
 use nodeget_lib::utils::error_message::generate_error_message;
@@ -9,7 +9,7 @@ use sea_orm::{
     ColumnTrait, DbBackend, EntityTrait, ExprTrait, Order, QueryFilter,
     QueryOrder, QuerySelect,
 };
-use serde_json::{Map, Value, from_value};
+use serde_json::{from_value, Map, Value};
 
 pub async fn query(_token: String, data: Value) -> Value {
     let process_logic = async {
@@ -26,7 +26,7 @@ pub async fn query(_token: String, data: Value) -> Value {
         for cond in query_req.condition {
             match cond {
                 TaskQueryCondition::TaskId(id) => {
-                    query = query.filter(task::Column::Id.eq(id as i64));
+                    query = query.filter(task::Column::Id.eq(id.cast_signed()));
                 }
 
                 TaskQueryCondition::Uuid(uuid) => {

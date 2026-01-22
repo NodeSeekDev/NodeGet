@@ -1,7 +1,7 @@
 use crate::DB;
 use sea_orm::{ActiveValue, DatabaseConnection, Set};
 use serde::Serialize;
-use serde_json::{Value, to_value};
+use serde_json::{to_value, Value};
 
 pub mod agent;
 pub mod nodeget;

@@ -9,7 +9,7 @@ use log::{debug, error, info, warn};
 use nodeget_lib::config::agent::Server;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::{broadcast, mpsc, OnceCell, RwLock};
+use tokio::sync::{OnceCell, RwLock, broadcast};
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};

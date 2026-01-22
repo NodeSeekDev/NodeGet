@@ -1,6 +1,6 @@
 use crate::entity::task;
-use crate::rpc::RpcHelper;
 use crate::rpc::task::{TaskManager, TaskRpcImpl};
+use crate::rpc::RpcHelper;
 use log::{debug, error};
 use nodeget_lib::task::{TaskEvent, TaskEventResponse, TaskEventType};
 use nodeget_lib::utils::error_message::generate_error_message;
@@ -8,7 +8,7 @@ use nodeget_lib::utils::generate_random_string;
 use sea_orm::ColumnTrait;
 use sea_orm::QueryFilter;
 use sea_orm::{ActiveModelTrait, ActiveValue, EntityTrait, Set};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 pub async fn create_task(

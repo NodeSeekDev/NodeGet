@@ -15,7 +15,9 @@ pub async fn tcping_target(target: String) -> Result<std::time::Duration, String
         }
     };
 
-    let Some(target) = target_host else { return Err("Invalid target".to_string()) };
+    let Some(target) = target_host else {
+        return Err("Invalid target".to_string());
+    };
 
     let start = std::time::Instant::now();
     match timeout(PING_TIMEOUT, TcpStream::connect(target)).await {

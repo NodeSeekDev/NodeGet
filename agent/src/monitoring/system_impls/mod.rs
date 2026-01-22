@@ -20,7 +20,7 @@ static GLOBAL_STATIC_DATA_FROM_SYSTEM: OnceCell<Mutex<StaticDataFromSystem>> =
     OnceCell::const_new();
 
 impl StaticDataFromSystem {
-    pub async fn new() -> StaticDataFromSystem {
+    pub async fn new() -> Self {
         refresh_global_system().await;
         let system_mutex = crate::monitoring::get_global_system().await;
         let system = system_mutex.lock().await;
@@ -38,7 +38,7 @@ impl StaticDataFromSystem {
             .collect::<Vec<_>>();
 
         let logical_cores = per_core.len() as u64;
-        StaticDataFromSystem(
+        Self(
             StaticCPUData {
                 physical_cores: System::physical_core_count().unwrap_or(0) as u64,
                 logical_cores,
@@ -58,9 +58,9 @@ impl StaticDataFromSystem {
         )
     }
 
-    pub async fn get() -> MutexGuard<'static, StaticDataFromSystem> {
+    pub async fn get() -> MutexGuard<'static, Self> {
         let data_mutex = GLOBAL_STATIC_DATA_FROM_SYSTEM
-            .get_or_init(|| async { Mutex::new(StaticDataFromSystem::new().await) })
+            .get_or_init(|| async { Mutex::new(Self::new().await) })
             .await;
 
         data_mutex.lock().await
@@ -94,7 +94,7 @@ impl DynamicDataFromSystem {
             })
             .collect::<Vec<_>>();
 
-        DynamicDataFromSystem(
+        Self(
             DynamicCPUData {
                 per_core,
                 total_cpu_usage: f64::from(system.global_cpu_usage()),
@@ -150,10 +150,10 @@ impl DynamicDataFromSystem {
         self.3.process_count = u64::from(count_processes());
     }
 
-    pub async fn refresh_and_get() -> MutexGuard<'static, DynamicDataFromSystem> {
+    pub async fn refresh_and_get() -> MutexGuard<'static, Self> {
         // 外部调用
         let data_mutex = GLOBAL_DYNAMIC_DATA_FROM_SYSTEM
-            .get_or_init(|| async { Mutex::new(DynamicDataFromSystem::new().await) })
+            .get_or_init(|| async { Mutex::new(Self::new().await) })
             .await;
 
         let mut data = data_mutex.lock().await;

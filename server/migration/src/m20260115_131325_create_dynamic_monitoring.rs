@@ -81,7 +81,7 @@ impl MigrationTrait for Migration {
                         ALTER COLUMN network_data SET COMPRESSION lz4,
                         ALTER COLUMN gpu_data SET COMPRESSION lz4;",
                 )
-                .await?;
+                    .await?;
             }
             DbBackend::Sqlite => {} // todo!()
             _ => {

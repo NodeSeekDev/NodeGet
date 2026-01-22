@@ -21,7 +21,7 @@ impl Monitor for StaticMonitoringData {
     async fn refresh_and_get() -> Self {
         let (system_data, gpu_data) =
             tokio::join!(StaticDataFromSystem::get(), StaticDataFromGpu::get());
-        StaticMonitoringData {
+        Self {
             uuid: AGENT_CONFIG.get().unwrap().agent_uuid.clone().to_string(),
             time: get_local_timestamp_ms(),
 
@@ -55,7 +55,7 @@ impl Monitor for DynamicMonitoringData {
         let disk_data = handle_disk.await.unwrap();
         let network_data = handle_network.await.unwrap();
 
-        DynamicMonitoringData {
+        Self {
             uuid: AGENT_CONFIG.get().unwrap().agent_uuid.clone().to_string(),
             time: get_local_timestamp_ms(),
 
@@ -106,7 +106,7 @@ impl DataFromDisk {
             })
             .collect::<Vec<_>>();
 
-        DataFromDisk(per_disk_vec)
+        Self(per_disk_vec)
     }
 }
 
@@ -134,7 +134,7 @@ impl DataFromNetwork {
 
         let (udp_connections, tcp_connections) = calc_connections();
 
-        DataFromNetwork(DynamicNetworkData {
+        Self(DynamicNetworkData {
             interfaces: network_vec,
             udp_connections,
             tcp_connections,

@@ -1,11 +1,11 @@
 use crate::entity::{dynamic_monitoring, static_monitoring};
-use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
+use crate::rpc::RpcHelper;
 use log::{debug, error};
 use nodeget_lib::monitoring::data_structure::{DynamicMonitoringData, StaticMonitoringData};
 use nodeget_lib::utils::error_message::generate_error_message;
 use sea_orm::{ActiveValue, EntityTrait, Set};
-use serde_json::{Value, from_value, json};
+use serde_json::{from_value, json, Value};
 use std::str::FromStr;
 
 pub async fn report_static(_token: String, data: Value) -> Value {

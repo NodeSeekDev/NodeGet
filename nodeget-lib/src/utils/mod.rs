@@ -1,6 +1,6 @@
 use log::{error, warn};
 use rand::distr::Alphanumeric;
-use rand::{Rng, rng};
+use rand::{rng, Rng};
 
 pub mod error_message;
 pub mod version;

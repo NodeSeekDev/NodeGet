@@ -1,5 +1,5 @@
 use crate::{DB, SERVER_CONFIG};
-use log::{LevelFilter, error, info};
+use log::{error, info, LevelFilter};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectOptions, Database};
 use std::process;
@@ -62,5 +62,5 @@ pub async fn init_db_connection() {
 
         db
     })
-    .await;
+        .await;
 }

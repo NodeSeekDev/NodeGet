@@ -2,10 +2,10 @@ mod create_upload_task;
 mod query;
 
 use crate::rpc::RpcHelper;
-use jsonrpsee::PendingSubscriptionSink;
-use jsonrpsee::SubscriptionMessage;
 use jsonrpsee::core::{JsonRawValue, SubscriptionResult};
 use jsonrpsee::proc_macros::rpc;
+use jsonrpsee::PendingSubscriptionSink;
+use jsonrpsee::SubscriptionMessage;
 use log::{error, info};
 use migration::async_trait::async_trait;
 use nodeget_lib::task::TaskEventType;
@@ -13,7 +13,7 @@ use nodeget_lib::task::{TaskEvent, TaskEventResponse};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
 
 #[rpc(server, namespace = "task")]

@@ -9,12 +9,12 @@ pub struct StaticDataFromGpu(pub Vec<StaticGpuData>);
 static GLOBAL_STATIC_DATA_FROM_GPU: OnceCell<Mutex<StaticDataFromGpu>> = OnceCell::const_new();
 
 impl StaticDataFromGpu {
-    pub async fn new() -> StaticDataFromGpu {
+    pub async fn new() -> Self {
         let nvml_mutex = get_global_gpu().await;
         let nvml_guard = nvml_mutex.lock().await;
 
         let Some(nvml) = &*nvml_guard else {
-            return StaticDataFromGpu(vec![]);
+            return Self(vec![]);
         };
 
         let gpu_count = nvml.device_count().unwrap_or(0);
@@ -31,12 +31,12 @@ impl StaticDataFromGpu {
             })
             .collect::<Vec<_>>();
 
-        StaticDataFromGpu(data)
+        Self(data)
     }
 
-    pub async fn get() -> MutexGuard<'static, StaticDataFromGpu> {
+    pub async fn get() -> MutexGuard<'static, Self> {
         let data_mutex = GLOBAL_STATIC_DATA_FROM_GPU
-            .get_or_init(|| async { Mutex::new(StaticDataFromGpu::new().await) })
+            .get_or_init(|| async { Mutex::new(Self::new().await) })
             .await;
 
         data_mutex.lock().await
@@ -49,12 +49,12 @@ pub struct DynamicDataFromGpu(pub Vec<DynamicGpuData>);
 static GLOBAL_DYNAMIC_DATA_FROM_GPU: OnceCell<Mutex<DynamicDataFromGpu>> = OnceCell::const_new();
 
 impl DynamicDataFromGpu {
-    async fn new() -> DynamicDataFromGpu {
+    async fn new() -> Self {
         let nvml_mutex = get_global_gpu().await;
         let nvml_guard = nvml_mutex.lock().await;
 
         let Some(nvml) = &*nvml_guard else {
-            return DynamicDataFromGpu(vec![]);
+            return Self(vec![]);
         };
 
         let gpu_count = nvml.device_count().unwrap_or(0);
@@ -84,7 +84,7 @@ impl DynamicDataFromGpu {
             })
             .collect::<Vec<_>>();
 
-        DynamicDataFromGpu(data)
+        Self(data)
     }
 
     async fn update(&mut self) {
@@ -127,9 +127,9 @@ impl DynamicDataFromGpu {
         }
     }
 
-    pub async fn refresh_and_get() -> MutexGuard<'static, DynamicDataFromGpu> {
+    pub async fn refresh_and_get() -> MutexGuard<'static, Self> {
         let data_mutex = GLOBAL_DYNAMIC_DATA_FROM_GPU
-            .get_or_init(|| async { Mutex::new(DynamicDataFromGpu::new().await) })
+            .get_or_init(|| async { Mutex::new(Self::new().await) })
             .await;
 
         let mut data = data_mutex.lock().await;

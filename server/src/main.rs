@@ -1,11 +1,11 @@
-#![warn(clippy::all, clippy::pedantic)]
+#![feature(duration_millis_float)]
+#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![allow(
     clippy::cast_sign_loss,
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::similar_names,
     clippy::too_many_lines,
-    clippy::await_holding_lock,
     dead_code
 )]
 
@@ -14,7 +14,7 @@ use crate::rpc::agent::RpcServer as AgentRpcServer;
 use crate::rpc::nodeget::RpcServer as NodegetRpcServer;
 use crate::rpc::task::{RpcServer, TaskManager};
 use jsonrpsee::server::ServerBuilder;
-use log::{Level, info};
+use log::{info, Level};
 use nodeget_lib::config::server::ServerConfig;
 use nodeget_lib::utils::compare_uuid;
 use sea_orm::DatabaseConnection;
@@ -62,7 +62,7 @@ async fn main() {
             rpc::task::TaskRpcImpl {
                 manager: task_manager.clone(),
             }
-            .into_rpc(),
+                .into_rpc(),
         )
         .unwrap();
 

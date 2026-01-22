@@ -8,8 +8,8 @@ use std::time::Duration;
 use tokio::time;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
-pub mod ping;
 mod execute;
+pub mod ping;
 
 pub async fn handle_task() {
     time::sleep(Duration::from_secs(1)).await;
@@ -63,7 +63,7 @@ pub async fn handle_task() {
                                         Ok(duration) => {
                                             Ok(TaskEventResult::Ping(duration.as_millis_f64()))
                                         }
-                                        Err(e) => Err(e.clone()),
+                                        Err(e) => Err(e),
                                     }
                                 } else {
                                     Err("102: Permission Denied".to_string())
@@ -75,7 +75,7 @@ pub async fn handle_task() {
                                         Ok(duration) => {
                                             Ok(TaskEventResult::Ping(duration.as_millis_f64()))
                                         }
-                                        Err(e) => Err(e.clone()),
+                                        Err(e) => Err(e),
                                     }
                                 } else {
                                     Err("102: Permission Denied".to_string())
@@ -87,7 +87,7 @@ pub async fn handle_task() {
                                         Ok(duration) => {
                                             Ok(TaskEventResult::Ping(duration.as_millis_f64()))
                                         }
-                                        Err(e) => Err(e.clone()),
+                                        Err(e) => Err(e),
                                     }
                                 } else {
                                     Err("102: Permission Denied".to_string())

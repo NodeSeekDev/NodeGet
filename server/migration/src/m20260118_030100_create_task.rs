@@ -55,7 +55,7 @@ impl MigrationTrait for Migration {
                         ALTER COLUMN task_event_result SET COMPRESSION lz4,
                         ALTER COLUMN task_event_type SET COMPRESSION lz4;",
                 )
-                .await?;
+                    .await?;
             }
             DbBackend::Sqlite => {} // todo!()
             _ => {

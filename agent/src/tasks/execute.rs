@@ -1,7 +1,7 @@
 use crate::AGENT_CONFIG;
 use std::process::Stdio;
 use tokio::process::Command;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 const EXECUTE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -38,7 +38,6 @@ pub async fn execute_command(command: String) -> Result<String, String> {
         }
     }
 
-
     let mut last_error: String = "No shell was attempted.".to_string();
 
     for shell in &shells_to_try {
@@ -63,7 +62,7 @@ pub async fn execute_command(command: String) -> Result<String, String> {
         let child = match cmd.spawn() {
             Ok(child) => child,
             Err(e) => {
-                log::warn!("Shell '{}' not found or usable, trying fallback: {}", shell, e);
+                log::warn!("Shell '{shell}' not found or usable, trying fallback: {e}");
                 last_error = e.to_string();
                 continue;
             }
@@ -98,26 +97,24 @@ pub async fn execute_command(command: String) -> Result<String, String> {
                     let original_len = result.len();
                     let truncated_part = result.split_off(original_len - max_chars);
                     result = format!(
-                        "[... Output truncated from {} to {} chars ...]\n{}",
-                        original_len,
-                        max_chars,
-                        truncated_part
+                        "[... Output truncated from {original_len} to {max_chars} chars ...]\n{truncated_part}"
                     );
                 }
 
                 return Ok(result);
             }
             Ok(Err(e)) => return Err(format!("Failed to wait for process: {e}")),
-            Err(_) => return Err(format!(
-                "Execution timed out (Limit: {}s)",
-                EXECUTE_TIMEOUT.as_secs()
-            )),
+            Err(_) => {
+                return Err(format!(
+                    "Execution timed out (Limit: {}s)",
+                    EXECUTE_TIMEOUT.as_secs()
+                ));
+            }
         }
     }
 
     // 所有 Shell 均失败
     Err(format!(
-        "All available shells failed to execute command. Last error: {}",
-        last_error
+        "All available shells failed to execute command. Last error: {last_error}"
     ))
 }
