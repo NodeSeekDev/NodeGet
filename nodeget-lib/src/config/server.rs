@@ -19,6 +19,7 @@ pub struct DatabaseConfig {
     pub connect_timeout_ms: Option<u64>,
     pub acquire_timeout_ms: Option<u64>,
     pub idle_timeout_ms: Option<u64>,
+    pub max_lifetime_ms: Option<u64>,
     pub max_connections: Option<u32>,
 }
 
