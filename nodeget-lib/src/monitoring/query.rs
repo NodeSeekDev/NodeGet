@@ -27,6 +27,9 @@ pub enum QueryCondition {
     TimestampFromTo(i64, i64), // start, end
     TimestampFrom(i64),        // start,
     TimestampTo(i64),          // end
+
+    Limit(u64), // limit
+
     Last,
 }
 

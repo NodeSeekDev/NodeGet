@@ -28,6 +28,9 @@ pub async fn query_static(_token: String, data: Value) -> Value {
         // 最新数据 (仅一个)
         let mut is_last = false;
 
+        // 查询数量限制
+        let mut limit_count: Option<u64> = None;
+
         // 应用过滤条件 (QueryCondition)
         for cond in query_req.condition {
             match cond {
@@ -47,10 +50,17 @@ pub async fn query_static(_token: String, data: Value) -> Value {
                 QueryCondition::TimestampTo(end) => {
                     query = query.filter(static_monitoring::Column::Timestamp.lte(end));
                 }
+                QueryCondition::Limit(n) => { limit_count = Some(n); }
                 QueryCondition::Last => {
                     is_last = true;
                 }
             }
+        }
+
+        if let Some(l) = limit_count {
+            query = query.order_by(static_monitoring::Column::Timestamp, Order::Desc).limit(l);
+        } else {
+            query = query.order_by(static_monitoring::Column::Timestamp, Order::Asc);
         }
 
         // 时间倒序第一条
@@ -119,6 +129,9 @@ pub async fn query_dynamic(_token: String, data: Value) -> Value {
 
         let mut is_last = false;
 
+        // 查询数量限制
+        let mut limit_count: Option<u64> = None;
+
         for cond in query_req.condition {
             match cond {
                 QueryCondition::Uuid(uuid) => {
@@ -137,10 +150,17 @@ pub async fn query_dynamic(_token: String, data: Value) -> Value {
                 QueryCondition::TimestampTo(end) => {
                     query = query.filter(dynamic_monitoring::Column::Timestamp.lte(end));
                 }
+                QueryCondition::Limit(n) => { limit_count = Some(n); }
                 QueryCondition::Last => {
                     is_last = true;
                 }
             }
+        }
+
+        if let Some(l) = limit_count {
+            query = query.order_by(dynamic_monitoring::Column::Timestamp, Order::Desc).limit(l);
+        } else {
+            query = query.order_by(dynamic_monitoring::Column::Timestamp, Order::Asc);
         }
 
         if is_last {

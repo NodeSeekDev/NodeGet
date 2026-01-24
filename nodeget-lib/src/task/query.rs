@@ -14,6 +14,8 @@ pub enum TaskQueryCondition {
     IsRunning,    // 仅查找 success 字段为空
     Type(String), // task_event_type 中有字段为 `String` 的行
 
+    Limit(u64), // limit
+
     Last,
 }
 

@@ -23,6 +23,8 @@ pub async fn query(_token: String, data: Value) -> Value {
         let mut query = task::Entity::find();
         let mut is_last = false;
 
+        let mut limit_count: Option<u64> = None;
+
         for cond in query_req.condition {
             match cond {
                 TaskQueryCondition::TaskId(id) => {
@@ -71,10 +73,19 @@ pub async fn query(_token: String, data: Value) -> Value {
                         );
                     }
                 }
+
+                TaskQueryCondition::Limit(n) => { limit_count = Some(n); }
+
                 TaskQueryCondition::Last => {
                     is_last = true;
                 }
             }
+        }
+
+        if let Some(l) = limit_count {
+            query = query.order_by(task::Column::Id, Order::Desc).limit(l);
+        } else {
+            query = query.order_by(task::Column::Id, Order::Asc);
         }
 
         if is_last {
