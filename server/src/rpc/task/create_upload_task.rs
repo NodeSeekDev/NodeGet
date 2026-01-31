@@ -24,19 +24,6 @@ pub async fn create_task(
         let token = generate_random_string(10);
         let server_config = SERVER_CONFIG.get().ok_or((107, "Config not found".to_string()))?;
 
-        if let TaskEventType::WebShell(url) = &mut task_type {
-            if url.path().trim_start_matches('/') == "auto_gen" {
-                let new_url_str = format!(
-                    "{}/terminal?agent_uuid={}&task_token={}",
-                    server_config.ws_host_url,
-                    target_uuid,
-                    token
-                );
-
-                *url = Url::parse(&new_url_str).map_err(|e| (101, e.to_string()))?;
-            }
-        }
-
         let in_data = task::ActiveModel {
             id: ActiveValue::default(),
             uuid: Set(target_uuid),

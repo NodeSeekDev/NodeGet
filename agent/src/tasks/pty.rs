@@ -9,8 +9,16 @@ use tokio::{sync::mpsc, task};
 use tokio_tungstenite::tungstenite::Bytes;
 use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::Message, connect_async};
 use url::Url;
+use crate::AGENT_CONFIG;
 
-pub async fn handle_pty_url(url: Url) -> Result<(), String> {
+pub async fn handle_pty_url(url: Result<Url, String>) -> Result<(), String> {
+    let url = match url {
+        Ok(url) => {url},
+        Err(e) => {
+            return Err(e);
+        }
+    };
+
     let ws = match connect_async(url.to_string()).await {
         Ok(ws) => {ws}
         Err(_) => {
@@ -31,7 +39,7 @@ pub async fn handle_pty_url(url: Url) -> Result<(), String> {
     handle_pty_session(ws_stream, cmd).await
 }
 
-pub async fn handle_pty_session<S>(ws_stream: WebSocketStream<S>, cmd: &str) -> Result<(), String>
+async fn handle_pty_session<S>(ws_stream: WebSocketStream<S>, cmd: &str) -> Result<(), String>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -171,7 +179,6 @@ fn handle_ws_message(
     pty_writer: &Arc<Mutex<Box<dyn Write + Send>>>,
 ) -> Result<Option<NeedResize>, String> {
 
-
     match msg {
         Message::Text(text) => {
             if serde_json::from_str::<HeartBeat>(text.as_ref()).is_ok()  {
@@ -199,4 +206,23 @@ fn handle_ws_message(
         _ => {}
     }
     Ok(None)
+}
+
+pub fn parse_url(url: Url, task_id: u64, task_token: String) -> Result<Url, String> {
+    let scheme = url.scheme();
+    if !((scheme == "ws") || (scheme == "wss")) {
+        return Err(format!("Invalid scheme: {scheme}"));
+    }
+
+    let url = if url.path() == "/auto_gen" {
+        let agent_uuid = AGENT_CONFIG.get().ok_or("Agent Config 未初始化")?.agent_uuid;
+        let host = url.host_str().ok_or(format!("Invalid host: {}", url))?;
+        let port = url.port_or_known_default().ok_or(format!("Invalid port: {}", url))?;
+
+        let url = format!("{}://{}:{}/terminal?agent_uuid={}&task_id={}&task_token={}", scheme, host, port, agent_uuid, task_id, task_token);
+        Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?
+    } else {
+        url
+    };
+Ok(url)
 }

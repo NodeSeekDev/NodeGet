@@ -33,7 +33,7 @@ pub struct SessionSlots {
 pub struct TerminalParams {
     pub agent_uuid: String,
 
-    pub id: Option<u64>,         // 任务ID
+    pub task_id: Option<u64>,         // 任务ID
     pub task_token: Option<String>, // Task Token
 
     pub token: Option<String>,
@@ -49,7 +49,7 @@ pub async fn terminal_ws_handler(
 
 async fn handle_socket(socket: WebSocket, params: TerminalParams, state: TerminalState) {
     // 有 task_token 的是 Agent，否则是 User
-    if let (Some(task_token), Some(id)) = (params.task_token, params.id) {
+    if let (Some(task_token), Some(id)) = (params.task_token, params.task_id) {
         handle_agent(socket, params.agent_uuid, task_token, id, state).await;
     } else {
         handle_user(socket, params.agent_uuid, state).await;
