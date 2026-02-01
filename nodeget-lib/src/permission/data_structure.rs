@@ -48,11 +48,13 @@ pub enum DynamicMonitoring {
     Write,
 }
 
+// Type 字段名
+// 接受 ping / tcp_ping / http_ping / web_shell / execute / ip
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Task {
     Create(String),
-    Read(String), // Type 字段名
+    Read(String),
     Write(String),
     Listen,
 }

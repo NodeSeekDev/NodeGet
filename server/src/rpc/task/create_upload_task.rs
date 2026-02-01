@@ -10,15 +10,48 @@ use sea_orm::QueryFilter;
 use sea_orm::{ActiveModelTrait, ActiveValue, EntityTrait, Set};
 use serde_json::{Value, json};
 use uuid::Uuid;
+use nodeget_lib::permission::data_structure::{Permission, Scope, Task};
+use crate::token::get::check_token_limit;
+use crate::token::parse_token_and_auth;
 
 pub async fn create_task(
     manager: &TaskManager,
-    _token: String,
+    token: String,
     target_uuid: Uuid,
     task_type: TaskEventType,
 ) -> Value {
     let process_logic = async {
-        let db = TaskRpcImpl::get_db().map_err(|e| (e.0 as u32, e.1))?;
+        // 鉴权
+        let task_name = match &task_type {
+            TaskEventType::Ping(_) => "ping",
+            TaskEventType::TcpPing(_) => "tcp_ping",
+            TaskEventType::HttpPing(_) => "http_ping",
+            TaskEventType::WebShell(_) => "web_shell",
+            TaskEventType::Execute(_) => "execute",
+            TaskEventType::Ip => "ip",
+        };
+
+        // 解析 Token / Auth 信息
+        let (t_arg, u_arg, p_arg) = parse_token_and_auth(&token);
+
+        let is_allowed = check_token_limit(
+            t_arg.clone(),
+            u_arg.clone(),
+            p_arg.clone(),
+            vec![Scope::AgentUuid(target_uuid)],
+            vec![Permission::Task(Task::Create(task_name.to_string()))],
+        )
+            .await?;
+
+        if !is_allowed {
+            return Err((
+                102,
+                format!("Permission Denied: Missing Task Create ({}) permission for this Agent", task_name),
+            ));
+        }
+
+        // 查询
+        let db = TaskRpcImpl::get_db()?;
         let token = generate_random_string(10);
 
         let in_data = task::ActiveModel {
@@ -60,7 +93,7 @@ pub async fn create_task(
                     });
 
                 error!("Error sending task event: {}", e.1);
-                Err((e.0, format!("Error sending task event: {}", e.1)))
+                Err((e.0 as i64, format!("Error sending task event: {}", e.1)))
             }
         }
     };
@@ -71,13 +104,14 @@ pub async fn create_task(
     }
 }
 
-pub async fn upload_task_result(_token: String, task_response: TaskEventResponse) -> Value {
+pub async fn upload_task_result(token: String, task_response: TaskEventResponse) -> Value {
     let process_logic = async {
-        let db = TaskRpcImpl::get_db().map_err(|e| (e.0 as u32, e.1))?;
+        let db = TaskRpcImpl::get_db()?;
 
+        // 对 task_id agent_uuid  task_token 合法性验证
         let task_model = task::Entity::find_by_id(task_response.task_id.cast_signed())
             .filter(task::Column::Uuid.eq(task_response.agent_uuid))
-            .filter(task::Column::Token.eq(task_response.task_token))
+            .filter(task::Column::Token.eq(task_response.task_token.clone()))
             .one(db)
             .await
             .map_err(|e| {
@@ -90,6 +124,36 @@ pub async fn upload_task_result(_token: String, task_response: TaskEventResponse
                     "Task validation failed: Invalid ID, UUID, or Token".to_string(),
                 )
             })?;
+
+        let original_task_type: TaskEventType = serde_json::from_value(task_model.task_event_type.clone())
+            .map_err(|e| (101, format!("Failed to parse original task type: {e}")))?;
+
+        let task_name = match &original_task_type {
+            TaskEventType::Ping(_) => "ping",
+            TaskEventType::TcpPing(_) => "tcp_ping",
+            TaskEventType::HttpPing(_) => "http_ping",
+            TaskEventType::WebShell(_) => "web_shell",
+            TaskEventType::Execute(_) => "execute",
+            TaskEventType::Ip => "ip",
+        };
+
+        let (t_arg, u_arg, p_arg) = parse_token_and_auth(&token);
+
+        let is_allowed = check_token_limit(
+            t_arg.clone(),
+            u_arg.clone(),
+            p_arg.clone(),
+            vec![Scope::AgentUuid(task_response.agent_uuid)],
+            vec![Permission::Task(Task::Create(task_name.to_string()))],
+        )
+            .await?;
+
+        if !is_allowed {
+            return Err((
+                102,
+                format!("Permission Denied: Missing Task Write ({}) permission for this Agent", task_name),
+            ));
+        }
 
         let mut active_model: task::ActiveModel = task_model.into();
 
@@ -106,8 +170,8 @@ pub async fn upload_task_result(_token: String, task_response: TaskEventResponse
 
         let result_json = task_response
             .task_event_result
-            .map(TaskRpcImpl::try_set_json) // Result<ActiveValue, String>
-            .transpose() // Result<Option<ActiveValue>, String>
+            .map(TaskRpcImpl::try_set_json)
+            .transpose()
             .map_err(|e| (101, e))?;
 
         active_model.task_event_result =
@@ -119,15 +183,16 @@ pub async fn upload_task_result(_token: String, task_response: TaskEventResponse
         })?;
 
         debug!(
-            "Task [{}] result uploaded successfully",
-            task_response.task_id
+            "Task [{}] result uploaded successfully by auth identifying as {:?}",
+            task_response.task_id,
+            if u_arg.is_some() { &u_arg } else { &t_arg }
         );
 
-        Ok(true)
+        Ok(task_response.task_id)
     };
 
     match process_logic.await {
-        Ok(_) => json!({ "id": task_response.task_id }),
+        Ok(id) => json!({ "id": id }),
         Err((code, msg)) => generate_error_message(code, &msg),
     }
 }

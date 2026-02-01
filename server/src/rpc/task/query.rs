@@ -12,9 +12,63 @@ use sea_orm::{
     ColumnTrait, DbBackend, EntityTrait, ExprTrait, Order, QueryFilter, QueryOrder, QuerySelect,
 };
 use serde_json::value::RawValue;
+use nodeget_lib::permission::data_structure::{Permission, Scope, Task};
+use crate::token::get::check_token_limit;
+use crate::token::parse_token_and_auth;
 
-pub async fn query(_token: String, task_data_query: TaskDataQuery) -> RpcResult<Box<RawValue>> {
+pub async fn query(token: String, task_data_query: TaskDataQuery) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
+        // 鉴权
+        let (token_arg, username_arg, password_arg) = parse_token_and_auth(&token);
+
+        let all_task_types = ["ping", "tcp_ping", "http_ping", "web_shell", "execute", "ip"];
+
+        let mut scopes = Vec::new();
+        let mut has_uuid_condition = false;
+        for cond in &task_data_query.condition {
+            if let TaskQueryCondition::Uuid(uuid) = cond {
+                scopes.push(Scope::AgentUuid(*uuid));
+                has_uuid_condition = true;
+            }
+        }
+        if !has_uuid_condition {
+            scopes.push(Scope::Global);
+        }
+
+        let mut requested_types = Vec::new();
+        for cond in &task_data_query.condition {
+            if let TaskQueryCondition::Type(t) = cond {
+                requested_types.push(t.clone());
+            }
+        }
+
+        let permissions: Vec<Permission> = if requested_types.is_empty() {
+            all_task_types
+                .iter()
+                .map(|t| Permission::Task(Task::Read(t.to_string())))
+                .collect()
+        } else {
+            requested_types
+                .into_iter()
+                .map(|t| Permission::Task(Task::Read(t)))
+                .collect()
+        };
+
+        let is_allowed = check_token_limit(
+            token_arg.clone(),
+            username_arg.clone(),
+            password_arg.clone(),
+            scopes,
+            permissions,
+        )
+            .await?;
+
+        if !is_allowed {
+            return Err((
+                102,
+                "Permission Denied: Insufficient permissions to read requested task types".to_string(),
+            ));
+        }
         let db = TaskRpcImpl::get_db()?;
 
         let mut query = task::Entity::find().select_only();
