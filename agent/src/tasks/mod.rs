@@ -1,7 +1,7 @@
 use crate::AGENT_CONFIG;
 use crate::rpc::multi_server::{send_to, subscribe_to};
 use crate::rpc::{JsonRpcTask, wrap_json_into_rpc_with_id_1};
-use log::{error, info, trace};
+use log::{debug, error, info, trace};
 use nodeget_lib::task::{TaskEventResponse, TaskEventResult, TaskEventType};
 use nodeget_lib::utils::get_local_timestamp_ms;
 use std::time::Duration;
@@ -35,7 +35,6 @@ pub async fn handle_task() {
             };
 
             while let Ok(message) = rx.recv().await {
-                trace!("[{}] Handle Task Received: {}", server.name, message);
                 let server_name = server.name.clone();
                 let server_token = server.token.clone();
                 tokio::spawn(async move {

@@ -3,6 +3,7 @@ pub mod multi_server;
 
 use nodeget_lib::task::TaskEvent;
 use serde::{Deserialize, Serialize};
+use nodeget_lib::utils::JsonError;
 
 #[derive(Serialize, Deserialize)]
 struct JsonRpc {
@@ -34,3 +35,10 @@ pub struct JsonRpcTask {
 pub struct JsonRpcTaskResult {
     pub result: TaskEvent,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct JsonRpcErrorMessage {
+    pub result: JsonError,
+}
+
+

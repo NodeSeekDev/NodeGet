@@ -39,19 +39,20 @@ pub enum Permission {
 #[serde(rename_all = "snake_case")]
 pub enum StaticMonitoring {
     Read(StaticDataQueryField),
-    Write(StaticDataQueryField),
+    Write,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DynamicMonitoring {
     Read(DynamicDataQueryField),
-    Write(DynamicDataQueryField),
+    Write,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Task {
+    Create(String),
     Read(String), // Type 字段名
     Write(String),
     Listen,

@@ -1,13 +1,3 @@
-// 101: Parse Error
-// 102: Permission Denied
-// 103: Database Error
-// 104: Unable to connect agent
-// 105: Not Found in Database
-// 106: Uuid Not Found
-// 107: Config Not Found
-
-// 999: 详情请看 error_message
-
 use serde_json::value::RawValue;
 
 pub fn generate_error_message(error_id: impl Into<i128>, error_message: &str) -> serde_json::Value {

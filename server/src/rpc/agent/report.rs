@@ -7,15 +7,40 @@ use nodeget_lib::utils::error_message::generate_error_message;
 use sea_orm::{ActiveValue, EntityTrait, Set};
 use serde_json::{Value, json};
 use std::str::FromStr;
+use nodeget_lib::permission::data_structure::{Permission, Scope, StaticMonitoring};
+use nodeget_lib::permission::data_structure::Permission::DynamicMonitoring;
+use crate::token::get::check_token_limit;
+use crate::token::parse_token_and_auth;
 
-pub async fn report_static(_token: String, static_monitoring_data: StaticMonitoringData) -> Value {
+pub async fn report_static(token: String, static_monitoring_data: StaticMonitoringData) -> Value {
     let process_logic = async {
+        let agent_uuid = uuid::Uuid::from_str(&static_monitoring_data.uuid)
+            .map_err(|e| (101, format!("Invalid UUID format: {}", e)))?;
+
+        let (token_arg, username_arg, password_arg) = parse_token_and_auth(&token);
+
+        let is_allowed = check_token_limit(
+            token_arg,
+            username_arg,
+            password_arg,
+            vec![Scope::AgentUuid(agent_uuid)],
+            vec![Permission::StaticMonitoring(StaticMonitoring::Write)],
+        )
+            .await?;
+
+        if !is_allowed {
+            return Err((
+                102,
+                "Permission Denied: Missing StaticMonitoring Write permission for this Agent"
+                    .to_string(),
+            ));
+        }
+
         let db = AgentRpcImpl::get_db()?;
 
         let in_data = static_monitoring::ActiveModel {
             id: ActiveValue::default(),
-            uuid: Set(uuid::Uuid::from_str(&static_monitoring_data.uuid)
-                .map_err(|e| (101, e.to_string()))?),
+            uuid: Set(agent_uuid),
             timestamp: Set(static_monitoring_data.time.cast_signed()),
 
             cpu_data: AgentRpcImpl::try_set_json(static_monitoring_data.cpu)
@@ -51,16 +76,37 @@ pub async fn report_static(_token: String, static_monitoring_data: StaticMonitor
 }
 
 pub async fn report_dynamic(
-    _token: String,
+    token: String,
     dynamic_monitoring_data: DynamicMonitoringData,
 ) -> Value {
     let process_logic = async {
+        let agent_uuid = uuid::Uuid::from_str(&dynamic_monitoring_data.uuid)
+            .map_err(|e| (101, format!("Invalid UUID format: {}", e)))?;
+
+        let (token_arg, username_arg, password_arg) = parse_token_and_auth(&token);
+
+        let is_allowed = check_token_limit(
+            token_arg,
+            username_arg,
+            password_arg,
+            vec![Scope::AgentUuid(agent_uuid)],
+            vec![Permission::DynamicMonitoring(nodeget_lib::permission::data_structure::DynamicMonitoring::Write)],
+        )
+            .await?;
+
+        if !is_allowed {
+            return Err((
+                102,
+                "Permission Denied: Missing DynamicMonitoring Write permission for this Agent"
+                    .to_string(),
+            ));
+        }
+
         let db = AgentRpcImpl::get_db()?;
 
         let in_data = dynamic_monitoring::ActiveModel {
             id: ActiveValue::default(),
-            uuid: Set(uuid::Uuid::from_str(&dynamic_monitoring_data.uuid)
-                .map_err(|e| (101, e.to_string()))?),
+            uuid: Set(agent_uuid),
             timestamp: Set(dynamic_monitoring_data.time.cast_signed()),
 
             cpu_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.cpu)

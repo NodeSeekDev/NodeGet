@@ -4,8 +4,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct TokenCreationRequest {
-    pub father_token: String,
-
     pub username: Option<String>,
     pub password: Option<String>,
 

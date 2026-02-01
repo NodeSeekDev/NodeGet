@@ -17,11 +17,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
+use nodeget_lib::permission::data_structure::{Permission, Scope, Task};
+use nodeget_lib::utils::JsonError;
+use crate::token::get::check_token_limit;
+use crate::token::parse_token_and_auth;
 
 #[rpc(server, namespace = "task")]
 pub trait Rpc {
     #[subscription(name = "register_task", item = TaskEvent, unsubscribe = "unregister_task")]
-    async fn register_task(&self, uuid: Uuid) -> SubscriptionResult;
+    async fn register_task(&self, token: String, uuid: Uuid) -> SubscriptionResult;
 
     #[method(name = "create_task")]
     async fn create_task(
@@ -74,8 +78,46 @@ impl RpcServer for TaskRpcImpl {
     async fn register_task(
         &self,
         subscription_sink: PendingSubscriptionSink,
+        token: String,
         uuid: Uuid,
     ) -> SubscriptionResult {
+
+        let (token_arg, username_arg, password_arg) = parse_token_and_auth(&token);
+
+        let is_allowed_result = check_token_limit(
+            token_arg,
+            username_arg,
+            password_arg,
+            vec![Scope::AgentUuid(uuid)],
+            vec![Permission::Task(Task::Listen)],
+        )
+            .await;
+
+        match is_allowed_result {
+            Ok(true) => {}
+            Ok(false) => {
+                subscription_sink
+                    .reject(jsonrpsee::types::ErrorObject::borrowed(
+                        102,
+                        "Permission Denied: Missing Task Listen permission for this Agent",
+                        None,
+                    ))
+                    .await;
+                return Ok(());
+            }
+            Err((code, msg)) => {
+                let _ = subscription_sink
+                    .reject(jsonrpsee::types::ErrorObject::owned(
+                        code as i32,
+                        msg.as_str(),
+                        None::<JsonError>,
+                    ))
+                    .await;
+                return Ok(());
+            }
+        }
+
+
         let sink = subscription_sink.accept().await?;
         let (tx, mut rx) = mpsc::channel(32);
         let reg_id = Uuid::new_v4();

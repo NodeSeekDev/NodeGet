@@ -17,9 +17,15 @@ pub fn split_token(full_token: &str) -> Result<(&str, &str), String> {
 }
 
 pub fn split_username_password(full_auth: &str) -> Result<(&str, &str), String> {
-    // split_once 只会切分第一个出现的符号，所以即使密码里也有 '|'，
-    // 只要用户名里没有 '|'，解析就是正确的。
     full_auth
         .split_once('|')
         .ok_or_else(|| "Invalid auth format: missing '|' separator".to_string())
+}
+
+pub fn parse_token_and_auth(token: &str) -> (Option<String>, Option<String>, Option<String>) {
+        if let Ok((u, p)) = split_username_password(token) {
+            (None, Some(u.to_string()), Some(p.to_string()))
+        } else {
+            (Some(token.to_string()), None, None)
+        }
 }

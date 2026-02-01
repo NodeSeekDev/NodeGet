@@ -15,12 +15,62 @@ use sea_orm::{
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
+use nodeget_lib::permission::data_structure::{DynamicMonitoring, Permission, Scope, StaticMonitoring};
+use crate::token::get::check_token_limit;
+use crate::token::parse_token_and_auth;
 
 pub async fn query_static(
-    _token: String,
+    token: String,
     static_data_query: StaticDataQuery,
 ) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
+        // 鉴权
+        let (token_arg, username_arg, password_arg) = parse_token_and_auth(&token);
+
+        let mut scopes = Vec::new();
+        let mut has_uuid_condition = false;
+
+        for cond in &static_data_query.condition {
+            if let QueryCondition::Uuid(uuid) = cond {
+                scopes.push(Scope::AgentUuid(*uuid));
+                has_uuid_condition = true;
+            }
+        }
+
+        // 没有指定 UUID，说明是全量查询，需要 Global 权限
+        if !has_uuid_condition {
+            scopes.push(Scope::Global);
+        }
+
+        let permissions: Vec<Permission> = static_data_query
+            .fields
+            .iter()
+            .map(|field| {
+                Permission::StaticMonitoring(StaticMonitoring::Read(match field {
+                    StaticDataQueryField::Cpu => StaticDataQueryField::Cpu,
+                    StaticDataQueryField::System => StaticDataQueryField::System,
+                    StaticDataQueryField::Gpu => StaticDataQueryField::Gpu,
+                }))
+            })
+            .collect();
+
+        let is_allowed = check_token_limit(
+            token_arg,
+            username_arg,
+            password_arg,
+            scopes,
+            permissions,
+        )
+            .await?;
+
+        if !is_allowed {
+            return Err((
+                102,
+                "Permission Denied: Insufficient StaticMonitoring Read permissions".to_string(),
+            ));
+        }
+
+        // 查询
         let db = AgentRpcImpl::get_db()?;
 
         let query = static_monitoring::Entity::find()
@@ -100,10 +150,60 @@ pub async fn query_static(
 }
 
 pub async fn query_dynamic(
-    _token: String,
+    token: String,
     dynamic_data_query: DynamicDataQuery,
 ) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
+        // 鉴权
+        let (token_arg, username_arg, password_arg) = parse_token_and_auth(&token);
+
+        let mut scopes = Vec::new();
+        let mut has_uuid_condition = false;
+
+        for cond in &dynamic_data_query.condition {
+            if let QueryCondition::Uuid(uuid) = cond {
+                scopes.push(Scope::AgentUuid(*uuid));
+                has_uuid_condition = true;
+            }
+        }
+
+        if !has_uuid_condition {
+            scopes.push(Scope::Global);
+        }
+
+        let permissions: Vec<Permission> = dynamic_data_query
+            .fields
+            .iter()
+            .map(|field| {
+                Permission::DynamicMonitoring(DynamicMonitoring::Read(match field {
+                    DynamicDataQueryField::Cpu => DynamicDataQueryField::Cpu,
+                    DynamicDataQueryField::Ram => DynamicDataQueryField::Ram,
+                    DynamicDataQueryField::Load => DynamicDataQueryField::Load,
+                    DynamicDataQueryField::System => DynamicDataQueryField::System,
+                    DynamicDataQueryField::Disk => DynamicDataQueryField::Disk,
+                    DynamicDataQueryField::Network => DynamicDataQueryField::Network,
+                    DynamicDataQueryField::Gpu => DynamicDataQueryField::Gpu,
+                }))
+            })
+            .collect();
+
+        let is_allowed = check_token_limit(
+            token_arg,
+            username_arg,
+            password_arg,
+            scopes,
+            permissions,
+        )
+            .await?;
+
+        if !is_allowed {
+            return Err((
+                102,
+                "Permission Denied: Insufficient DynamicMonitoring Read permissions".to_string(),
+            ));
+        }
+
+        // 查询
         let db = AgentRpcImpl::get_db()?;
 
         // 构建查询

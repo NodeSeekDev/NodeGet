@@ -11,6 +11,9 @@
 
 pub mod config;
 pub mod monitoring;
+
+#[cfg(feature = "for-server")]
 pub mod permission;
+
 pub mod task;
 pub mod utils;

@@ -3,9 +3,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::AGENT_CONFIG;
-use crate::rpc::wrap_json_into_rpc_with_id_1;
+use crate::rpc::{wrap_json_into_rpc_with_id_1, JsonRpcTask};
 use futures::{SinkExt, StreamExt};
 use log::{debug, error, info, warn};
+use serde::Deserialize;
 use nodeget_lib::config::agent::Server;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::RecvError;
@@ -14,6 +15,9 @@ use tokio::time::{sleep, timeout};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use nodeget_lib::task::{TaskEventResponse, TaskEventResult, TaskEventType};
+use nodeget_lib::utils::get_local_timestamp_ms;
+use crate::tasks::ping;
 
 // 句柄
 pub struct ServerHandle {
@@ -56,7 +60,20 @@ async fn connection_manager(
     mut uplink_rx: broadcast::Receiver<Message>,
     downlink_tx: broadcast::Sender<Message>,
 ) {
+    // 临时定义用于检测 JsonRpc 长连接错误
+    #[derive(Deserialize)]
+    struct JsonRpcErrorCheck {
+        error: Option<JsonRpcErrorDetail>,
+    }
+
+    #[derive(Deserialize)]
+    struct JsonRpcErrorDetail {
+        code: i64,
+        message: String,
+    }
+
     let name = &server.name;
+    let token = &server.token;
     let url = &server.ws_url;
 
     info!("[{name}] Manager task started");
@@ -75,23 +92,21 @@ async fn connection_manager(
 
         // Task Register
         {
-            if server.allow_task.unwrap_or(false) {
-                let rpc = wrap_json_into_rpc_with_id_1(
-                    "task_register_task",
-                    vec![serde_json::Value::String(
-                        AGENT_CONFIG.get().unwrap().agent_uuid.to_string(),
-                    )],
-                );
-
-                if let Err(e) = ws_write.send(Message::Text(Utf8Bytes::from(rpc))).await {
-                    error!(
-                        "[{name}] Write error (register task listener): {e}, triggering reconnect..."
+                if server.allow_task.unwrap_or(false) {
+                    let rpc = wrap_json_into_rpc_with_id_1(
+                        "task_register_task",
+                        vec![serde_json::Value::String(token.clone()),
+                             serde_json::Value::String(AGENT_CONFIG.get().unwrap().agent_uuid.to_string())],
                     );
-                    continue;
+
+                    if let Err(e) = ws_write.send(Message::Text(Utf8Bytes::from(rpc))).await {
+                        error!("[{name}] Write error (register task listener): {e}, triggering reconnect...");
+                        continue;
+                    }
+                    debug!("[{name}] Task register request sent.");
                 }
-                debug!("[{name}] Register task listener successfully");
             }
-        }
+
 
         loop {
             tokio::select! {
@@ -120,6 +135,13 @@ async fn connection_manager(
                 ws_msg_opt = ws_read.next() => {
                     match ws_msg_opt {
                         Some(Ok(msg)) => {
+                            if let Message::Text(text) = &msg {
+                                if let Ok(check) = serde_json::from_str::<JsonRpcErrorCheck>(text) {
+                                    if let Some(err) = check.error {
+                                        error!("[{name}] RPC Error Response: {}: {}", err.code, err.message);
+                                    }
+                                }
+                            }
                             let _ = downlink_tx.send(msg);
                         }
                         Some(Err(e)) => {

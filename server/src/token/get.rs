@@ -6,6 +6,7 @@ use nodeget_lib::utils::get_local_timestamp_ms;
 use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
 use sea_orm::QueryFilter;
+use crate::token::super_token::check_super_token;
 
 pub async fn get_token(
     token_str: Option<String>,
@@ -63,6 +64,16 @@ pub async fn check_token_limit(
     scopes: Vec<Scope>,
     permissions: Vec<Permission>,
 ) -> Result<bool, (i64, String)> {
+    if let Ok(true) = check_super_token(
+        token_str.as_deref(),
+        username.as_deref(),
+        password.as_deref(),
+    )
+        .await
+    {
+        return Ok(true);
+    }
+
     let token = get_token(token_str, username, password).await?;
 
     let now = get_local_timestamp_ms() as i64;

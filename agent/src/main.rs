@@ -9,9 +9,7 @@
     dead_code
 )]
 
-use crate::rpc::monitoring_data_report::{
-    handle_dynamic_monitoring_data_report, handle_static_monitoring_data_report,
-};
+use crate::rpc::monitoring_data_report::{handle_dynamic_monitoring_data_report, handle_error_message, handle_static_monitoring_data_report};
 use crate::tasks::handle_task;
 use log::{Level, info};
 use nodeget_lib::config::agent::AgentConfig;
@@ -51,6 +49,10 @@ async fn main() {
 
     tokio::spawn(async {
         handle_dynamic_monitoring_data_report().await;
+    });
+
+    tokio::spawn(async {
+        handle_error_message().await;
     });
 
     tokio::spawn(async {
