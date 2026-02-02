@@ -30,7 +30,7 @@ Token 可以是下列值:
 pub struct Token {
     pub version: u8, // 暂时为 1
     pub token_key: String, // 标识 Token 最主要的键
-    pub timestamp_from: Option<i64>, // Token 有效期
+    pub timestamp_from: Option<i64>, // Token 有效期，毫秒时间戳
     pub timestamp_to: Option<i64>,
     pub token_limit: Vec<Limit>, // 权限范围
     pub username: Option<String>, // 用户名
