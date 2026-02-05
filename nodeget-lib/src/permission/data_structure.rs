@@ -50,7 +50,7 @@ pub enum Permission {
     // 任务权限
     Task(Task),
     // Metadata 权限
-    Metadata(Metadata)
+    Metadata(Metadata),
 }
 
 // 静态监控权限枚举
@@ -88,7 +88,6 @@ pub enum Task {
     // 监听权限
     Listen,
 }
-
 
 // Metadata 权限枚举
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -7,12 +7,12 @@ use tokio::time::timeout;
 static PING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
 // 对目标执行 TCP Ping
-// 
+//
 // 该函数尝试连接到目标主机的指定端口，并测量连接所需的时间
-// 
+//
 // # 参数
 // * `target` - 目标地址（格式为 "host:port"）
-// 
+//
 // # 返回值
 // 成功时返回连接耗时，失败时返回错误信息
 pub async fn tcping_target(target: String) -> Result<std::time::Duration, String> {

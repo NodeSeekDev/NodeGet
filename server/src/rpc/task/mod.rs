@@ -154,9 +154,7 @@ impl RpcServer for TaskRpcImpl {
         token: String,
         uuid: Uuid,
     ) -> SubscriptionResult {
-        let token_or_auth = if let Ok(toa) = TokenOrAuth::from_full_token(&token) {
-            toa
-        } else {
+        let Ok(token_or_auth) = TokenOrAuth::from_full_token(&token) else {
             subscription_sink
                 .reject(jsonrpsee::types::ErrorObject::borrowed(
                     101,

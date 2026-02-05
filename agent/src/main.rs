@@ -16,9 +16,9 @@ use crate::rpc::monitoring_data_report::{
 use crate::tasks::handle_task;
 use log::{Level, info};
 use nodeget_lib::config::agent::AgentConfig;
+use nodeget_lib::utils::uuid::compare_uuid;
 use std::str::FromStr;
 use std::sync::OnceLock;
-use nodeget_lib::utils::uuid::compare_uuid;
 
 // 监控模块
 mod monitoring;
@@ -31,9 +31,9 @@ mod tasks;
 static AGENT_CONFIG: OnceLock<AgentConfig> = OnceLock::new();
 
 // 主函数，程序入口点
-// 
+//
 // 该函数负责初始化代理配置、设置日志级别、启动监控数据上报、任务处理等功能
-// 
+//
 // # 详细流程
 // 1. 加载配置文件
 // 2. 初始化日志系统

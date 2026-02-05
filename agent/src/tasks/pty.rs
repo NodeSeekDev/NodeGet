@@ -12,12 +12,12 @@ use tokio_tungstenite::{WebSocketStream, connect_async, tungstenite::protocol::M
 use url::Url;
 
 // 处理 PTY（伪终端）URL
-// 
+//
 // 该函数连接到指定的 WebSocket URL，并启动 PTY 会话
-// 
+//
 // # 参数
 // * `url` - WebSocket URL，包装在 Result 中
-// 
+//
 // # 返回值
 // 成功时返回 Ok(())，失败时返回错误信息
 pub async fn handle_pty_url(url: Result<Url, String>) -> Result<(), String> {
@@ -46,13 +46,13 @@ pub async fn handle_pty_url(url: Result<Url, String>) -> Result<(), String> {
 }
 
 // 处理 PTY 会话
-// 
+//
 // 该函数创建一个 PTY（伪终端），并将 WebSocket 消息与 PTY 输入输出进行双向转发
-// 
+//
 // # 参数
 // * `ws_stream` - WebSocket 流
 // * `cmd` - 要在 PTY 中运行的命令
-// 
+//
 // # 返回值
 // 成功时返回 Ok(())，失败时返回错误信息
 async fn handle_pty_session<S>(ws_stream: WebSocketStream<S>, cmd: &str) -> Result<(), String>
@@ -179,27 +179,27 @@ where
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct NeedResize {
     #[serde(rename = "type")]
-    type_str: String,  // 消息类型
-    cols: u16,         // 列数
-    rows: u16,         // 行数
+    type_str: String, // 消息类型
+    cols: u16, // 列数
+    rows: u16, // 行数
 }
 
 // 心跳消息结构体
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct HeartBeat {
     #[serde(rename = "type")]
-    type_str: String,  // 消息类型
+    type_str: String, // 消息类型
     timestamp: String, // 时间戳
 }
 
 // 处理 WebSocket 消息
-// 
+//
 // 该函数根据消息类型决定如何处理 WebSocket 消息，可能是心跳、调整大小或终端输入
-// 
+//
 // # 参数
 // * `msg` - WebSocket 消息
 // * `pty_writer` - PTY 写入器
-// 
+//
 // # 返回值
 // 成功时返回调整大小信息（如果有），失败时返回错误信息
 fn handle_ws_message(
@@ -236,14 +236,14 @@ fn handle_ws_message(
 }
 
 // 解析 PTY URL
-// 
+//
 // 该函数将原始 URL 转换为有效的终端连接 URL，如果路径是 "/auto_gen" 则替换为实际的终端连接路径
-// 
+//
 // # 参数
 // * `url` - 原始 URL
 // * `task_id` - 任务 ID
 // * `task_token` - 任务令牌
-// 
+//
 // # 返回值
 // 成功时返回解析后的 URL，失败时返回错误信息
 pub fn parse_url(url: Url, task_id: u64, task_token: &str) -> Result<Url, String> {

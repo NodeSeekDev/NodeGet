@@ -6,7 +6,7 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     // 获取所有迁移脚本列表
-    // 
+    //
     // # 返回值
     // 返回实现了 MigrationTrait 的迁移脚本向量
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {

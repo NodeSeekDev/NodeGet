@@ -60,7 +60,7 @@ pub struct Server {
     // 是否允许编辑配置
     pub allow_edit_config: Option<bool>, // Dangerous
     // 是否允许执行命令
-    pub allow_execute: Option<bool>,     // Dangerous
+    pub allow_execute: Option<bool>, // Dangerous
 
     // 是否允许获取 IP 地址
     pub allow_ip: Option<bool>,

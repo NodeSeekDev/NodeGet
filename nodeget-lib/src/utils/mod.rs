@@ -17,9 +17,8 @@ pub mod uuid;
 #[cfg(feature = "for-server")]
 pub mod server_json;
 
-
 // JSON-RPC 公共错误结构体
-// 
+//
 // 错误代码说明：
 // 101: Parse Error
 // 102: Permission Denied
@@ -28,7 +27,7 @@ pub mod server_json;
 // 105: Not Found in Database
 // 106: Uuid Not Found
 // 107: Config Not Found
-// 
+//
 // 999: 详情请看 error_message
 #[derive(Serialize, Deserialize)]
 pub struct JsonError {
@@ -39,7 +38,7 @@ pub struct JsonError {
 }
 
 // 获取本地毫秒级时间戳
-// 
+//
 // # 返回值
 // 返回当前时间的毫秒级时间戳，如果超过 u64 范围则返回 0
 #[must_use]
@@ -54,10 +53,10 @@ pub fn get_local_timestamp_ms() -> u64 {
 }
 
 // 生成指定长度的随机字符串
-// 
+//
 // # 参数
 // * `len` - 需要生成的随机字符串长度
-// 
+//
 // # 返回值
 // 返回生成的随机字符串
 pub fn generate_random_string(len: usize) -> String {
@@ -67,7 +66,3 @@ pub fn generate_random_string(len: usize) -> String {
         .map(char::from)
         .collect()
 }
-
-
-
-

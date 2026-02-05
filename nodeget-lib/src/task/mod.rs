@@ -10,16 +10,16 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 #[serde(rename_all = "snake_case")]
 pub enum TaskEventType {
     // Ping 任务，可能为域名需要解析
-    Ping(String),       // 可能为域名，需解析
+    Ping(String), // 可能为域名，需解析
     // TCP Ping 任务，可能为域名需要解析
-    TcpPing(String),    // 可能为域名，需解析
+    TcpPing(String), // 可能为域名，需解析
     // HTTP Ping 任务，使用 URL
     HttpPing(url::Url), // Url
 
     // Web Shell 任务，使用 WebSocket URL
     WebShell(url::Url), // Websocket URL
     // 命令执行任务
-    Execute(String),    // 命令执行
+    Execute(String), // 命令执行
 
     // IP 获取任务
     Ip,
@@ -41,14 +41,14 @@ pub struct TaskEvent {
 #[serde(rename_all = "snake_case")]
 pub enum TaskEventResult {
     // Ping 任务结果，返回延迟（毫秒）
-    Ping(f64),     // 延迟
+    Ping(f64), // 延迟
     // TCP Ping 任务结果，返回延迟（毫秒）
-    TcpPing(f64),  // 延迟
+    TcpPing(f64), // 延迟
     // HTTP Ping 任务结果，返回延迟（毫秒）
     HttpPing(f64), // 延迟
 
     // Web Shell 任务结果，返回是否连接成功
-    WebShell(bool),  // Is Connected
+    WebShell(bool), // Is Connected
     // 命令执行任务结果，返回命令输出
     Execute(String), // 命令输出
 

@@ -7,12 +7,12 @@ use tokio::time::{Duration, timeout};
 const EXECUTE_TIMEOUT: Duration = Duration::from_secs(60);
 
 // 执行指定的命令
-// 
+//
 // 该函数根据操作系统和配置选择合适的 shell 来执行命令，并处理输出结果
-// 
+//
 // # 参数
 // * `command` - 要执行的命令字符串
-// 
+//
 // # 返回值
 // 成功时返回命令输出字符串，失败时返回错误信息
 pub async fn execute_command(command: String) -> Result<String, String> {

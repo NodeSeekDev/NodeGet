@@ -18,10 +18,10 @@ use log::info;
 use std::str::FromStr;
 use tower::Service;
 
+use crate::rpc::metadata::RpcServer;
 use crate::token::super_token::generate_super_token;
 #[cfg(all(not(target_os = "windows"), feature = "jemalloc"))]
 use tikv_jemallocator::Jemalloc;
-use crate::rpc::metadata::RpcServer;
 
 #[cfg(all(not(target_os = "windows"), feature = "jemalloc"))]
 #[global_allocator]

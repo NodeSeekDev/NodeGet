@@ -18,8 +18,8 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 // 服务器连接句柄，包含上行和下行消息通道
 pub struct ServerHandle {
-    uplink_tx: broadcast::Sender<Message>,    // 上行消息发送器（客户端到服务器）
-    downlink_tx: broadcast::Sender<Message>,  // 下行消息发送器（服务器到客户端）
+    uplink_tx: broadcast::Sender<Message>, // 上行消息发送器（客户端到服务器）
+    downlink_tx: broadcast::Sender<Message>, // 下行消息发送器（服务器到客户端）
 }
 
 // 全局连接池，存储与各个服务器的连接句柄
@@ -27,9 +27,9 @@ static CONNECTION_POOL: OnceCell<RwLock<HashMap<String, Arc<ServerHandle>>>> =
     OnceCell::const_new();
 
 // 初始化与多个服务器的连接
-// 
+//
 // 为每个配置的服务器创建连接管理器任务和相应的消息通道
-// 
+//
 // # 参数
 // * `servers` - 服务器配置向量
 pub fn init_connections(servers: Vec<Server>) {
@@ -58,9 +58,9 @@ pub fn init_connections(servers: Vec<Server>) {
 }
 
 // 连接生命周期维护
-// 
+//
 // 管理与单个服务器的 WebSocket 连接，包括连接建立、任务注册、消息转发和自动重连
-// 
+//
 // # 参数
 // * `server` - 服务器配置
 // * `uplink_rx` - 上行消息接收器
@@ -176,13 +176,13 @@ async fn connection_manager(
 }
 
 // 带重试机制的 WebSocket 连接
-// 
+//
 // 尝试连接到指定的 WebSocket URL，如果失败则进行重试
-// 
+//
 // # 参数
 // * `name` - 服务器名称（用于日志）
 // * `url` - WebSocket URL
-// 
+//
 // # 返回值
 // 成功时返回 WebSocket 流，失败时返回错误
 async fn connect_with_retry(
@@ -209,13 +209,13 @@ async fn connect_with_retry(
 }
 
 // 发送消息到指定服务器
-// 
+//
 // 将消息通过上行通道发送到指定服务器的 WebSocket 连接
-// 
+//
 // # 参数
 // * `server_name` - 服务器名称
 // * `msg` - 要发送的消息
-// 
+//
 // # 返回值
 // 成功时返回 Ok(())，失败时返回错误信息
 pub async fn send_to(server_name: &str, msg: Message) -> Result<(), String> {
@@ -238,12 +238,12 @@ pub async fn send_to(server_name: &str, msg: Message) -> Result<(), String> {
 }
 
 // 订阅来自指定服务器的消息
-// 
+//
 // 获取指定服务器下行消息通道的接收器，用于接收来自服务器的消息
-// 
+//
 // # 参数
 // * `server_name` - 服务器名称
-// 
+//
 // # 返回值
 // 成功时返回消息接收器，失败时返回错误信息
 pub async fn subscribe_to(server_name: &str) -> Result<broadcast::Receiver<Message>, String> {

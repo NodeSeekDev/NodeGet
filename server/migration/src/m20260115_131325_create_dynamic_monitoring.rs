@@ -9,7 +9,7 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     // 执行迁移：创建动态监控表
-    // 
+    //
     // 该函数创建一个名为 dynamic_monitoring 的表，包含以下列：
     // - id: 主键，自增大整数
     // - uuid: Agent 设备的 UUID
@@ -20,12 +20,12 @@ impl MigrationTrait for Migration {
     // - network_data: 网络动态数据，JSON 格式
     // - gpu_data: GPU 动态数据，JSON 格式
     // - system_data: 系统动态数据，JSON 格式
-    // 
+    //
     // 还会创建一个复合索引 (uuid, timestamp)，并在 PostgreSQL 上启用 LZ4 压缩
-    // 
+    //
     // # 参数
     // * `manager` - 模式管理器
-    // 
+    //
     // # 返回值
     // 成功时返回 Ok(())，失败时返回数据库错误
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
@@ -118,10 +118,10 @@ impl MigrationTrait for Migration {
     }
 
     // 回滚迁移：删除动态监控表
-    // 
+    //
     // # 参数
     // * `manager` - 模式管理器
-    // 
+    //
     // # 返回值
     // 成功时返回 Ok(())，失败时返回数据库错误
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {

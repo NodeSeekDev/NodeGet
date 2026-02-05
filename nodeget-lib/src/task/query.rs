@@ -12,16 +12,16 @@ pub enum TaskQueryCondition {
     // 按时间戳范围过滤（开始时间，结束时间）
     TimestampFromTo(i64, i64), // start, end
     // 按时间戳起始点过滤
-    TimestampFrom(i64),        // start,
+    TimestampFrom(i64), // start,
     // 按时间戳结束点过滤
-    TimestampTo(i64),          // end
+    TimestampTo(i64), // end
 
     // 仅查找成功完成的任务
-    IsSuccess,    // 仅查找 success 字段为 true
+    IsSuccess, // 仅查找 success 字段为 true
     // 仅查找执行失败的任务
-    IsFailure,    // 仅查找 success 字段为 false
+    IsFailure, // 仅查找 success 字段为 false
     // 仅查找正在运行的任务
-    IsRunning,    // 仅查找 success 字段为空
+    IsRunning, // 仅查找 success 字段为空
     // 按任务类型过滤，task_event_type 中有字段为 `String` 的行
     Type(String),
 

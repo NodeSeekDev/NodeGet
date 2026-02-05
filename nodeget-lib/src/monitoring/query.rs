@@ -42,9 +42,9 @@ pub enum QueryCondition {
     // 按时间戳范围过滤（开始时间，结束时间）
     TimestampFromTo(i64, i64), // start, end
     // 按时间戳起始点过滤
-    TimestampFrom(i64),        // start,
+    TimestampFrom(i64), // start,
     // 按时间戳结束点过滤
-    TimestampTo(i64),          // end
+    TimestampTo(i64), // end
 
     // 限制返回结果数量
     Limit(u64), // limit

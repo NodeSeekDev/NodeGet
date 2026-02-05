@@ -25,9 +25,9 @@ static GLOBAL_STATIC_DATA_FROM_SYSTEM: OnceCell<Mutex<StaticDataFromSystem>> =
 
 impl StaticDataFromSystem {
     // 创建新的静态系统数据实例
-    // 
+    //
     // 该函数刷新系统信息并获取 CPU 和系统的基本静态信息，如核心数、品牌、系统名称等
-    // 
+    //
     // # 返回值
     // 返回包含 CPU 和系统静态数据的结构体
     pub async fn new() -> Self {
@@ -69,9 +69,9 @@ impl StaticDataFromSystem {
     }
 
     // 获取静态系统数据的可变引用
-    // 
+    //
     // 如果全局静态系统数据实例不存在，则初始化它；否则直接返回现有的实例
-    // 
+    //
     // # 返回值
     // 返回静态系统数据的互斥锁保护的可变引用
     pub async fn get() -> MutexGuard<'static, Self> {
@@ -97,9 +97,9 @@ static GLOBAL_DYNAMIC_DATA_FROM_SYSTEM: OnceCell<Mutex<DynamicDataFromSystem>> =
 
 impl DynamicDataFromSystem {
     // 创建新的动态系统数据实例
-    // 
+    //
     // 该函数刷新系统信息并获取 CPU、内存、负载和系统的动态信息
-    // 
+    //
     // # 返回值
     // 返回包含 CPU、内存、负载和系统动态数据的结构体
     async fn new() -> Self {
@@ -147,7 +147,7 @@ impl DynamicDataFromSystem {
     }
 
     // 更新动态系统数据
-    // 
+    //
     // 该函数刷新现有系统数据，更新 CPU 使用率和频率、内存使用情况、负载和系统信息
     async fn update(&mut self) {
         // 仅处理变更数据
@@ -179,9 +179,9 @@ impl DynamicDataFromSystem {
     }
 
     // 异步刷新并获取动态系统数据
-    // 
+    //
     // 如果全局动态系统数据实例不存在，则初始化它；否则更新现有数据并返回
-    // 
+    //
     // # 返回值
     // 返回动态系统数据的互斥锁保护的可变引用
     pub async fn refresh_and_get() -> MutexGuard<'static, Self> {

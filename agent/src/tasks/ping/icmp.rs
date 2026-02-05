@@ -14,10 +14,10 @@ static GLOBAL_ICMP_V4_CLIENT: OnceCell<Mutex<Client>> = OnceCell::const_new();
 static GLOBAL_ICMP_V6_CLIENT: OnceCell<Mutex<Client>> = OnceCell::const_new();
 
 // 对 IPv4 目标执行 ICMP Ping
-// 
+//
 // # 参数
 // * `target` - 目标 IP 地址
-// 
+//
 // # 返回值
 // 成功时返回往返时间，失败时返回错误
 async fn ping_v4_target(target: std::net::IpAddr) -> Result<std::time::Duration, SurgeError> {
@@ -44,10 +44,10 @@ async fn ping_v4_target(target: std::net::IpAddr) -> Result<std::time::Duration,
 }
 
 // 对 IPv6 目标执行 ICMP Ping
-// 
+//
 // # 参数
 // * `target` - 目标 IP 地址
-// 
+//
 // # 返回值
 // 成功时返回往返时间，失败时返回错误
 async fn ping_v6_target(target: std::net::IpAddr) -> Result<std::time::Duration, SurgeError> {
@@ -74,12 +74,12 @@ async fn ping_v6_target(target: std::net::IpAddr) -> Result<std::time::Duration,
 }
 
 // 对目标执行 ICMP Ping
-// 
+//
 // 该函数首先尝试解析目标地址（如果是域名则进行 DNS 查询），然后根据 IP 版本选择合适的协议进行 Ping
-// 
+//
 // # 参数
 // * `target` - 目标地址（可以是 IP 或域名）
-// 
+//
 // # 返回值
 // 成功时返回往返时间，失败时返回错误信息
 pub async fn ping_target(target: String) -> Result<std::time::Duration, String> {

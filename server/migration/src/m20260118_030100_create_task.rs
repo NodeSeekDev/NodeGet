@@ -9,7 +9,7 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     // 执行迁移：创建任务表
-    // 
+    //
     // 该函数创建一个名为 task 的表，包含以下列：
     // - id: 主键，自增大整数
     // - uuid: Agent 设备的 UUID
@@ -19,12 +19,12 @@ impl MigrationTrait for Migration {
     // - error_message: 错误消息，可为空
     // - task_event_type: 任务事件类型，JSON 格式
     // - task_event_result: 任务事件结果，JSON 格式，可为空
-    // 
+    //
     // 还会创建一个复合索引 (uuid, token)，并在 PostgreSQL 上启用 LZ4 压缩
-    // 
+    //
     // # 参数
     // * `manager` - 模式管理器
-    // 
+    //
     // # 返回值
     // 成功时返回 Ok(())，失败时返回数据库错误
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
@@ -40,31 +40,15 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(TaskInDatabase::Uuid)
-                            .uuid()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(TaskInDatabase::Token)
-                            .string()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(TaskInDatabase::Uuid).uuid().not_null())
+                    .col(ColumnDef::new(TaskInDatabase::Token).string().not_null())
                     .col(
                         ColumnDef::new(TaskInDatabase::Timestamp)
                             .big_integer()
                             .null(),
                     )
-                    .col(
-                        ColumnDef::new(TaskInDatabase::Success)
-                            .boolean()
-                            .null(),
-                    )
-                    .col(
-                        ColumnDef::new(TaskInDatabase::ErrorMessage)
-                            .string()
-                            .null(),
-                    )
+                    .col(ColumnDef::new(TaskInDatabase::Success).boolean().null())
+                    .col(ColumnDef::new(TaskInDatabase::ErrorMessage).string().null())
                     .col(
                         ColumnDef::new(TaskInDatabase::TaskEventType)
                             .json_binary()
@@ -108,10 +92,10 @@ impl MigrationTrait for Migration {
     }
 
     // 回滚迁移：删除任务表
-    // 
+    //
     // # 参数
     // * `manager` - 模式管理器
-    // 
+    //
     // # 返回值
     // 成功时返回 Ok(())，失败时返回数据库错误
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {

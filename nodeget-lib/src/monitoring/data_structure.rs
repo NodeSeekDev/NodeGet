@@ -197,7 +197,7 @@ pub struct DynamicPerNetworkInterfaceData {
     // 网络接口名称
     pub interface_name: String,
     // 总接收数据量（字节），从上次网卡重启开始计算
-    pub total_received: u64,    // 从上次网卡重启开始计算
+    pub total_received: u64, // 从上次网卡重启开始计算
     // 总发送数据量（字节），从上次网卡重启开始计算
     pub total_transmitted: u64, // 从上次网卡重启开始计算
     // 接收速度（字节/秒）

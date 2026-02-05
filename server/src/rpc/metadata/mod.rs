@@ -1,17 +1,15 @@
-use crate::DB;
 use crate::entity::metadata as metadata_entity;
-use crate::entity::metadata::Model;
 use crate::rpc::RpcHelper;
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::async_trait;
 use jsonrpsee::proc_macros::rpc;
 use nodeget_lib::metadata;
-use nodeget_lib::permission::data_structure::{
-    Metadata as MetadataPermission, Permission, Scope, Task,
-};
+use nodeget_lib::permission::data_structure::{Metadata as MetadataPermission, Permission, Scope};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::error_message::generate_error_message;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, DbErr, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter,
+};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -35,7 +33,7 @@ impl RpcServer for MetadataRpcImpl {
             let token_or_auth = match TokenOrAuth::from_full_token(&token) {
                 Ok(toa) => toa,
                 Err(e) => {
-                    return Err((101, format!("Failed to parse token: {}", e)));
+                    return Err((101, format!("Failed to parse token: {e}")));
                 }
             };
 
@@ -47,7 +45,10 @@ impl RpcServer for MetadataRpcImpl {
             .await?;
 
             if !is_allowed {
-                return Err((102, "Permission Denied: Missing Metadata Read permission".to_string()));
+                return Err((
+                    102,
+                    "Permission Denied: Missing Metadata Read permission".to_string(),
+                ));
             }
 
             let db = Self::get_db()?;
@@ -61,12 +62,9 @@ impl RpcServer for MetadataRpcImpl {
                     let metadata_struct = metadata::Metadata {
                         agent_uuid: model.uuid,
                         agent_name: model.name,
-                        agent_tags: match model.tags {
-                            Some(json_val) => {
-                                serde_json::from_value(json_val).unwrap_or_else(|_| vec![])
-                            }
-                            None => vec![],
-                        },
+                        agent_tags: model.tags.map_or_else(std::vec::Vec::new, |json_val| {
+                            serde_json::from_value(json_val).unwrap_or_else(|_| vec![])
+                        }),
                     };
                     Ok(metadata_struct)
                 }
@@ -78,9 +76,7 @@ impl RpcServer for MetadataRpcImpl {
                     };
                     Ok(empty_metadata)
                 }
-                _ => {
-                    return Err((103, "Database error".to_string()));
-                }
+                _ => Err((103, "Database error".to_string())),
             }
         };
 
@@ -95,7 +91,7 @@ impl RpcServer for MetadataRpcImpl {
             let token_or_auth = match TokenOrAuth::from_full_token(&token) {
                 Ok(toa) => toa,
                 Err(e) => {
-                    return Err((101, format!("Failed to parse token: {}", e)));
+                    return Err((101, format!("Failed to parse token: {e}")));
                 }
             };
 
@@ -113,7 +109,10 @@ impl RpcServer for MetadataRpcImpl {
             };
 
             if !is_allowed {
-                return Err((102, "Permission Denied: Missing Metadata Write permission".to_string()));
+                return Err((
+                    102,
+                    "Permission Denied: Missing Metadata Write permission".to_string(),
+                ));
             }
 
             let db = Self::get_db()?;
@@ -121,7 +120,7 @@ impl RpcServer for MetadataRpcImpl {
             let tags_json = match serde_json::to_value(&metadata.agent_tags) {
                 Ok(json_val) => Some(json_val),
                 Err(e) => {
-                    return Err((101, format!("Failed to serialize tags: {}", e)));
+                    return Err((101, format!("Failed to serialize tags: {e}")));
                 }
             };
 
@@ -138,25 +137,23 @@ impl RpcServer for MetadataRpcImpl {
 
                     match active_model.clone().update(db).await {
                         Ok(_) => Ok(active_model.id.unwrap()),
-                        Err(e) => return Err((103, format!("Database update error: {}", e))),
+                        Err(e) => Err((103, format!("Database update error: {e}"))),
                     }
                 }
                 Ok(None) => {
                     let new_metadata = metadata_entity::ActiveModel {
-                        id: Default::default(),
+                        id: ActiveValue::default(),
                         uuid: Set(metadata.agent_uuid),
                         name: Set(metadata.agent_name),
                         tags: Set(tags_json),
                     };
 
                     match new_metadata.insert(db).await {
-                        Ok(inserted_model) => return Ok(inserted_model.id),
-                        Err(e) => return Err((103, format!("Database insert error: {}", e))),
+                        Ok(inserted_model) => Ok(inserted_model.id),
+                        Err(e) => Err((103, format!("Database insert error: {e}"))),
                     }
                 }
-                _ => {
-                    return Err((103, "Database error".to_string()));
-                }
+                _ => Err((103, "Database error".to_string())),
             }
         };
 

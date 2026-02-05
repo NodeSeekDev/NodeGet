@@ -18,11 +18,7 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(MetadataInDatabase::Uuid)
-                            .uuid()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(MetadataInDatabase::Uuid).uuid().not_null())
                     .col(
                         ColumnDef::new(MetadataInDatabase::Name)
                             .string()

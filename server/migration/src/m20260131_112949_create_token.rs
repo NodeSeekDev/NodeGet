@@ -8,7 +8,7 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     // 执行迁移：创建令牌表
-    // 
+    //
     // 该函数创建一个名为 token 的表，包含以下列：
     // - id: 主键，自增大整数
     // - version: 令牌版本号
@@ -19,10 +19,10 @@ impl MigrationTrait for Migration {
     // - token_limit: 令牌权限限制，JSON 格式
     // - username: 用户名，唯一索引，可为空
     // - password_hash: 密码哈希值，可为空
-    // 
+    //
     // # 参数
     // * `manager` - 模式管理器
-    // 
+    //
     // # 返回值
     // 成功时返回 Ok(())，失败时返回数据库错误
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
@@ -88,10 +88,10 @@ impl MigrationTrait for Migration {
     }
 
     // 回滚迁移：删除令牌表
-    // 
+    //
     // # 参数
     // * `manager` - 模式管理器
-    // 
+    //
     // # 返回值
     // 成功时返回 Ok(())，失败时返回数据库错误
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
