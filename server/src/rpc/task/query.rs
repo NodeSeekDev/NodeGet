@@ -16,6 +16,14 @@ use serde_json::value::RawValue;
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::server_json::{rename_key, try_parse_json_field};
 
+// 查询任务数据
+// 
+// # 参数
+// * `token` - 认证令牌
+// * `task_data_query` - 任务数据查询条件
+// 
+// # 返回值
+// 返回查询结果的原始 JSON 值，包含 Vec<TaskResponseItem> 格式的任务数据
 pub async fn query(token: String, task_data_query: TaskDataQuery) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         // 鉴权

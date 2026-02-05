@@ -14,6 +14,16 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 
+// 创建任务并将其发送给目标 Agent
+// 
+// # 参数
+// * `manager` - 任务管理器引用
+// * `token` - 认证令牌
+// * `target_uuid` - 目标 Agent 的 UUID
+// * `task_type` - 任务事件类型
+// 
+// # 返回值
+// 返回创建任务的结果，成功时包含任务 ID，失败时包含错误信息
 pub async fn create_task(
     manager: &TaskManager,
     token: String,
@@ -97,7 +107,6 @@ pub async fn create_task(
                         error!("Database delete error during rollback: {del_err}");
                         (103, format!("Database delete error: {del_err}"))
                     });
-
                 error!("Error sending task event: {}", e.1);
                 Err((i64::from(e.0), format!("Error sending task event: {}", e.1)))
             }
@@ -110,6 +119,14 @@ pub async fn create_task(
     }
 }
 
+// 上传任务执行结果到数据库
+// 
+// # 参数
+// * `token` - 认证令牌
+// * `task_response` - 任务事件响应
+// 
+// # 返回值
+// 返回上传结果，成功时包含任务 ID，失败时包含错误信息
 pub async fn upload_task_result(token: String, task_response: TaskEventResponse) -> Value {
     let process_logic = async {
         let db = TaskRpcImpl::get_db()?;

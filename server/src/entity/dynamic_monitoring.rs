@@ -3,30 +3,43 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
+// 动态监控数据模型，存储设备实时运行状态数据
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "dynamic_monitoring")]
 pub struct Model {
+    // 主键 ID
     #[sea_orm(primary_key)]
     pub id: i64,
+    // Agent 设备的 UUID
     pub uuid: Uuid,
+    // 数据记录的时间戳
     pub timestamp: i64,
+    // CPU 动态数据，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub cpu_data: Json,
+    // 内存动态数据，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub ram_data: Json,
+    // 负载动态数据，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub load_data: Json,
+    // 系统动态数据，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub system_data: Json,
+    // 磁盘动态数据，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub disk_data: Json,
+    // 网络动态数据，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub network_data: Json,
+    // GPU 动态数据，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub gpu_data: Json,
 }
 
+// 关系定义枚举
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 
+// 活动模型行为实现
 impl ActiveModelBehavior for ActiveModel {}

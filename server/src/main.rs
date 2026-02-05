@@ -26,16 +26,27 @@ use tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
+// 数据库连接模块
 mod db_connection;
+// 实体模块，定义数据库实体
 mod entity;
+// RPC 接口模块
 mod rpc;
+// 终端模块，处理终端连接
 mod terminal;
+// 令牌模块，处理令牌相关功能
 mod token;
 
+// 全局数据库连接单例
 static DB: tokio::sync::OnceCell<sea_orm::DatabaseConnection> = tokio::sync::OnceCell::const_new();
+// 全局服务器配置单例
 static SERVER_CONFIG: std::sync::OnceLock<nodeget_lib::config::server::ServerConfig> =
     std::sync::OnceLock::new();
 
+// 服务器主函数
+// 
+// 该函数启动 NodeGet 服务器，初始化配置、日志、数据库连接、超级令牌，
+// 然后设置 RPC 服务和 WebSocket 终端处理器，并最终启动 HTTP 服务器。
 #[tokio::main]
 async fn main() {
     println!("Starting nodeget-server");

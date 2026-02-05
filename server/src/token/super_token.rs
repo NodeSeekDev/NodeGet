@@ -4,6 +4,10 @@ use crate::token::hash_string;
 use nodeget_lib::utils::generate_random_string;
 use sea_orm::{EntityTrait, Set};
 
+// 生成超级令牌，如果已存在则返回 None
+// 
+// # 返回值
+// 成功时返回 Some((full_token, raw_password))，如果已存在则返回 None，失败时返回错误消息
 pub async fn generate_super_token() -> Result<Option<(String, String)>, String> {
     let db = DB
         .get()
@@ -51,6 +55,13 @@ pub async fn generate_super_token() -> Result<Option<(String, String)>, String> 
 
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 
+// 检查给定的令牌或认证信息是否为超级令牌
+// 
+// # 参数
+// * `token_or_auth` - 令牌或认证信息
+// 
+// # 返回值
+// 返回布尔值表示是否为超级令牌，失败时返回错误消息
 pub async fn check_super_token(
     token_or_auth: &TokenOrAuth,
 ) -> Result<bool, String> {

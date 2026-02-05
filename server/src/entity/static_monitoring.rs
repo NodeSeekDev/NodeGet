@@ -3,22 +3,31 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
+// 静态监控数据模型，存储设备静态硬件信息
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "static_monitoring")]
 pub struct Model {
+    // 主键 ID
     #[sea_orm(primary_key)]
     pub id: i64,
+    // Agent 设备的 UUID
     pub uuid: Uuid,
+    // 数据记录的时间戳
     pub timestamp: i64,
+    // CPU 静态数据，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub cpu_data: Json,
+    // 系统静态数据，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub system_data: Json,
+    // GPU 静态数据，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub gpu_data: Json,
 }
 
+// 关系定义枚举
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 
+// 活动模型行为实现
 impl ActiveModelBehavior for ActiveModel {}

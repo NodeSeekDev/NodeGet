@@ -8,6 +8,18 @@ use sea_orm::{ActiveValue, EntityTrait, Set};
 use serde_json;
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 
+// 根据父级令牌权限生成并存储新令牌
+// 
+// # 参数
+// * `father_token_or_auth` - 父级令牌或认证信息
+// * `timestamp_from` - 令牌生效时间戳，可选参数
+// * `timestamp_to` - 令牌过期时间戳，可选参数
+// * `token_limit` - 令牌权限限制列表
+// * `username` - 用户名，可选参数
+// * `password` - 密码，可选参数
+// 
+// # 返回值
+// 成功时返回 (token_key, token_secret) 元组，失败时返回错误代码和消息
 pub async fn generate_and_store_token(
     father_token_or_auth: &TokenOrAuth,
 

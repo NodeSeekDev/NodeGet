@@ -11,6 +11,14 @@ use serde_json::{Value, json};
 use std::str::FromStr;
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 
+// 上报静态监控数据到数据库
+// 
+// # 参数
+// * `token` - 认证令牌
+// * `static_monitoring_data` - 静态监控数据
+// 
+// # 返回值
+// 返回操作结果，成功时包含新插入记录的 ID，失败时包含错误信息
 pub async fn report_static(token: String, static_monitoring_data: StaticMonitoringData) -> Value {
     let process_logic = async {
         let agent_uuid = uuid::Uuid::from_str(&static_monitoring_data.uuid)
@@ -79,6 +87,14 @@ pub async fn report_static(token: String, static_monitoring_data: StaticMonitori
     }
 }
 
+// 上报动态监控数据到数据库
+// 
+// # 参数
+// * `token` - 认证令牌
+// * `dynamic_monitoring_data` - 动态监控数据
+// 
+// # 返回值
+// 返回操作结果，成功时包含新插入记录的 ID，失败时包含错误信息
 pub async fn report_dynamic(
     token: String,
     dynamic_monitoring_data: DynamicMonitoringData,

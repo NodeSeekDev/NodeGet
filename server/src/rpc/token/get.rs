@@ -3,6 +3,13 @@ use nodeget_lib::utils::error_message::generate_error_message;
 use serde_json::Value;
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 
+// 获取令牌信息
+// 
+// # 参数
+// * `token` - 认证令牌
+// 
+// # 返回值
+// 返回令牌信息的 JSON 值
 pub async fn get(token: String) -> Value {
     let token_or_auth = match TokenOrAuth::from_full_token(&token) {
         Ok(toa) => {

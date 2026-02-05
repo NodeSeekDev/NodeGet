@@ -9,6 +9,13 @@ use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
 use sea_orm::QueryFilter;
 
+// 根据令牌或认证信息获取令牌详细信息
+// 
+// # 参数
+// * `token_or_auth` - 令牌或认证信息
+// 
+// # 返回值
+// 成功时返回令牌信息，失败时返回错误代码和消息
 pub async fn get_token(
     token_or_auth: &TokenOrAuth,
 ) -> Result<Token, (i64, String)> {
@@ -64,6 +71,15 @@ pub async fn get_token(
     })
 }
 
+// 检查令牌是否有足够的权限执行特定操作
+// 
+// # 参数
+// * `token_or_auth` - 令牌或认证信息
+// * `scopes` - 请求的操作范围列表
+// * `permissions` - 请求的权限列表
+// 
+// # 返回值
+// 返回布尔值表示是否有足够权限，失败时返回错误代码和消息
 pub async fn check_token_limit(
     token_or_auth: &TokenOrAuth,
     scopes: Vec<Scope>,
