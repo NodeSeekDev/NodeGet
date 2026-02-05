@@ -3,12 +3,20 @@ use nodeget_lib::monitoring::data_structure::{DynamicGpuData, StaticGpuData};
 use nvml_wrapper::enum_wrappers::device::{Clock, TemperatureSensor};
 use tokio::sync::{Mutex, MutexGuard, OnceCell};
 
+// 从 GPU 获取的静态数据结构，包含 GPU 的基本信息
 #[derive(Debug)]
 pub struct StaticDataFromGpu(pub Vec<StaticGpuData>);
 
+// 全局静态 GPU 数据实例，用于缓存 GPU 静态信息
 static GLOBAL_STATIC_DATA_FROM_GPU: OnceCell<Mutex<StaticDataFromGpu>> = OnceCell::const_new();
 
 impl StaticDataFromGpu {
+    // 创建新的静态 GPU 数据实例
+    //
+    // 该函数通过 NVML 获取 GPU 的静态信息，如设备 ID、名称、CUDA 核心数和架构
+    //
+    // # 返回值
+    // 返回包含所有 GPU 静态数据的向量
     pub async fn new() -> Self {
         let nvml_mutex = get_global_gpu().await;
         let nvml_guard = nvml_mutex.lock().await;
@@ -34,6 +42,12 @@ impl StaticDataFromGpu {
         Self(data)
     }
 
+    // 获取静态 GPU 数据的可变引用
+    //
+    // 如果全局静态 GPU 数据实例不存在，则初始化它；否则直接返回现有的实例
+    //
+    // # 返回值
+    // 返回静态 GPU 数据的互斥锁保护的可变引用
     pub async fn get() -> MutexGuard<'static, Self> {
         let data_mutex = GLOBAL_STATIC_DATA_FROM_GPU
             .get_or_init(|| async { Mutex::new(Self::new().await) })
@@ -43,12 +57,20 @@ impl StaticDataFromGpu {
     }
 }
 
+// 从 GPU 获取的动态数据结构，包含 GPU 的实时性能数据
 #[derive(Debug)]
 pub struct DynamicDataFromGpu(pub Vec<DynamicGpuData>);
 
+// 全局动态 GPU 数据实例，用于缓存 GPU 动态信息
 static GLOBAL_DYNAMIC_DATA_FROM_GPU: OnceCell<Mutex<DynamicDataFromGpu>> = OnceCell::const_new();
 
 impl DynamicDataFromGpu {
+    // 创建新的动态 GPU 数据实例
+    //
+    // 该函数通过 NVML 获取 GPU 的动态信息，如显存使用情况、利用率、温度和时钟频率
+    //
+    // # 返回值
+    // 返回包含所有 GPU 动态数据的向量
     async fn new() -> Self {
         let nvml_mutex = get_global_gpu().await;
         let nvml_guard = nvml_mutex.lock().await;
@@ -87,6 +109,9 @@ impl DynamicDataFromGpu {
         Self(data)
     }
 
+    // 更新动态 GPU 数据
+    //
+    // 该函数刷新现有 GPU 数据，更新显存使用情况、利用率、温度和时钟频率等信息
     async fn update(&mut self) {
         let nvml_mutex = get_global_gpu().await;
         let nvml_guard = nvml_mutex.lock().await;
@@ -127,6 +152,12 @@ impl DynamicDataFromGpu {
         }
     }
 
+    // 异步刷新并获取动态 GPU 数据
+    //
+    // 如果全局动态 GPU 数据实例不存在，则初始化它；否则更新现有数据并返回
+    //
+    // # 返回值
+    // 返回动态 GPU 数据的互斥锁保护的可变引用
     pub async fn refresh_and_get() -> MutexGuard<'static, Self> {
         let data_mutex = GLOBAL_DYNAMIC_DATA_FROM_GPU
             .get_or_init(|| async { Mutex::new(Self::new().await) })

@@ -3,14 +3,25 @@ use crate::entity::token;
 use crate::token::hash_string;
 use crate::token::super_token::check_super_token;
 use nodeget_lib::permission::data_structure::Limit;
+use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::generate_random_string;
 use sea_orm::{ActiveValue, EntityTrait, Set};
 use serde_json;
 
+// 根据父级令牌权限生成并存储新令牌
+//
+// # 参数
+// * `father_token_or_auth` - 父级令牌或认证信息
+// * `timestamp_from` - 令牌生效时间戳，可选参数
+// * `timestamp_to` - 令牌过期时间戳，可选参数
+// * `token_limit` - 令牌权限限制列表
+// * `username` - 用户名，可选参数
+// * `password` - 密码，可选参数
+//
+// # 返回值
+// 成功时返回 (token_key, token_secret) 元组，失败时返回错误代码和消息
 pub async fn generate_and_store_token(
-    father_token: Option<String>,
-    father_username: Option<String>,
-    father_password: Option<String>,
+    father_token_or_auth: &TokenOrAuth,
 
     timestamp_from: Option<i64>,
     timestamp_to: Option<i64>,
@@ -19,13 +30,9 @@ pub async fn generate_and_store_token(
     username: Option<String>,
     password: Option<String>,
 ) -> Result<(String, String), (i64, String)> {
-    let is_authorized = check_super_token(
-        father_token.as_deref(),
-        father_username.as_deref(),
-        father_password.as_deref(),
-    )
-    .await
-    .map_err(|e| (102, e))?;
+    let is_authorized = check_super_token(father_token_or_auth)
+        .await
+        .map_err(|e| (102, e))?;
 
     if !is_authorized {
         return Err((

@@ -4,21 +4,16 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "token")]
+#[sea_orm(table_name = "metadata")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
-    pub version: i32,
     #[sea_orm(unique)]
-    pub token_key: String,
-    pub token_hash: String,
-    pub time_stamp_from: Option<i64>,
-    pub time_stamp_to: Option<i64>,
-    #[sea_orm(column_type = "JsonBinary")]
-    pub token_limit: Json,
+    pub uuid: Uuid,
     #[sea_orm(unique)]
-    pub username: Option<String>,
-    pub password_hash: Option<String>,
+    pub name: String,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub tags: Option<Json>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

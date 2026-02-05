@@ -97,6 +97,23 @@ export const themeZhConfig = {
 					text: '获取 Token 信息',
 					link: '/api/token/get.md'
 				}]
+			},
+			// Metadata
+			{
+				text: 'Metadata',
+				collapsed: false,
+				items: [{
+					text: '介绍',
+					link: '/api/metadata/index.md'
+				},
+				{
+					text: '写入 Metadata',
+					link: '/api/metadata/write.md'
+				},
+				{
+					text: '获取 Metadata 信息',
+					link: '/api/metadata/get.md'
+				}]
 			}]
 		}]
 	},

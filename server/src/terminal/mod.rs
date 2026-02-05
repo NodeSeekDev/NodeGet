@@ -1,3 +1,4 @@
+// Agent 连接检查模块
 mod check_agent;
 
 use crate::terminal::check_agent::check_agent;
@@ -12,25 +13,32 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 
+// 终端状态结构体，管理 Agent 和 User 之间的会话
 // Key 是 agent_uuid
 #[derive(Clone)]
 pub struct TerminalState {
+    // 存储终端会话的并发安全映射
     pub sessions: Arc<RwLock<HashMap<String, SessionSlots>>>,
 }
 
+// 会话槽位结构，Agent 连接时创建，User 连接时取走需要的部分
+//
 // Agent 连接时创建这个结构，User 连接时取走需要的部分
 pub struct SessionSlots {
-    // User -> Agent
+    // User -> Agent 的无界发送通道
     pub tx_to_agent: mpsc::UnboundedSender<Message>,
 
-    // Agent -> User
+    // Agent -> User 的无界接收通道，可选参数
     pub rx_from_agent: Option<mpsc::UnboundedReceiver<Message>>,
 
+    // 任务令牌
     pub task_token: String,
 }
 
+// 终端参数结构体，用于解析 WebSocket 连接参数
 #[derive(Deserialize)]
 pub struct TerminalParams {
+    // Agent 的 UUID
     pub agent_uuid: String,
 
     pub task_id: Option<u64>,       // 任务ID
@@ -39,6 +47,15 @@ pub struct TerminalParams {
     pub token: Option<String>,
 }
 
+// 终端 WebSocket 处理器
+//
+// # 参数
+// * `ws` - WebSocket 升级实例
+// * `Query(params)` - 查询参数
+// * `State(state)` - 终端状态
+//
+// # 返回值
+// 返回可转换为响应的类型
 pub async fn terminal_ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<TerminalParams>,
@@ -47,6 +64,12 @@ pub async fn terminal_ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, params, state))
 }
 
+// 处理 WebSocket 连接
+//
+// # 参数
+// * `socket` - WebSocket 连接实例
+// * `params` - 终端参数
+// * `state` - 终端状态
 async fn handle_socket(socket: WebSocket, params: TerminalParams, state: TerminalState) {
     // 有 task_token 的是 Agent，否则是 User
     if let (Some(task_token), Some(id)) = (params.task_token, params.task_id) {
@@ -56,6 +79,14 @@ async fn handle_socket(socket: WebSocket, params: TerminalParams, state: Termina
     }
 }
 
+// 处理 Agent 连接
+//
+// # 参数
+// * `socket` - WebSocket 连接实例
+// * `agent_uuid` - Agent 的 UUID
+// * `task_token` - 任务令牌
+// * `id` - 任务 ID
+// * `state` - 终端状态
 async fn handle_agent(
     mut socket: WebSocket,
     agent_uuid: String,
@@ -144,6 +175,12 @@ async fn handle_agent(
     info!("Agent terminal disconnected: {agent_uuid}");
 }
 
+// 处理 User 连接
+//
+// # 参数
+// * `socket` - WebSocket 连接实例
+// * `agent_uuid` - Agent 的 UUID
+// * `state` - 终端状态
 async fn handle_user(socket: WebSocket, agent_uuid: String, state: TerminalState) {
     info!("User connecting terminal to: {agent_uuid}");
 

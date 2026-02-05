@@ -1,11 +1,30 @@
 use crate::sea_orm::DbBackend;
 use sea_orm_migration::prelude::*;
 
+// 迁移名称派生宏
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
+// 静态监控数据表的创建和删除迁移实现
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
+    // 执行迁移：创建静态监控表
+    //
+    // 该函数创建一个名为 static_monitoring 的表，包含以下列：
+    // - id: 主键，自增大整数
+    // - uuid: Agent 设备的 UUID
+    // - timestamp: 数据记录的时间戳
+    // - cpu_data: CPU 静态数据，JSON 格式
+    // - system_data: 系统静态数据，JSON 格式
+    // - gpu_data: GPU 静态数据，JSON 格式
+    //
+    // 还会创建一个复合索引 (uuid, timestamp)，并在 PostgreSQL 上启用 LZ4 压缩
+    //
+    // # 参数
+    // * `manager` - 模式管理器
+    //
+    // # 返回值
+    // 成功时返回 Ok(())，失败时返回数据库错误
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .create_table(
@@ -76,6 +95,13 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 
+    // 回滚迁移：删除静态监控表
+    //
+    // # 参数
+    // * `manager` - 模式管理器
+    //
+    // # 返回值
+    // 成功时返回 Ok(())，失败时返回数据库错误
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .drop_table(
@@ -87,6 +113,7 @@ impl MigrationTrait for Migration {
     }
 }
 
+// 静态监控表的标识符枚举，用于定义表和列的名称
 #[derive(DeriveIden)]
 enum StaticMonitoringInDatabase {
     #[sea_orm(iden = "static_monitoring")]

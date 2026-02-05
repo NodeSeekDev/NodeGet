@@ -2,7 +2,6 @@ use crate::entity::{dynamic_monitoring, static_monitoring};
 use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
 use crate::token::get::check_token_limit;
-use crate::token::parse_token_and_auth;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
 use log::error;
@@ -12,8 +11,9 @@ use nodeget_lib::monitoring::query::{
 use nodeget_lib::permission::data_structure::{
     DynamicMonitoring, Permission, Scope, StaticMonitoring,
 };
+use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::error_message::error_to_raw;
-use nodeget_lib::utils::rename_and_fix_json;
+use nodeget_lib::utils::server_json::rename_and_fix_json;
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, ExprTrait, Order, QueryFilter, QueryOrder,
     QuerySelect, SelectModel, Selector,
@@ -21,13 +21,24 @@ use sea_orm::{
 use serde_json::Value;
 use serde_json::value::RawValue;
 
+// 查询静态监控数据
+//
+// # 参数
+// * `token` - 认证令牌
+// * `static_data_query` - 静态数据查询条件
+//
+// # 返回值
+// 返回查询结果，格式为 Vec<StaticResponseItem> 的原始 JSON 值
 pub async fn query_static(
     token: String,
     static_data_query: StaticDataQuery,
 ) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         // 鉴权
-        let (token_arg, username_arg, password_arg) = parse_token_and_auth(&token);
+        let token_or_auth = match TokenOrAuth::from_full_token(&token) {
+            Ok(toa) => toa,
+            Err(e) => return Err((101, format!("Failed to parse token: {e}"))),
+        };
 
         let mut scopes = Vec::new();
         let mut has_uuid_condition = false;
@@ -56,8 +67,7 @@ pub async fn query_static(
             })
             .collect();
 
-        let is_allowed =
-            check_token_limit(token_arg, username_arg, password_arg, scopes, permissions).await?;
+        let is_allowed = check_token_limit(&token_or_auth, scopes, permissions).await?;
 
         if !is_allowed {
             return Err((
@@ -145,13 +155,24 @@ pub async fn query_static(
         .unwrap_or_else(|(code, msg)| error_to_raw(code, &msg)))
 }
 
+// 查询动态监控数据
+//
+// # 参数
+// * `token` - 认证令牌
+// * `dynamic_data_query` - 动态数据查询条件
+//
+// # 返回值
+// 返回查询结果，格式为 Vec<DynamicResponseItem> 的原始 JSON 值
 pub async fn query_dynamic(
     token: String,
     dynamic_data_query: DynamicDataQuery,
 ) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         // 鉴权
-        let (token_arg, username_arg, password_arg) = parse_token_and_auth(&token);
+        let token_or_auth = match TokenOrAuth::from_full_token(&token) {
+            Ok(toa) => toa,
+            Err(e) => return Err((101, format!("Failed to parse token: {e}"))),
+        };
 
         let mut scopes = Vec::new();
         let mut has_uuid_condition = false;
@@ -183,8 +204,7 @@ pub async fn query_dynamic(
             })
             .collect();
 
-        let is_allowed =
-            check_token_limit(token_arg, username_arg, password_arg, scopes, permissions).await?;
+        let is_allowed = check_token_limit(&token_or_auth, scopes, permissions).await?;
 
         if !is_allowed {
             return Err((
@@ -282,6 +302,15 @@ pub async fn query_dynamic(
 }
 
 // 流式读取、JSON 重命名和序列化
+//
+// # 参数
+// * `db` - 数据库连接引用
+// * `query` - 查询选择器
+// * `field_mappings` - 字段映射表，用于将数据库字段名映射为用户友好的字段名
+// * `capacity_hint` - 输出缓冲区容量提示
+//
+// # 返回值
+// 返回序列化后的原始 JSON 值，失败时返回错误代码和消息
 async fn execute_query(
     db: &DatabaseConnection,
     query: Selector<SelectModel<Value>>,

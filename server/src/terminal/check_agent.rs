@@ -4,6 +4,15 @@ use crate::rpc::task::TaskRpcImpl;
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use uuid::Uuid;
 
+// 检查 Agent 是否有权连接终端
+//
+// # 参数
+// * `agent_uuid` - Agent 的 UUID
+// * `task_token` - 任务令牌
+// * `task_id` - 任务 ID
+//
+// # 返回值
+// 返回布尔值表示是否有权连接，失败时返回错误代码和消息
 pub async fn check_agent(
     agent_uuid: String,
     task_token: String,

@@ -1,27 +1,45 @@
 use crate::entity::task;
 use crate::rpc::RpcHelper;
 use crate::rpc::task::TaskRpcImpl;
+use crate::token::get::check_token_limit;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
 use log::error;
+use nodeget_lib::permission::data_structure::{Permission, Scope, Task};
+use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::task::query::{TaskDataQuery, TaskQueryCondition};
 use nodeget_lib::utils::error_message::error_to_raw;
-use nodeget_lib::utils::{rename_key, try_parse_json_field};
+use nodeget_lib::utils::server_json::{rename_key, try_parse_json_field};
 use sea_orm::sea_query::{Alias, BinOper, Expr};
 use sea_orm::{
     ColumnTrait, DbBackend, EntityTrait, ExprTrait, Order, QueryFilter, QueryOrder, QuerySelect,
 };
 use serde_json::value::RawValue;
-use nodeget_lib::permission::data_structure::{Permission, Scope, Task};
-use crate::token::get::check_token_limit;
-use crate::token::parse_token_and_auth;
 
+// 查询任务数据
+//
+// # 参数
+// * `token` - 认证令牌
+// * `task_data_query` - 任务数据查询条件
+//
+// # 返回值
+// 返回查询结果的原始 JSON 值，包含 Vec<TaskResponseItem> 格式的任务数据
 pub async fn query(token: String, task_data_query: TaskDataQuery) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         // 鉴权
-        let (token_arg, username_arg, password_arg) = parse_token_and_auth(&token);
+        let token_or_auth = match TokenOrAuth::from_full_token(&token) {
+            Ok(toa) => toa,
+            Err(e) => return Err((101, format!("Failed to parse token: {e}"))),
+        };
 
-        let all_task_types = ["ping", "tcp_ping", "http_ping", "web_shell", "execute", "ip"];
+        let all_task_types = [
+            "ping",
+            "tcp_ping",
+            "http_ping",
+            "web_shell",
+            "execute",
+            "ip",
+        ];
 
         let mut scopes = Vec::new();
         let mut has_uuid_condition = false;
@@ -54,19 +72,13 @@ pub async fn query(token: String, task_data_query: TaskDataQuery) -> RpcResult<B
                 .collect()
         };
 
-        let is_allowed = check_token_limit(
-            token_arg.clone(),
-            username_arg.clone(),
-            password_arg.clone(),
-            scopes,
-            permissions,
-        )
-            .await?;
+        let is_allowed = check_token_limit(&token_or_auth, scopes, permissions).await?;
 
         if !is_allowed {
             return Err((
                 102,
-                "Permission Denied: Insufficient permissions to read requested task types".to_string(),
+                "Permission Denied: Insufficient permissions to read requested task types"
+                    .to_string(),
             ));
         }
         let db = TaskRpcImpl::get_db()?;

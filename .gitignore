@@ -1,5 +1,5 @@
 target/
-test.db
+test.db*
 .idea/
 .env
 .DS_Store
@@ -11,3 +11,4 @@ config.toml
 node_modules/
 docs/.vitepress/dist
 docs/.vitepress/cache
+md.md

@@ -1,9 +1,13 @@
 use crate::DB;
 use crate::entity::token;
-use crate::token::{hash_string, split_token};
+use crate::token::hash_string;
 use nodeget_lib::utils::generate_random_string;
 use sea_orm::{EntityTrait, Set};
 
+// 生成超级令牌，如果已存在则返回 None
+//
+// # 返回值
+// 成功时返回 Some((full_token, raw_password))，如果已存在则返回 None，失败时返回错误消息
 pub async fn generate_super_token() -> Result<Option<(String, String)>, String> {
     let db = DB
         .get()
@@ -49,19 +53,16 @@ pub async fn generate_super_token() -> Result<Option<(String, String)>, String> 
     Ok(Some((full_token, raw_password)))
 }
 
-pub async fn check_super_token(
-    token: Option<&str>,
-    username: Option<&str>,
-    password: Option<&str>,
-) -> Result<bool, String> {
-    if username.is_some() != password.is_some() {
-        return Err("Username and Password must be both provided or both absent".to_string());
-    }
+use nodeget_lib::permission::token_auth::TokenOrAuth;
 
-    if token.is_none() && username.is_none() {
-        return Err("Either Token or (Username/Password) must be provided".to_string());
-    }
-
+// 检查给定的令牌或认证信息是否为超级令牌
+//
+// # 参数
+// * `token_or_auth` - 令牌或认证信息
+//
+// # 返回值
+// 返回布尔值表示是否为超级令牌，失败时返回错误消息
+pub async fn check_super_token(token_or_auth: &TokenOrAuth) -> Result<bool, String> {
     let db = DB.get().ok_or("Database connection not initialized")?;
     let super_record = token::Entity::find_by_id(1)
         .one(db)
@@ -69,34 +70,22 @@ pub async fn check_super_token(
         .map_err(|e| format!("Database error: {e}"))?
         .ok_or("Super Token record (ID 1) not found in database")?;
 
-    let mut token_match = true;
-    let mut auth_match = true;
-
-    if let Some(full_token) = token {
-        let (key, secret) = split_token(full_token)?;
-
-        if key == super_record.token_key {
-            let hash = hash_string(secret);
-            if hash != super_record.token_hash {
-                token_match = false;
+    match token_or_auth {
+        TokenOrAuth::Token(key, secret) => {
+            if key == &super_record.token_key {
+                let hash = hash_string(secret);
+                Ok(hash == super_record.token_hash)
+            } else {
+                Ok(false)
             }
-        } else {
-            token_match = false;
+        }
+        TokenOrAuth::Auth(username, password) => {
+            if Some(username.clone()) == super_record.username {
+                let hash = hash_string(password);
+                Ok(Some(hash) == super_record.password_hash)
+            } else {
+                Ok(false)
+            }
         }
     }
-
-    if let Some(req_user) = username {
-        let req_pass = password.unwrap();
-
-        if Some(req_user.to_string()) == super_record.username {
-            let hash = hash_string(req_pass);
-            if Some(hash) != super_record.password_hash {
-                auth_match = false;
-            }
-        } else {
-            auth_match = false;
-        }
-    }
-
-    Ok(token_match && auth_match)
 }

@@ -2,9 +2,9 @@
 
 提供一个 Token，即可获取在 `Token 总览` 中的 Token 对应结构体
 
-## 创建方法
+## 获取方法
 
-`token_get` 是用于创建的方法，需要提供:
+`token_get` 是用于获取的方法，需要提供:
 
 - `token`: 需要查询的 Token
 

@@ -8,11 +8,19 @@ use std::time::Duration;
 use tokio::time;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
+// 任务执行模块
 mod execute;
+// IP 获取模块
 mod ip;
+// Ping 任务模块
 pub mod ping;
+// PTY（伪终端）模块
 mod pty;
 
+// 处理来自服务器的任务请求
+//
+// 该函数订阅各个服务器的任务通道，接收并执行不同类型的任务（如 Ping、TCP Ping、HTTP Ping、WebShell、命令执行、IP 查询），
+// 然后将执行结果返回给服务器
 pub async fn handle_task() {
     time::sleep(Duration::from_secs(1)).await;
 
@@ -97,7 +105,6 @@ pub async fn handle_task() {
                             TaskEventType::WebShell(url) => {
                                 if server.allow_web_shell.unwrap_or(false) {
                                     let task_id = json_rpc.params.result.task_id;
-
                                     let url = pty::parse_url(
                                         url,
                                         task_id,

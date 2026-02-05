@@ -3,8 +3,18 @@ use std::process::Stdio;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
+// 命令执行超时时间，设定为 60 秒
 const EXECUTE_TIMEOUT: Duration = Duration::from_secs(60);
 
+// 执行指定的命令
+//
+// 该函数根据操作系统和配置选择合适的 shell 来执行命令，并处理输出结果
+//
+// # 参数
+// * `command` - 要执行的命令字符串
+//
+// # 返回值
+// 成功时返回命令输出字符串，失败时返回错误信息
 pub async fn execute_command(command: String) -> Result<String, String> {
     let config = AGENT_CONFIG.get().expect("Agent config not initialized");
     let max_chars = config.exec_max_character.unwrap_or(10000);

@@ -1,14 +1,16 @@
 use crate::AGENT_CONFIG;
 use crate::monitoring::impls::Monitor;
-use crate::rpc::multi_server::{send_to, subscribe_to};
-use crate::rpc::{JsonRpcErrorMessage, wrap_json_into_rpc_with_id_1};
-use log::{error, trace, warn};
+use crate::rpc::multi_server::send_to;
+use crate::rpc::wrap_json_into_rpc_with_id_1;
+use log::{error, trace};
 use nodeget_lib::monitoring::data_structure::{DynamicMonitoringData, StaticMonitoringData};
 use std::time::Duration;
-use tokio::time;
 use tokio::time::{MissedTickBehavior, interval};
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
+// 处理静态监控数据上报
+//
+// 该函数每隔 1 分钟刷新并获取静态监控数据（如 CPU、系统、GPU 基本信息），然后将其发送到配置的服务器
 pub async fn handle_static_monitoring_data_report() {
     let agent_config = AGENT_CONFIG.get().expect("Agent config not initialized");
 
@@ -45,6 +47,10 @@ pub async fn handle_static_monitoring_data_report() {
     }
 }
 
+// 处理动态监控数据上报
+//
+// 该函数按照配置的间隔时间刷新并获取动态监控数据（如 CPU 使用率、内存、负载、网络等实时数据），然后将其发送到配置的服务器
+// 默认间隔时间为 1 秒
 pub async fn handle_dynamic_monitoring_data_report() {
     let agent_config = AGENT_CONFIG.get().expect("Agent config not initialized");
     let interval_ms = agent_config.monitoring_report_interval_ms.unwrap_or(1000);
