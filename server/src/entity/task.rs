@@ -3,34 +3,23 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-// 任务数据模型，存储任务相关信息及执行结果
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "task")]
 pub struct Model {
-    // 主键 ID
     #[sea_orm(primary_key)]
     pub id: i64,
-    // Agent 设备的 UUID
     pub uuid: Uuid,
-    // 任务令牌，用于校验上传者身份
     pub token: String,
-    // 任务完成的时间戳，可选参数
     pub timestamp: Option<i64>,
-    // 任务执行是否成功，可选参数
     pub success: Option<bool>,
-    // 任务执行错误消息，可选参数
     pub error_message: Option<String>,
-    // 任务事件类型，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub task_event_type: Json,
-    // 任务事件结果，JSON 格式，可选参数
     #[sea_orm(column_type = "JsonBinary", nullable)]
     pub task_event_result: Option<Json>,
 }
 
-// 关系定义枚举
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 
-// 活动模型行为实现
 impl ActiveModelBehavior for ActiveModel {}

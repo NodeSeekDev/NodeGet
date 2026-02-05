@@ -3,37 +3,25 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-// 令牌数据模型，存储令牌及其权限限制信息
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "token")]
 pub struct Model {
-    // 主键 ID
     #[sea_orm(primary_key)]
     pub id: i64,
-    // 令牌版本号
     pub version: i32,
-    // 令牌密钥，唯一索引
     #[sea_orm(unique)]
     pub token_key: String,
-    // 令牌哈希值
     pub token_hash: String,
-    // 令牌生效时间戳，可选参数
     pub time_stamp_from: Option<i64>,
-    // 令牌过期时间戳，可选参数
     pub time_stamp_to: Option<i64>,
-    // 令牌权限限制，JSON 格式
     #[sea_orm(column_type = "JsonBinary")]
     pub token_limit: Json,
-    // 用户名，唯一索引，可选参数
     #[sea_orm(unique)]
     pub username: Option<String>,
-    // 密码哈希值，可选参数
     pub password_hash: Option<String>,
 }
 
-// 关系定义枚举
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
 
-// 活动模型行为实现
 impl ActiveModelBehavior for ActiveModel {}

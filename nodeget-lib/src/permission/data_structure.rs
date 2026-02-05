@@ -49,6 +49,8 @@ pub enum Permission {
     DynamicMonitoring(DynamicMonitoring),
     // 任务权限
     Task(Task),
+    // Metadata 权限
+    Metadata(Metadata)
 }
 
 // 静态监控权限枚举
@@ -85,4 +87,13 @@ pub enum Task {
     Write(String),
     // 监听权限
     Listen,
+}
+
+
+// Metadata 权限枚举
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Metadata {
+    Read,
+    Write,
 }

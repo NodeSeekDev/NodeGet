@@ -11,6 +11,7 @@ pub mod nodeget;
 pub mod task;
 // 令牌管理 RPC 接口模块
 pub mod token;
+mod metadata;
 
 // RPC 辅助功能 trait，提供数据库操作和序列化工具方法
 pub trait RpcHelper {
