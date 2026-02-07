@@ -93,7 +93,7 @@ jobs:
 
       - name: Compress binary
         working-directory: ./server
-        run: upx --brute target/${{ matrix.platform.target }}/minimal/server
+        run: upx --brute target/${{ matrix.platform.target }}/minimal/agent
 
       - name: Rename binary
         working-directory: ./server
