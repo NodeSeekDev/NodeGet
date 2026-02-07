@@ -93,11 +93,11 @@ jobs:
 
       - name: Compress binary
         working-directory: ./server
-        run: upx --brute target/${{ matrix.platform.target }}/minimal/server
+        run: upx --brute target/${{ matrix.platform.target }}/minimal/nodeget-server
 
       - name: Rename binary
         working-directory: ./server
-        run: cp target/${{ matrix.platform.target }}/minimal/server target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+        run: cp target/${{ matrix.platform.target }}/minimal/nodeget-server target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
