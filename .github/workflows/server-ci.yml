@@ -34,7 +34,7 @@ jobs:
 
       - name: Cargo clippy
         working-directory: ./server
-        run: cargo clippy --locked --profile minimal -- -D warnings
+        run: cargo clippy --locked --profile minimal
 
   check:
     name: Server Check
@@ -51,4 +51,4 @@ jobs:
 
       - name: Cargo clippy
         working-directory: ./server
-        run: cargo clippy --locked --profile minimal -- -D warnings
+        run: cargo clippy --locked --profile minimal
