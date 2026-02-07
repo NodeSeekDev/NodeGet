@@ -156,7 +156,7 @@ async fn handle_agent(
     let send_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = ws_receiver.next().await {
             if tx_to_user.send(msg).is_err() {
-                continue;
+                break;
             }
         }
     });

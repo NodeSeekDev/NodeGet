@@ -74,6 +74,11 @@ pub enum IpProvider {
 }
 
 impl AgentConfig {
+    /// 从指定路径读取并解析代理配置
+    ///
+    /// # Errors
+    ///
+    /// 当文件读取失败或TOML解析失败时返回错误
     pub async fn get_and_parse_config(
         path: impl AsRef<Path>,
     ) -> Result<Self, Box<dyn std::error::Error>> {

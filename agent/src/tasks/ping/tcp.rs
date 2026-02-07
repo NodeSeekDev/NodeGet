@@ -16,24 +16,20 @@ static PING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 // # 返回值
 // 成功时返回连接耗时，失败时返回错误信息
 pub async fn tcping_target(target: String) -> Result<std::time::Duration, String> {
-    let target_host = match lookup_host(target).await {
-        Ok(mut addrs) => addrs.next(),
-        Err(e) => {
-            error!("Resolving host error: {e}");
-            None
-        }
-    };
-
-    let Some(target) = target_host else {
-        return Err("Invalid target".to_string());
-    };
+    let target_host = lookup_host(target)
+        .await
+        .map_err(|e| error!("Resolving host error: {e}"))
+        .ok()
+        .and_then(|mut addrs| addrs.next())
+        .ok_or("Invalid target")?;
 
     let start = std::time::Instant::now();
-    match timeout(PING_TIMEOUT, TcpStream::connect(target)).await {
-        Ok(Ok(stream)) => {
+    timeout(PING_TIMEOUT, TcpStream::connect(target_host))
+        .await
+        .map_err(|_| "Tcp Ping Timeout".to_string())?
+        .map_err(|_| "Tcp Ping Error".to_string())
+        .map(|stream| {
             black_box(stream);
-            Ok(start.elapsed())
-        }
-        _ => Err("Http Ping Error".to_string()),
-    }
+            start.elapsed()
+        })
 }

@@ -33,21 +33,25 @@ impl StaticDataFromSystem {
     pub async fn new() -> Self {
         refresh_global_system().await;
         let system_mutex = crate::monitoring::get_global_system().await;
-        let system = system_mutex.lock().await;
+        let (per_core, logical_cores) = {
+            let system = system_mutex.lock().await;
 
-        let per_core = system
-            .cpus()
-            .iter()
-            .enumerate()
-            .map(|(i, cpu)| StaticPerCpuCoreData {
-                id: (i + 1) as u32,
-                name: cpu.name().to_string(),
-                vendor_id: cpu.vendor_id().to_string(),
-                brand: cpu.brand().to_string().trim().to_string(),
-            })
-            .collect::<Vec<_>>();
+            let per_core = system
+                .cpus()
+                .iter()
+                .enumerate()
+                .map(|(i, cpu)| StaticPerCpuCoreData {
+                    id: (i + 1) as u32,
+                    name: cpu.name().to_string(),
+                    vendor_id: cpu.vendor_id().to_string(),
+                    brand: cpu.brand().to_string().trim().to_string(),
+                })
+                .collect::<Vec<_>>();
 
-        let logical_cores = per_core.len() as u64;
+            let logical_cores = per_core.len() as u64;
+            (per_core, logical_cores)
+        };
+
         Self(
             StaticCPUData {
                 physical_cores: System::physical_core_count().unwrap_or(0) as u64,

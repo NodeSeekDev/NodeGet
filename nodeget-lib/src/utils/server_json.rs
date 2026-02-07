@@ -3,13 +3,11 @@ use serde::Serialize;
 use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 
-// 直接序列化为 RawValue，避免 Value 树，仅在启用 for-server 特性时编译
-//
-// # 参数
-// * `val` - 需要序列化的值
-//
-// # 返回值
-// 返回序列化后的 RawValue
+/// 将可序列化的值转换为原始JSON值
+///
+/// # Panics
+///
+/// 当序列化失败且回退错误消息也序列化失败时会发生panic（理论上不应发生）
 pub fn to_raw_json<T: Serialize>(val: T) -> Box<RawValue> {
     serde_json::value::to_raw_value(&val).unwrap_or_else(|e| {
         error!("Serialization error: {e}");

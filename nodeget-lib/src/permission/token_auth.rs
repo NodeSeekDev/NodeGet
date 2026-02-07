@@ -11,11 +11,11 @@ pub enum TokenOrAuth {
 }
 
 impl TokenOrAuth {
-    // 从完整令牌字符串解析出认证信息
-    //
-    // # 参数
-    // * `full_token` - 完整令牌字符串，格式为 'key:secret' 或 'username|password'
-
+    /// 从完整令牌字符串解析令牌或认证信息
+    ///
+    /// # Errors
+    ///
+    /// 当令牌格式无效时返回错误，格式必须是 'key:secret' 或 'username|password'
     pub fn from_full_token(full_token: &str) -> Result<Self, String> {
         if let Some((key, secret)) = full_token.split_once(':') {
             Ok(Self::Token(key.to_string(), secret.to_string()))

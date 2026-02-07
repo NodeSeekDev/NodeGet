@@ -71,21 +71,9 @@ pub async fn check_super_token(token_or_auth: &TokenOrAuth) -> Result<bool, Stri
         .ok_or("Super Token record (ID 1) not found in database")?;
 
     match token_or_auth {
-        TokenOrAuth::Token(key, secret) => {
-            if key == &super_record.token_key {
-                let hash = hash_string(secret);
-                Ok(hash == super_record.token_hash)
-            } else {
-                Ok(false)
-            }
-        }
-        TokenOrAuth::Auth(username, password) => {
-            if Some(username.clone()) == super_record.username {
-                let hash = hash_string(password);
-                Ok(Some(hash) == super_record.password_hash)
-            } else {
-                Ok(false)
-            }
-        }
+        TokenOrAuth::Token(key, secret) => Ok(key == &super_record.token_key
+            && hash_string(secret) == super_record.token_hash),
+        TokenOrAuth::Auth(username, password) => Ok(Some(username.clone()) == super_record.username
+            && Some(hash_string(password)) == super_record.password_hash),
     }
 }

@@ -37,9 +37,11 @@ async fn get_global_system() -> &'static Mutex<System> {
 // 该函数获取全局系统实例并刷新CPU使用率、频率以及内存信息
 async fn refresh_global_system() {
     let system_mutex = get_global_system().await;
-    let mut system = system_mutex.lock().await;
-    system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage().with_frequency());
-    system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram().with_swap());
+    {
+        let mut system = system_mutex.lock().await;
+        system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage().with_frequency());
+        system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram().with_swap());
+    }
 }
 
 // 磁盘监控相关功能
@@ -76,21 +78,23 @@ async fn refresh_global_disk() -> Duration {
         .await;
 
     let disk_mutex = get_global_disk().await;
-    let mut disk = disk_mutex.lock().await;
-    disk.refresh_specifics(
-        true,
-        DiskRefreshKind::nothing()
-            .with_io_usage()
-            .with_storage()
-            .without_kind(),
-    );
+    {
+        let mut disk = disk_mutex.lock().await;
+        disk.refresh_specifics(
+            true,
+            DiskRefreshKind::nothing()
+                .with_io_usage()
+                .with_storage()
+                .without_kind(),
+        );
 
-    let mut last_time = time_tracker.lock().await;
-    let now = Instant::now();
-    let interval = now.duration_since(*last_time);
+        let mut last_time = time_tracker.lock().await;
+        let now = Instant::now();
+        let interval = now.duration_since(*last_time);
 
-    *last_time = now;
-    interval
+        *last_time = now;
+        interval
+    }
 }
 
 // 网络监控相关功能
@@ -127,14 +131,16 @@ async fn refresh_global_network() -> Duration {
         .await;
 
     let network_mutex = get_global_network().await;
-    let mut network = network_mutex.lock().await;
-    network.refresh(true);
+    {
+        let mut network = network_mutex.lock().await;
+        network.refresh(true);
 
-    let mut last_time = time_tracker.lock().await;
-    let now = Instant::now();
-    let interval = now.duration_since(*last_time);
-    *last_time = now;
-    interval
+        let mut last_time = time_tracker.lock().await;
+        let now = Instant::now();
+        let interval = now.duration_since(*last_time);
+        *last_time = now;
+        interval
+    }
 }
 
 // GPU 监控相关功能

@@ -29,9 +29,10 @@ async fn ping_v4_target(target: std::net::IpAddr) -> Result<std::time::Duration,
         })
         .await;
 
-    let client = client_v4_mutex.lock().await;
-
-    let mut pinger = client.pinger(target, PingIdentifier(random())).await;
+    let mut pinger = {
+        let client = client_v4_mutex.lock().await;
+        client.pinger(target, PingIdentifier(random())).await
+    };
 
     match pinger
         .timeout(PING_TIMEOUT)
@@ -59,9 +60,10 @@ async fn ping_v6_target(target: std::net::IpAddr) -> Result<std::time::Duration,
         })
         .await;
 
-    let client = client_v6_mutex.lock().await;
-
-    let mut pinger = client.pinger(target, PingIdentifier(random())).await;
+    let mut pinger = {
+        let client = client_v6_mutex.lock().await;
+        client.pinger(target, PingIdentifier(random())).await
+    };
 
     match pinger
         .timeout(PING_TIMEOUT)
@@ -99,14 +101,8 @@ pub async fn ping_target(target: String) -> Result<std::time::Duration, String> 
     };
 
     if target.is_ipv4() {
-        match ping_v4_target(target).await {
-            Ok(duration) => Ok(duration),
-            Err(e) => Err(format!("{e}")),
-        }
+        ping_v4_target(target).await.map_err(|e| e.to_string())
     } else {
-        match ping_v6_target(target).await {
-            Ok(duration) => Ok(duration),
-            Err(e) => Err(format!("{e}")),
-        }
+        ping_v6_target(target).await.map_err(|e| e.to_string())
     }
 }

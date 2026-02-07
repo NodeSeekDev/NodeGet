@@ -6,6 +6,7 @@
     clippy::cast_possible_truncation,
     clippy::similar_names,
     clippy::too_many_lines,
+    clippy::significant_drop_tightening,
     dead_code
 )]
 

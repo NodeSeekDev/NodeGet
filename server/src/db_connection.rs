@@ -14,56 +14,31 @@ pub async fn init_db_connection() {
     let config = SERVER_CONFIG.get().expect("Server config not initialized");
 
     DB.get_or_init(|| async {
-        let Ok(log_level) = LevelFilter::from_str(
-            &config
-                .database
-                .sqlx_log_level
-                .clone()
-                .unwrap_or_else(|| "info".to_string()),
-        ) else {
-            error!(
-                "Configuration error: Invalid sqlx_log_level '{}'",
-                &config
-                    .database
-                    .sqlx_log_level
-                    .clone()
-                    .unwrap_or_else(|| "info".to_string())
-            );
+        let log_level_str = config.database.sqlx_log_level.clone().unwrap_or_else(|| "info".to_string());
+        let log_level = LevelFilter::from_str(&log_level_str).unwrap_or_else(|_| {
+            error!("Configuration error: Invalid sqlx_log_level '{log_level_str}'");
             process::exit(1);
-        };
+        });
 
         let mut opt = ConnectOptions::new(&config.database.database_url);
-        opt.sqlx_logging_level(log_level);
+        opt.sqlx_logging_level(log_level)
+            .connect_timeout(Duration::from_millis(config.database.connect_timeout_ms.unwrap_or(3000)))
+            .acquire_timeout(Duration::from_millis(config.database.acquire_timeout_ms.unwrap_or(3000)))
+            .idle_timeout(Duration::from_millis(config.database.idle_timeout_ms.unwrap_or(3000)))
+            .max_lifetime(Duration::from_millis(config.database.max_lifetime_ms.unwrap_or(30000)))
+            .max_connections(config.database.max_connections.unwrap_or(10));
 
-        opt.connect_timeout(Duration::from_millis(
-            config.database.connect_timeout_ms.unwrap_or(3000),
-        ));
-        opt.acquire_timeout(Duration::from_millis(
-            config.database.acquire_timeout_ms.unwrap_or(3000),
-        ));
-        opt.idle_timeout(Duration::from_millis(
-            config.database.idle_timeout_ms.unwrap_or(3000),
-        ));
-        opt.max_lifetime(Duration::from_millis(
-            config.database.max_lifetime_ms.unwrap_or(30000),
-        ));
-
-        opt.max_connections(config.database.max_connections.unwrap_or(10));
-
-        let db = match Database::connect(opt).await {
-            Ok(conn) => conn,
-            Err(e) => {
-                error!("Unable to connect to the database: {e}");
-                process::exit(1);
-            }
-        };
+        let db = Database::connect(opt).await.unwrap_or_else(|e| {
+            error!("Unable to connect to the database: {e}");
+            process::exit(1);
+        });
 
         info!("Database connected successfully.");
 
-        if let Err(e) = Migrator::up(&db, None).await {
+        Migrator::up(&db, None).await.unwrap_or_else(|e| {
             error!("Unable to apply migrations: {e}");
             process::exit(1);
-        }
+        });
 
         info!("Migrations applied successfully.");
 

@@ -42,9 +42,14 @@ pub struct DatabaseConfig {
 }
 
 impl ServerConfig {
+    /// 从指定路径读取并解析服务器配置
+    ///
+    /// # Errors
+    ///
+    /// 当文件读取失败或TOML解析失败时返回错误
     pub async fn get_and_parse_config(
         path: impl AsRef<Path>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let file = fs::read_to_string(path).await?;
 
         let config: Self = toml::from_str(&file)?;

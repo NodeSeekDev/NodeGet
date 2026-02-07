@@ -54,15 +54,14 @@ impl Monitor for DynamicMonitoringData {
     // # 返回值
     // 返回包含代理 UUID、时间戳以及 CPU、内存、负载、系统、磁盘、网络和 GPU 动态数据的动态监控数据结构
     async fn refresh_and_get() -> Self {
-        let (cpu, ram, load, system) = {
-            let guard_tuple = tokio::join!(DynamicDataFromSystem::refresh_and_get()).0;
-            (
-                guard_tuple.0.clone(),
-                guard_tuple.1.clone(),
-                guard_tuple.2.clone(),
-                guard_tuple.3.clone(),
-            )
-        };
+        let system_guard = DynamicDataFromSystem::refresh_and_get().await;
+        let (cpu, ram, load, system) = (
+            system_guard.0.clone(),
+            system_guard.1.clone(),
+            system_guard.2.clone(),
+            system_guard.3.clone(),
+        );
+        drop(system_guard);
 
         let handle_disk = tokio::spawn(DataFromDisk::refresh_and_get());
         let handle_network = tokio::spawn(DataFromNetwork::refresh_and_get());
@@ -106,32 +105,33 @@ impl DataFromDisk {
     pub async fn refresh_and_get() -> Self {
         let interval_secs = refresh_global_disk().await.as_secs_f64();
         let disk_mutex = crate::monitoring::get_global_disk().await;
-        let disks = disk_mutex.lock().await;
+        let per_disk_vec = {
+            let disks = disk_mutex.lock().await;
+            disks
+                .iter()
+                .map(|disk| {
+                    let usage = disk.usage();
 
-        let per_disk_vec = disks
-            .iter()
-            .map(|disk| {
-                let usage = disk.usage();
+                    DynamicPerDiskData {
+                        kind: match disk.kind() {
+                            DiskKind::HDD => Hdd,
+                            DiskKind::SSD => Ssd,
+                            DiskKind::Unknown(_) => Unknown,
+                        },
+                        name: disk.name().to_string_lossy().into_owned(),
+                        file_system: disk.file_system().to_string_lossy().into_owned(),
+                        mount_point: disk.mount_point().to_string_lossy().into_owned(),
+                        total_space: disk.total_space(),
+                        available_space: disk.available_space(),
+                        is_removable: disk.is_removable(),
+                        is_read_only: disk.is_read_only(),
 
-                DynamicPerDiskData {
-                    kind: match disk.kind() {
-                        DiskKind::HDD => Hdd,
-                        DiskKind::SSD => Ssd,
-                        DiskKind::Unknown(_) => Unknown,
-                    },
-                    name: disk.name().to_string_lossy().into_owned(),
-                    file_system: disk.file_system().to_string_lossy().into_owned(),
-                    mount_point: disk.mount_point().to_string_lossy().into_owned(),
-                    total_space: disk.total_space(),
-                    available_space: disk.available_space(),
-                    is_removable: disk.is_removable(),
-                    is_read_only: disk.is_read_only(),
-
-                    read_speed: (usage.read_bytes as f64 / interval_secs) as u64,
-                    write_speed: (usage.written_bytes as f64 / interval_secs) as u64,
-                }
-            })
-            .collect::<Vec<_>>();
+                        read_speed: (usage.read_bytes as f64 / interval_secs) as u64,
+                        write_speed: (usage.written_bytes as f64 / interval_secs) as u64,
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
 
         Self(per_disk_vec)
     }
@@ -153,18 +153,19 @@ impl DataFromNetwork {
     pub async fn refresh_and_get() -> Self {
         let interval_secs = refresh_global_network().await.as_secs_f64();
         let networks_mutex = crate::monitoring::get_global_network().await;
-        let networks = networks_mutex.lock().await;
-
-        let network_vec = networks
-            .iter()
-            .map(|(interface_name, network)| DynamicPerNetworkInterfaceData {
-                interface_name: interface_name.clone(),
-                total_received: network.total_received(),
-                total_transmitted: network.total_transmitted(),
-                receive_speed: (network.received() as f64 / interval_secs) as u64,
-                transmit_speed: (network.transmitted() as f64 / interval_secs) as u64,
-            })
-            .collect();
+        let network_vec = {
+            let networks = networks_mutex.lock().await;
+            networks
+                .iter()
+                .map(|(interface_name, network)| DynamicPerNetworkInterfaceData {
+                    interface_name: interface_name.clone(),
+                    total_received: network.total_received(),
+                    total_transmitted: network.total_transmitted(),
+                    receive_speed: (network.received() as f64 / interval_secs) as u64,
+                    transmit_speed: (network.transmitted() as f64 / interval_secs) as u64,
+                })
+                .collect()
+        };
 
         let (udp_connections, tcp_connections) = calc_connections();
 

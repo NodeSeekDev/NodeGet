@@ -73,38 +73,40 @@ impl DynamicDataFromGpu {
     // 返回包含所有 GPU 动态数据的向量
     async fn new() -> Self {
         let nvml_mutex = get_global_gpu().await;
-        let nvml_guard = nvml_mutex.lock().await;
+        let data = {
+            let nvml_guard = nvml_mutex.lock().await;
 
-        let Some(nvml) = &*nvml_guard else {
-            return Self(vec![]);
-        };
+            let Some(nvml) = &*nvml_guard else {
+                return Self(vec![]);
+            };
 
-        let gpu_count = nvml.device_count().unwrap_or(0);
+            let gpu_count = nvml.device_count().unwrap_or(0);
 
-        let data = (0..gpu_count)
-            .filter_map(|id| {
-                let device = nvml.device_by_index(id).ok()?;
-                let memory_usage = device.memory_info().ok()?;
-                let utilization = device.utilization_rates().ok()?;
+            (0..gpu_count)
+                .filter_map(|id| {
+                    let device = nvml.device_by_index(id).ok()?;
+                    let memory_usage = device.memory_info().ok()?;
+                    let utilization = device.utilization_rates().ok()?;
 
-                Some(DynamicGpuData {
-                    id: id + 1,
-                    used_memory: memory_usage.used,
-                    total_memory: memory_usage.total,
-                    graphics_clock_mhz: device.clock_info(Clock::Graphics).ok()?.into(),
-                    sm_clock_mhz: device.clock_info(Clock::SM).ok()?.into(),
-                    memory_clock_mhz: device.clock_info(Clock::Memory).ok()?.into(),
-                    video_clock_mhz: device.clock_info(Clock::Video).ok()?.into(),
-                    utilization_gpu: utilization.gpu.try_into().ok()?,
-                    utilization_memory: utilization.memory.try_into().ok()?,
-                    temperature: device
-                        .temperature(TemperatureSensor::Gpu)
-                        .ok()?
-                        .try_into()
-                        .ok()?,
+                    Some(DynamicGpuData {
+                        id: id + 1,
+                        used_memory: memory_usage.used,
+                        total_memory: memory_usage.total,
+                        graphics_clock_mhz: device.clock_info(Clock::Graphics).ok()?.into(),
+                        sm_clock_mhz: device.clock_info(Clock::SM).ok()?.into(),
+                        memory_clock_mhz: device.clock_info(Clock::Memory).ok()?.into(),
+                        video_clock_mhz: device.clock_info(Clock::Video).ok()?.into(),
+                        utilization_gpu: utilization.gpu.try_into().ok()?,
+                        utilization_memory: utilization.memory.try_into().ok()?,
+                        temperature: device
+                            .temperature(TemperatureSensor::Gpu)
+                            .ok()?
+                            .try_into()
+                            .ok()?,
+                    })
                 })
-            })
-            .collect::<Vec<_>>();
+                .collect::<Vec<_>>()
+        };
 
         Self(data)
     }
@@ -114,39 +116,41 @@ impl DynamicDataFromGpu {
     // 该函数刷新现有 GPU 数据，更新显存使用情况、利用率、温度和时钟频率等信息
     async fn update(&mut self) {
         let nvml_mutex = get_global_gpu().await;
-        let nvml_guard = nvml_mutex.lock().await;
+        {
+            let nvml_guard = nvml_mutex.lock().await;
 
-        let Some(nvml) = &*nvml_guard else { return };
+            let Some(nvml) = &*nvml_guard else { return };
 
-        for gpu_data in &mut self.0 {
-            let index = gpu_data.id.saturating_sub(1);
+            for gpu_data in &mut self.0 {
+                let index = gpu_data.id.saturating_sub(1);
 
-            if let Ok(device) = nvml.device_by_index(index) {
-                if let Ok(memory_usage) = device.memory_info() {
-                    gpu_data.used_memory = memory_usage.used;
-                    gpu_data.total_memory = memory_usage.total;
-                }
+                if let Ok(device) = nvml.device_by_index(index) {
+                    if let Ok(memory_usage) = device.memory_info() {
+                        gpu_data.used_memory = memory_usage.used;
+                        gpu_data.total_memory = memory_usage.total;
+                    }
 
-                if let Ok(utilization) = device.utilization_rates() {
-                    gpu_data.utilization_gpu = utilization.gpu as _;
-                    gpu_data.utilization_memory = utilization.memory as _;
-                }
+                    if let Ok(utilization) = device.utilization_rates() {
+                        gpu_data.utilization_gpu = utilization.gpu as _;
+                        gpu_data.utilization_memory = utilization.memory as _;
+                    }
 
-                if let Ok(temp) = device.temperature(TemperatureSensor::Gpu) {
-                    gpu_data.temperature = temp as _;
-                }
+                    if let Ok(temp) = device.temperature(TemperatureSensor::Gpu) {
+                        gpu_data.temperature = temp as _;
+                    }
 
-                if let Ok(clock) = device.clock_info(Clock::Graphics) {
-                    gpu_data.graphics_clock_mhz = clock.into();
-                }
-                if let Ok(clock) = device.clock_info(Clock::SM) {
-                    gpu_data.sm_clock_mhz = clock.into();
-                }
-                if let Ok(clock) = device.clock_info(Clock::Memory) {
-                    gpu_data.memory_clock_mhz = clock.into();
-                }
-                if let Ok(clock) = device.clock_info(Clock::Video) {
-                    gpu_data.video_clock_mhz = clock.into();
+                    if let Ok(clock) = device.clock_info(Clock::Graphics) {
+                        gpu_data.graphics_clock_mhz = clock.into();
+                    }
+                    if let Ok(clock) = device.clock_info(Clock::SM) {
+                        gpu_data.sm_clock_mhz = clock.into();
+                    }
+                    if let Ok(clock) = device.clock_info(Clock::Memory) {
+                        gpu_data.memory_clock_mhz = clock.into();
+                    }
+                    if let Ok(clock) = device.clock_info(Clock::Video) {
+                        gpu_data.video_clock_mhz = clock.into();
+                    }
                 }
             }
         }

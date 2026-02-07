@@ -137,7 +137,6 @@ async fn connection_manager(
                         }
                         Err(RecvError::Lagged(skipped_count)) => {
                             warn!("[{name}] Connection lagged, dropped {skipped_count} old messages. Creating space for new data.");
-                            continue;
                         }
                         Err(RecvError::Closed) => {
                             info!("[{name}] Channel closed, manager task exiting.");
