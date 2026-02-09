@@ -118,11 +118,12 @@ impl RpcServer for TaskRpcImpl {
                     .await;
                 return Ok(());
             }
-            Err((code, msg)) => {
+            Err(e) => {
+                let nodeget_err = nodeget_lib::error::anyhow_to_nodeget_error(&e);
                 let () = subscription_sink
                     .reject(jsonrpsee::types::ErrorObject::owned(
-                        code as i32,
-                        msg.as_str(),
+                        nodeget_err.error_code() as i32,
+                        nodeget_err.to_string(),
                         None::<JsonError>,
                     ))
                     .await;

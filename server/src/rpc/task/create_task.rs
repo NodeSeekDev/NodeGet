@@ -4,6 +4,7 @@ use crate::rpc::task::TaskManager;
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
 use log::{debug, error};
+use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{Permission, Scope, Task};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::task::{TaskEvent, TaskEventType};
@@ -22,10 +23,8 @@ pub async fn create_task(
     let process_logic = async {
         let task_name = task_type.task_name();
 
-        let token_or_auth = match TokenOrAuth::from_full_token(&token) {
-            Ok(toa) => toa,
-            Err(e) => return Err((101, format!("Failed to parse token: {e}"))),
-        };
+        let token_or_auth = TokenOrAuth::from_full_token(&token)
+            .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
         let is_allowed = check_token_limit(
             &token_or_auth,
@@ -35,12 +34,12 @@ pub async fn create_task(
         .await?;
 
         if !is_allowed {
-            return Err((
-                102,
+            return Err(NodegetError::PermissionDenied(
                 format!(
                     "Permission Denied: Missing Task Create ({task_name}) permission for this Agent"
                 ),
-            ));
+            )
+            .into());
         }
 
         let db = <super::TaskRpcImpl as RpcHelper>::get_db()?;
@@ -54,7 +53,7 @@ pub async fn create_task(
             success: Set(None),
             error_message: Set(None),
             task_event_type: <super::TaskRpcImpl as RpcHelper>::try_set_json(task_type.clone())
-                .map_err(|e| (101, e))?,
+                .map_err(|e| NodegetError::SerializationError(e.to_string()))?,
             task_event_result: Set(None),
         };
 
@@ -62,7 +61,7 @@ pub async fn create_task(
 
         let result = task::Entity::insert(in_data).exec(db).await.map_err(|e| {
             error!("Database insert error: {e}");
-            (103, format!("Database insert error: {e}"))
+            NodegetError::DatabaseError(format!("Database insert error: {e}"))
         })?;
 
         let task_id = result.last_insert_id;
@@ -78,7 +77,7 @@ pub async fn create_task(
             Ok(()) => {
                 let json_str = format!("{{\"id\":{}}}", task_id);
                 RawValue::from_string(json_str)
-                    .map_err(|e| (101, e.to_string()))
+                    .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
             }
             Err(e) => {
                 let _ = task::Entity::delete_by_id(task_id)
@@ -86,15 +85,23 @@ pub async fn create_task(
                     .await
                     .map_err(|del_err| {
                         error!("Database delete error during rollback: {del_err}");
-                        (103, format!("Database delete error: {del_err}"))
+                        NodegetError::DatabaseError(format!("Database delete error: {del_err}"))
                     });
                 error!("Error sending task event: {}", e.1);
-                Err((i64::from(e.0), format!("Error sending task event: {}", e.1)))
+                Err(NodegetError::AgentConnectionError(format!("Error sending task event: {}", e.1)).into())
             }
         }
     };
 
-    process_logic
-        .await
-        .map_err(|(code, msg)| jsonrpsee::types::ErrorObject::owned(code as i32, msg, None::<()>))
+    match process_logic.await {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            let nodeget_err = nodeget_lib::error::anyhow_to_nodeget_error(&e);
+            Err(jsonrpsee::types::ErrorObject::owned(
+                nodeget_err.error_code() as i32,
+                format!("{nodeget_err}"),
+                None::<()>,
+            ))
+        }
+    }
 }

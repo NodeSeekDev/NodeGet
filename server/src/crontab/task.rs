@@ -3,6 +3,7 @@ use crate::rpc::RpcHelper;
 use crate::rpc::task::{TaskManager, TaskRpcImpl};
 use chrono::Utc;
 use log::{debug, error};
+use nodeget_lib::error::NodegetError;
 use nodeget_lib::task::{TaskEvent, TaskEventType};
 use nodeget_lib::utils::generate_random_string;
 use sea_orm::{ActiveValue, EntityTrait, Set};
@@ -36,13 +37,13 @@ pub async fn crontab_task(
                 success: Set(None),
                 error_message: Set(None),
                 task_event_type: TaskRpcImpl::try_set_json(task_event_type.clone())
-                    .map_err(|e| (101, e))?,
+                    .map_err(|e| NodegetError::SerializationError(format!("{e}")))?,
                 task_event_result: Set(None),
             };
 
             let result = task::Entity::insert(in_data).exec(db).await.map_err(|e| {
                 error!("Database insert error: {e}");
-                (103, format!("Database insert error: {e}"))
+                NodegetError::DatabaseError(format!("Database insert error: {e}"))
             })?;
 
             let task_id = result.last_insert_id;
@@ -64,10 +65,10 @@ pub async fn crontab_task(
                         .await
                         .map_err(|del_err| {
                             error!("Database delete error during rollback: {del_err}");
-                            (103, format!("Database delete error: {del_err}"))
+                            NodegetError::DatabaseError(format!("Database delete error: {del_err}"))
                         });
                     error!("Error sending task event: {}", e.1);
-                    Err((i64::from(e.0), format!("Error sending task event: {}", e.1)))
+                    Err(NodegetError::AgentConnectionError(format!("Error sending task event: {}", e.1)))
                 }
             }
         };
@@ -80,12 +81,15 @@ pub async fn crontab_task(
                     "Task dispatched successfully to agent [{uuid}]. Task ID: {new_id}"
                 ),
             ),
-            Err((code, msg)) => (
-                false,
-                format!(
-                    "Failed to dispatch to agent [{uuid}]. Code: {code}, Error: {msg}"
-                ),
-            ),
+            Err(e) => {
+                (
+                    false,
+                    format!(
+                        "Failed to dispatch to agent [{uuid}]. Error: {}",
+                        e
+                    ),
+                )
+            }
         };
 
         let crontab_log = crontab_result::ActiveModel {

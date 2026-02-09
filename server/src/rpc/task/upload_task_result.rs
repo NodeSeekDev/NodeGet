@@ -3,6 +3,7 @@ use crate::rpc::RpcHelper;
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
 use log::{debug, error};
+use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{Permission, Scope, Task};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::task::{TaskEventResponse, TaskEventType};
@@ -26,25 +27,20 @@ pub async fn upload_task_result(
             .await
             .map_err(|e| {
                 error!("Database query error: {e}");
-                (103, format!("Database query error: {e}"))
+                NodegetError::DatabaseError(format!("Database query error: {e}"))
             })?
             .ok_or_else(|| {
-                (
-                    105,
-                    "Task validation failed: Invalid ID, UUID, or Token".to_string(),
-                )
+                NodegetError::NotFound("Task validation failed: Invalid ID, UUID, or Token".to_owned())
             })?;
 
         let original_task_type: TaskEventType =
             serde_json::from_value(task_model.task_event_type.clone())
-                .map_err(|e| (101, format!("Failed to parse original task type: {e}")))?;
+                .map_err(|e| NodegetError::SerializationError(format!("Failed to parse original task type: {e}")))?;
 
         let task_name = original_task_type.task_name();
 
-        let token_or_auth = match TokenOrAuth::from_full_token(&token) {
-            Ok(toa) => toa,
-            Err(e) => return Err((101, format!("Failed to parse token: {e}"))),
-        };
+        let token_or_auth = TokenOrAuth::from_full_token(&token)
+            .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
         let is_allowed = check_token_limit(
             &token_or_auth,
@@ -54,12 +50,12 @@ pub async fn upload_task_result(
         .await?;
 
         if !is_allowed {
-            return Err((
-                102,
+            return Err(NodegetError::PermissionDenied(
                 format!(
                     "Permission Denied: Missing Task Write ({task_name}) permission for this Agent"
                 ),
-            ));
+            )
+            .into());
         }
 
         let mut active_model: task::ActiveModel = task_model.into();
@@ -71,7 +67,7 @@ pub async fn upload_task_result(
             let json_v = serde_json::to_value(v).unwrap_or(Value::Null);
             match json_v {
                 Value::String(s) => s,
-                _ => json_v.to_string(),
+                _ => format!("{json_v}"),
             }
         }));
 
@@ -79,14 +75,14 @@ pub async fn upload_task_result(
             .task_event_result
             .map(<super::TaskRpcImpl as RpcHelper>::try_set_json)
             .transpose()
-            .map_err(|e| (101, e))?;
+            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
 
         active_model.task_event_result =
             result_json.map_or(Set(None), |active_val| Set(Some(active_val.unwrap())));
 
         active_model.update(db).await.map_err(|e| {
             error!("Database update error: {e}");
-            (103, format!("Database update error: {e}"))
+            NodegetError::DatabaseError(format!("Database update error: {e}"))
         })?;
 
         debug!(
@@ -101,10 +97,18 @@ pub async fn upload_task_result(
 
         let json_str = format!("{{\"id\":{}}}", task_response.task_id);
         RawValue::from_string(json_str)
-            .map_err(|e| (101, e.to_string()))
+            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
-    process_logic
-        .await
-        .map_err(|(code, msg)| jsonrpsee::types::ErrorObject::owned(code as i32, msg, None::<()>))
+    match process_logic.await {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            let nodeget_err = nodeget_lib::error::anyhow_to_nodeget_error(&e);
+            Err(jsonrpsee::types::ErrorObject::owned(
+                nodeget_err.error_code() as i32,
+                format!("{nodeget_err}"),
+                None::<()>,
+            ))
+        }
+    }
 }

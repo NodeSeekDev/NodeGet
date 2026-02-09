@@ -1,6 +1,8 @@
 use crate::DB;
 use crate::entity::token;
 use crate::token::hash_string;
+use nodeget_lib::error::NodegetError;
+use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::generate_random_string;
 use sea_orm::{EntityTrait, Set};
 
@@ -8,15 +10,15 @@ use sea_orm::{EntityTrait, Set};
 //
 // # 返回值
 // 成功时返回 Some((full_token, raw_password))，如果已存在则返回 None，失败时返回错误消息
-pub async fn generate_super_token() -> Result<Option<(String, String)>, String> {
+pub async fn generate_super_token() -> anyhow::Result<Option<(String, String)>> {
     let db = DB
         .get()
-        .ok_or_else(|| "Database connection not initialized".to_string())?;
+        .ok_or_else(|| NodegetError::DatabaseError("Database connection not initialized".to_string()))?;
 
     let existing_super = token::Entity::find_by_id(1)
         .one(db)
         .await
-        .map_err(|e| format!("Database query error: {e}"))?;
+        .map_err(|e| NodegetError::DatabaseError(format!("Database query error: {e}")))?;
 
     if existing_super.is_some() {
         return Ok(None);
@@ -48,12 +50,10 @@ pub async fn generate_super_token() -> Result<Option<(String, String)>, String> 
     token::Entity::insert(super_token_model)
         .exec(db)
         .await
-        .map_err(|e| format!("Failed to initialize super token: {e}"))?;
+        .map_err(|e| NodegetError::DatabaseError(format!("Failed to initialize super token: {e}")))?;
 
     Ok(Some((full_token, raw_password)))
 }
-
-use nodeget_lib::permission::token_auth::TokenOrAuth;
 
 // 检查给定的令牌或认证信息是否为超级令牌
 //
@@ -62,13 +62,13 @@ use nodeget_lib::permission::token_auth::TokenOrAuth;
 //
 // # 返回值
 // 返回布尔值表示是否为超级令牌，失败时返回错误消息
-pub async fn check_super_token(token_or_auth: &TokenOrAuth) -> Result<bool, String> {
-    let db = DB.get().ok_or("Database connection not initialized")?;
+pub async fn check_super_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<bool> {
+    let db = DB.get().ok_or_else(|| NodegetError::DatabaseError("Database connection not initialized".to_owned()))?;
     let super_record = token::Entity::find_by_id(1)
         .one(db)
         .await
-        .map_err(|e| format!("Database error: {e}"))?
-        .ok_or("Super Token record (ID 1) not found in database")?;
+        .map_err(|e| NodegetError::DatabaseError(format!("Database error: {e}")))?
+        .ok_or_else(|| NodegetError::NotFound("Super Token record (ID 1) not found in database".to_owned()))?;
 
     match token_or_auth {
         TokenOrAuth::Token(key, secret) => Ok(key == &super_record.token_key

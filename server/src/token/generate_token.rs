@@ -2,6 +2,7 @@ use crate::DB;
 use crate::entity::token;
 use crate::token::hash_string;
 use crate::token::super_token::check_super_token;
+use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::Limit;
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::generate_random_string;
@@ -19,7 +20,7 @@ use serde_json;
 // * `password` - 密码，可选参数
 //
 // # 返回值
-// 成功时返回 (token_key, token_secret) 元组，失败时返回错误代码和消息
+// 成功时返回 (token_key, token_secret) 元组，失败时返回错误
 pub async fn generate_and_store_token(
     father_token_or_auth: &TokenOrAuth,
 
@@ -29,27 +30,27 @@ pub async fn generate_and_store_token(
 
     username: Option<String>,
     password: Option<String>,
-) -> Result<(String, String), (i64, String)> {
+) -> anyhow::Result<(String, String)> {
     let is_authorized = check_super_token(father_token_or_auth)
         .await
-        .map_err(|e| (102, e))?;
+        .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
 
     if !is_authorized {
-        return Err((
-            102,
+        return Err(NodegetError::PermissionDenied(
             "Permission Denied: Only Super Token can create new tokens".to_string(),
-        ));
+        )
+        .into());
     }
 
     let db = DB
         .get()
-        .ok_or_else(|| (103, "Database connection not initialized".to_string()))?;
+        .ok_or_else(|| NodegetError::ConfigNotFound("Database connection not initialized".to_owned()))?;
 
     if username.is_some() != password.is_some() {
-        return Err((
-            101,
+        return Err(NodegetError::ParseError(
             "Username and Password must be both provided or both absent".to_string(),
-        ));
+        )
+        .into());
     }
 
     let token_key = generate_random_string(16);
@@ -60,7 +61,7 @@ pub async fn generate_and_store_token(
     let password_hash_value = password.as_ref().map(|pw| hash_string(pw));
 
     let token_limit_json = serde_json::to_value(token_limit)
-        .map_err(|e| (101, format!("Failed to serialize token limits: {e}")))?;
+        .map_err(|e| NodegetError::SerializationError(format!("Failed to serialize token limits: {e}")))?;
 
     let new_token_model = token::ActiveModel {
         id: ActiveValue::NotSet,
@@ -77,7 +78,7 @@ pub async fn generate_and_store_token(
     token::Entity::insert(new_token_model)
         .exec(db)
         .await
-        .map_err(|e| (103, format!("Database insert error: {e}")))?;
+        .map_err(|e| NodegetError::DatabaseError(format!("Database insert error: {e}")))?;
 
     Ok((token_key, token_secret))
 }

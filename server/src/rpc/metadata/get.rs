@@ -2,6 +2,7 @@ use crate::entity::metadata as metadata_entity;
 use crate::rpc::RpcHelper;
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
+use nodeget_lib::error::NodegetError;
 use nodeget_lib::metadata;
 use nodeget_lib::permission::data_structure::{Metadata as MetadataPermission, Permission, Scope};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
@@ -11,10 +12,8 @@ use uuid::Uuid;
 
 pub async fn get(token: String, uuid: Uuid) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
-        let token_or_auth = match TokenOrAuth::from_full_token(&token) {
-            Ok(toa) => toa,
-            Err(e) => return Err((101, format!("Failed to parse token: {e}"))),
-        };
+        let token_or_auth = TokenOrAuth::from_full_token(&token)
+            .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
         let is_allowed = check_token_limit(
             &token_or_auth,
@@ -24,10 +23,10 @@ pub async fn get(token: String, uuid: Uuid) -> RpcResult<Box<RawValue>> {
         .await?;
 
         if !is_allowed {
-            return Err((
-                102,
-                "Permission Denied: Missing Metadata Read permission".to_string(),
-            ));
+            return Err(NodegetError::PermissionDenied(
+                "Permission Denied: Missing Metadata Read permission".to_owned(),
+            )
+            .into());
         }
 
         let db = <super::MetadataRpcImpl as RpcHelper>::get_db()?;
@@ -49,17 +48,25 @@ pub async fn get(token: String, uuid: Uuid) -> RpcResult<Box<RawValue>> {
                 agent_name: String::new(),
                 agent_tags: vec![],
             },
-            Err(e) => return Err((103, format!("Database error: {e}"))),
+            Err(e) => return Err(NodegetError::DatabaseError(format!("Database error: {e}")).into()),
         };
 
         let json_str = serde_json::to_string(&metadata_struct)
-            .map_err(|e| (101, format!("Serialization failed: {e}")))?;
+            .map_err(|e| NodegetError::SerializationError(format!("Serialization failed: {e}")))?;
 
         RawValue::from_string(json_str)
-            .map_err(|e| (101, e.to_string()))
+            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
-    process_logic
-        .await
-        .map_err(|(code, msg)| jsonrpsee::types::ErrorObject::owned(code as i32, msg, None::<()>))
+    match process_logic.await {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            let nodeget_err = nodeget_lib::error::anyhow_to_nodeget_error(&e);
+            Err(jsonrpsee::types::ErrorObject::owned(
+                nodeget_err.error_code() as i32,
+                format!("{nodeget_err}"),
+                None::<()>,
+            ))
+        }
+    }
 }

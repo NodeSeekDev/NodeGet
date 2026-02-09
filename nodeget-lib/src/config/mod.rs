@@ -22,7 +22,7 @@ where
 
     // 2. 判断逻辑
     if s.eq_ignore_ascii_case("auto_gen") {
-        Ok(get_stable_device_uuid())
+        get_stable_device_uuid().map_err(serde::de::Error::custom)
     } else {
         Uuid::parse_str(&s).map_err(serde::de::Error::custom)
     }

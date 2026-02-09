@@ -4,6 +4,7 @@ use crate::rpc::agent::AgentRpcImpl;
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
 use log::debug;
+use nodeget_lib::error::NodegetError;
 use nodeget_lib::monitoring::data_structure::DynamicMonitoringData;
 use nodeget_lib::permission::data_structure::{DynamicMonitoring, Permission, Scope};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
@@ -17,12 +18,10 @@ pub async fn report_dynamic(
 ) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         let agent_uuid = uuid::Uuid::from_str(&dynamic_monitoring_data.uuid)
-            .map_err(|e| (101, format!("Invalid UUID format: {e}")))?;
+            .map_err(|e| NodegetError::ParseError(format!("Invalid UUID format: {e}")))?;
 
-        let token_or_auth = match TokenOrAuth::from_full_token(&token) {
-            Ok(toa) => toa,
-            Err(e) => return Err((101, format!("Failed to parse token: {e}"))),
-        };
+        let token_or_auth = TokenOrAuth::from_full_token(&token)
+            .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
         let is_allowed = check_token_limit(
             &token_or_auth,
@@ -32,11 +31,10 @@ pub async fn report_dynamic(
         .await?;
 
         if !is_allowed {
-            return Err((
-                102,
-                "Permission Denied: Missing DynamicMonitoring Write permission for this Agent"
-                    .to_string(),
-            ));
+            return Err(NodegetError::PermissionDenied(
+                "Permission Denied: Missing DynamicMonitoring Write permission for this Agent".to_owned(),
+            )
+            .into());
         }
 
         let db = AgentRpcImpl::get_db()?;
@@ -46,19 +44,19 @@ pub async fn report_dynamic(
             uuid: Set(agent_uuid),
             timestamp: Set(dynamic_monitoring_data.time.cast_signed()),
             cpu_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.cpu)
-                .map_err(|e| (101, e))?,
+                .map_err(|e| NodegetError::SerializationError(format!("{e}")))?,
             ram_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.ram)
-                .map_err(|e| (101, e))?,
+                .map_err(|e| NodegetError::SerializationError(e.to_string()))?,
             load_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.load)
-                .map_err(|e| (101, e))?,
+                .map_err(|e| NodegetError::SerializationError(e.to_string()))?,
             system_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.system)
-                .map_err(|e| (101, e))?,
+                .map_err(|e| NodegetError::SerializationError(e.to_string()))?,
             disk_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.disk)
-                .map_err(|e| (101, e))?,
+                .map_err(|e| NodegetError::SerializationError(e.to_string()))?,
             network_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.network)
-                .map_err(|e| (101, e))?,
+                .map_err(|e| NodegetError::SerializationError(e.to_string()))?,
             gpu_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.gpu)
-                .map_err(|e| (101, e))?,
+                .map_err(|e| NodegetError::SerializationError(e.to_string()))?,
         };
 
         debug!(
@@ -71,17 +69,25 @@ pub async fn report_dynamic(
             .await
             .map_err(|e| {
                 log::error!("Database insert error: {e}");
-                (103, format!("Database insert error: {e}"))
+                NodegetError::DatabaseError(format!("Database insert error: {e}"))
             })?;
 
         debug!("Inserted dynamic data with id [{}]", result.last_insert_id);
 
         let json_str = format!("{{\"id\":{}}}", result.last_insert_id);
         RawValue::from_string(json_str)
-            .map_err(|e| (101, e.to_string()))
+            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
-    process_logic
-        .await
-        .map_err(|(code, msg)| jsonrpsee::types::ErrorObject::owned(code as i32, msg, None::<()>))
+    match process_logic.await {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            let nodeget_err = nodeget_lib::error::anyhow_to_nodeget_error(&e);
+            Err(jsonrpsee::types::ErrorObject::owned(
+                nodeget_err.error_code() as i32,
+                format!("{nodeget_err}"),
+                None::<()>,
+            ))
+        }
+    }
 }

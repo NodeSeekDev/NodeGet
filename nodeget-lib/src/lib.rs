@@ -21,6 +21,9 @@ pub mod permission;
 // 任务管理模块，处理各种任务类型的定义和执行
 pub mod task;
 
+// 错误处理模块
+pub mod error;
+
 // 工具函数模块，包含通用的辅助函数
 pub mod crontab;
 pub mod metadata;

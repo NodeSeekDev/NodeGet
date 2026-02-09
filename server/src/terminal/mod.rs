@@ -108,8 +108,9 @@ async fn handle_agent(
             }
             return;
         }
-        Err((code, msg)) => {
-            let error_json = generate_error_message(code, &msg);
+        Err(e) => {
+            let nodeget_err = nodeget_lib::error::anyhow_to_nodeget_error(&e);
+            let error_json = generate_error_message(nodeget_err.error_code(), &format!("{nodeget_err}"));
 
             if let Err(e) = socket
                 .send(Message::Text(Utf8Bytes::from(error_json.to_string())))

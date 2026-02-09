@@ -2,9 +2,10 @@ use crate::DB;
 use crate::entity::token;
 use crate::token::hash_string;
 use crate::token::super_token::check_super_token;
+use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{Limit, Permission, Scope, Token};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
-use nodeget_lib::utils::get_local_timestamp_ms;
+use nodeget_lib::utils::get_local_timestamp_ms_i64;
 use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
 use sea_orm::QueryFilter;
@@ -15,11 +16,11 @@ use sea_orm::QueryFilter;
 // * `token_or_auth` - 令牌或认证信息
 //
 // # 返回值
-// 成功时返回令牌信息，失败时返回错误代码和消息
-pub async fn get_token(token_or_auth: &TokenOrAuth) -> Result<Token, (i64, String)> {
+// 成功时返回令牌信息，失败时返回错误
+pub async fn get_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<Token> {
     let db = DB
         .get()
-        .ok_or_else(|| (107, "Database connection not initialized".to_string()))?;
+        .ok_or_else(|| NodegetError::ConfigNotFound("Database connection not initialized".to_owned()))?;
 
     // 验证认证信息并从数据库获取对应的token记录
     let token_model = match token_or_auth {
@@ -29,11 +30,11 @@ pub async fn get_token(token_or_auth: &TokenOrAuth) -> Result<Token, (i64, Strin
                 .filter(token::Column::TokenKey.eq(key))
                 .one(db)
                 .await
-                .map_err(|e| (103, format!("Database query error: {e}")))?
-                .ok_or_else(|| (105, "Token key not found in database".to_string()))?;
+                .map_err(|e| NodegetError::DatabaseError(format!("Database query error: {e}")))?
+                .ok_or_else(|| NodegetError::NotFound("Token key not found in database".to_owned()))?;
 
             if model.token_hash != hash_string(secret) {
-                return Err((102, "Invalid token secret".to_string()));
+                return Err(NodegetError::PermissionDenied("Invalid token secret".to_owned()).into());
             }
 
             model
@@ -44,12 +45,12 @@ pub async fn get_token(token_or_auth: &TokenOrAuth) -> Result<Token, (i64, Strin
                 .filter(token::Column::Username.eq(username))
                 .one(db)
                 .await
-                .map_err(|e| (103, format!("Database query error: {e}")))?
-                .ok_or_else(|| (105, "Username not found in database".to_string()))?;
+                .map_err(|e| NodegetError::DatabaseError(format!("Database query error: {e}")))?
+                .ok_or_else(|| NodegetError::NotFound("Username not found in database".to_owned()))?;
 
             let p_hash = hash_string(password);
             if model.password_hash != Some(p_hash) {
-                return Err((102, "Invalid password".to_string()));
+                return Err(NodegetError::PermissionDenied("Invalid password".to_owned()).into());
             }
 
             model
@@ -57,7 +58,7 @@ pub async fn get_token(token_or_auth: &TokenOrAuth) -> Result<Token, (i64, Strin
     };
 
     let token_limit: Vec<Limit> = serde_json::from_value(token_model.token_limit)
-        .map_err(|e| (101, format!("Failed to parse token permissions: {e}")))?;
+        .map_err(|e| NodegetError::SerializationError(format!("Failed to parse token permissions: {e}")))?;
 
     Ok(Token {
         version: token_model.version,
@@ -77,16 +78,16 @@ pub async fn get_token(token_or_auth: &TokenOrAuth) -> Result<Token, (i64, Strin
 // * `permissions` - 请求的权限列表
 //
 // # 返回值
-// 返回布尔值表示是否有足够权限，失败时返回错误代码和消息
+// 返回布尔值表示是否有足够权限，失败时返回错误
 pub async fn check_token_limit(
     token_or_auth: &TokenOrAuth,
     scopes: Vec<Scope>,
     permissions: Vec<Permission>,
-) -> Result<bool, (i64, String)> {
+) -> anyhow::Result<bool> {
     // 检查超级Token权限
     let is_super_token = check_super_token(token_or_auth)
         .await
-        .map_err(|e| (102, e))?;
+        .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
 
     if is_super_token {
         return Ok(true);
@@ -96,7 +97,7 @@ pub async fn check_token_limit(
     let token = get_token(token_or_auth).await?;
 
     // 检查Token有效期
-    let now = get_local_timestamp_ms().cast_signed();
+    let now = get_local_timestamp_ms_i64()?;
 
     if let Some(from) = token.timestamp_from
         && now < from

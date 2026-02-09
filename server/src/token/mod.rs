@@ -34,7 +34,7 @@ use sea_orm::{ColumnTrait, DeleteResult, EntityTrait, QueryFilter};
 pub async fn delete_token_by_key(token_key: String) -> Result<DeleteResult, sea_orm::DbErr> {
     let Some(db) = DB.get() else {
             return Err(sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal(
-                "Database not initialized".to_string(),
+                "Database not initialized".to_owned(),
             )));
         };
 
@@ -57,7 +57,7 @@ pub async fn delete_token_by_key(token_key: String) -> Result<DeleteResult, sea_
 pub async fn delete_token_by_username(username: String) -> Result<DeleteResult, sea_orm::DbErr> {
     let Some(db) = DB.get() else {
             return Err(sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal(
-                "Database not initialized".to_string(),
+                "Database not initialized".to_owned(),
             )));
         };
 

@@ -128,12 +128,14 @@ pub async fn handle_task() {
                         Err("102: Permission Denied".to_string())
                     };
 
+                    let timestamp = get_local_timestamp_ms().unwrap_or(0);
+                    
                     let response = match task_result {
                         Ok(task_result) => TaskEventResponse {
                             task_id: json_rpc.params.result.task_id,
                             agent_uuid: AGENT_CONFIG.get().unwrap().agent_uuid,
                             task_token: json_rpc.params.result.task_token,
-                            timestamp: get_local_timestamp_ms(),
+                            timestamp,
                             success: true,
                             error_message: None,
                             task_event_result: Some(task_result),
@@ -142,7 +144,7 @@ pub async fn handle_task() {
                             task_id: json_rpc.params.result.task_id,
                             agent_uuid: AGENT_CONFIG.get().unwrap().agent_uuid,
                             task_token: json_rpc.params.result.task_token,
-                            timestamp: get_local_timestamp_ms(),
+                            timestamp,
                             success: false,
                             error_message: Some(e),
                             task_event_result: None,

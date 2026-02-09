@@ -144,7 +144,7 @@ async fn process_crontab() {
             continue;
         }
 
-        let cron_type = serde_json::from_str(&job.cron_type.to_string())
+        let cron_type = serde_json::from_str(&format!("{}", job.cron_type))
             .map_err(|e| warn!("Invalid cron type for job {}: {}", job.id, e))
             .ok();
 

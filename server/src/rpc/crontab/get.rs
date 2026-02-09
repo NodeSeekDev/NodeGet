@@ -3,37 +3,36 @@ use crate::entity::crontab;
 use crate::token::get::get_token;
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::crontab::{Cron, CronType};
+use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{
     Crontab as CrontabPermission, Permission, Scope, Token,
 };
 use nodeget_lib::permission::token_auth::TokenOrAuth;
-use nodeget_lib::utils::get_local_timestamp_ms;
-use sea_orm::{DbErr, EntityTrait, RuntimeErr};
+use nodeget_lib::utils::get_local_timestamp_ms_i64;
+use sea_orm::EntityTrait;
 use serde_json::value::RawValue;
 use std::collections::HashSet;
 use uuid::Uuid;
 
 pub async fn get(token: String) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
-        let token_or_auth = match TokenOrAuth::from_full_token(&token) {
-            Ok(toa) => toa,
-            Err(e) => return Err((101, format!("Failed to parse token: {e}"))),
-        };
+        let token_or_auth = TokenOrAuth::from_full_token(&token)
+            .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
         let token_info = get_token(&token_or_auth).await?;
 
-        let now = get_local_timestamp_ms().cast_signed();
+        let now = get_local_timestamp_ms_i64()?;
 
         if let Some(from) = token_info.timestamp_from
             && now < from
         {
-            return Err((102, "Token is not yet valid".to_string()));
+            return Err(NodegetError::PermissionDenied("Token is not yet valid".to_owned()).into());
         }
 
         if let Some(to) = token_info.timestamp_to
             && now > to
         {
-            return Err((102, "Token has expired".to_string()));
+            return Err(NodegetError::PermissionDenied("Token has expired".to_owned()).into());
         }
 
         let has_crontab_read_permission = token_info.token_limit.iter().any(|limit| {
@@ -44,38 +43,46 @@ pub async fn get(token: String) -> RpcResult<Box<RawValue>> {
         });
 
         if !has_crontab_read_permission {
-            return Err((
-                102,
-                "Permission Denied: Insufficient Crontab Read permission".to_string(),
-            ));
+            return Err(NodegetError::PermissionDenied(
+                "Permission Denied: Insufficient Crontab Read permission".to_owned(),
+            )
+            .into());
         }
 
         let crontabs = extract_allowed_uuids(&token_info).await?;
         let json_str = serde_json::to_string(&crontabs)
-            .map_err(|e| (101, format!("Failed to serialize crontabs: {e}")))?;
+            .map_err(|e| NodegetError::SerializationError(format!("Failed to serialize crontabs: {e}")))?;
 
         RawValue::from_string(json_str)
-            .map_err(|e| (101, e.to_string()))
+            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
-    process_logic
-        .await
-        .map_err(|(code, msg)| jsonrpsee::types::ErrorObject::owned(code as i32, msg, None::<()>))
+    match process_logic.await {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            let nodeget_err = nodeget_lib::error::anyhow_to_nodeget_error(&e);
+            Err(jsonrpsee::types::ErrorObject::owned(
+                nodeget_err.error_code() as i32,
+                format!("{nodeget_err}"),
+                None::<()>,
+            ))
+        }
+    }
 }
 
-async fn get_crontabs_by_uuids(uuids: Vec<Uuid>) -> Result<Vec<Cron>, DbErr> {
-    let db = DB.get().ok_or(DbErr::Conn(RuntimeErr::Internal(
-        "DB not initialized".to_string(),
-    )))?;
+async fn get_crontabs_by_uuids(uuids: Vec<Uuid>) -> anyhow::Result<Vec<Cron>> {
+    let db = DB.get()
+        .ok_or_else(|| NodegetError::DatabaseError("DB not initialized".to_owned()))?;
 
-    let models = crontab::Entity::find().all(db).await?;
+    let models = crontab::Entity::find().all(db).await
+        .map_err(|e| NodegetError::DatabaseError(format!("{e}")))?;
 
     let uuid_set: HashSet<Uuid> = uuids.into_iter().collect();
 
     let crons = models
         .into_iter()
         .filter_map(|model| {
-            let cron_type: CronType = serde_json::from_str(&model.cron_type.to_string())
+            let cron_type: CronType = serde_json::from_str(&format!("{}", model.cron_type))
                 .unwrap_or({
                     CronType::Server(nodeget_lib::crontab::ServerCronType::CleanUpDatabase)
                 });
@@ -105,17 +112,17 @@ async fn get_crontabs_by_uuids(uuids: Vec<Uuid>) -> Result<Vec<Cron>, DbErr> {
     Ok(crons)
 }
 
-async fn get_all_crontabs() -> Result<Vec<Cron>, DbErr> {
-    let db = DB.get().ok_or(DbErr::Conn(RuntimeErr::Internal(
-        "DB not initialized".to_string(),
-    )))?;
+async fn get_all_crontabs() -> anyhow::Result<Vec<Cron>> {
+    let db = DB.get()
+        .ok_or_else(|| NodegetError::DatabaseError("DB not initialized".to_owned()))?;
 
-    let models = crontab::Entity::find().all(db).await?;
+    let models = crontab::Entity::find().all(db).await
+        .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
     let crons = models
         .into_iter()
         .map(|model| {
-            let cron_type: CronType = serde_json::from_str(&model.cron_type.to_string())
+            let cron_type: CronType = serde_json::from_str(&format!("{}", model.cron_type))
                 .unwrap_or({
                     CronType::Server(nodeget_lib::crontab::ServerCronType::CleanUpDatabase)
                 });
@@ -133,7 +140,7 @@ async fn get_all_crontabs() -> Result<Vec<Cron>, DbErr> {
     Ok(crons)
 }
 
-async fn extract_allowed_uuids(token_info: &Token) -> Result<Vec<Cron>, (i64, String)> {
+async fn extract_allowed_uuids(token_info: &Token) -> anyhow::Result<Vec<Cron>> {
     let mut has_global = false;
     let mut allowed_uuids: Vec<Uuid> = Vec::new();
 
@@ -160,11 +167,9 @@ async fn extract_allowed_uuids(token_info: &Token) -> Result<Vec<Cron>, (i64, St
     }
 
     if has_global {
-        get_all_crontabs().await.map_err(|e| (103, e.to_string()))
+        get_all_crontabs().await
     } else if !allowed_uuids.is_empty() {
-        get_crontabs_by_uuids(allowed_uuids)
-            .await
-            .map_err(|e| (103, e.to_string()))
+        get_crontabs_by_uuids(allowed_uuids).await
     } else {
         Ok(Vec::new())
     }

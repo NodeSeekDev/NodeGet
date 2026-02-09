@@ -1,6 +1,7 @@
 use crate::entity::task;
 use crate::rpc::RpcHelper;
 use crate::rpc::task::TaskRpcImpl;
+use nodeget_lib::error::NodegetError;
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use uuid::Uuid;
 
@@ -12,14 +13,14 @@ use uuid::Uuid;
 // * `task_id` - 任务 ID
 //
 // # 返回值
-// 返回布尔值表示是否有权连接，失败时返回错误代码和消息
+// 返回布尔值表示是否有权连接，失败时返回错误
 pub async fn check_agent(
     agent_uuid: String,
     task_token: String,
     task_id: u64,
-) -> Result<bool, (i64, String)> {
+) -> anyhow::Result<bool> {
     let agent_uuid = Uuid::parse_str(&agent_uuid)
-        .map_err(|_| (101, "Invalid Agent UUID format".to_string()))?;
+        .map_err(|_| NodegetError::ParseError("Invalid Agent UUID format".to_owned()))?;
 
     let db = TaskRpcImpl::get_db()?;
 
@@ -31,5 +32,5 @@ pub async fn check_agent(
         .count(db)
         .await
         .map(|count| count > 0)
-        .map_err(|e| (103, format!("Database error: {e}")))
+        .map_err(|e| NodegetError::DatabaseError(format!("Database error: {e}")).into())
 }

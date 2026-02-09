@@ -1,3 +1,4 @@
+use crate::error::{NodegetError, Result};
 use log::error;
 use serde::Serialize;
 use serde_json::value::RawValue;
@@ -5,18 +6,31 @@ use serde_json::{Map, Value};
 
 /// 将可序列化的值转换为原始JSON值
 ///
-/// # Panics
+/// # Errors
 ///
-/// 当序列化失败且回退错误消息也序列化失败时会发生panic（理论上不应发生）
-pub fn to_raw_json<T: Serialize>(val: T) -> Box<RawValue> {
-    serde_json::value::to_raw_value(&val).unwrap_or_else(|e| {
+/// 当序列化失败时返回错误
+pub fn to_raw_json<T: Serialize>(val: T) -> Result<Box<RawValue>> {
+    serde_json::value::to_raw_value(&val)
+        .map_err(|e| {
+            error!("Serialization error: {e}");
+            NodegetError::SerializationError(e.to_string()).into()
+        })
+}
+
+/// 将可序列化的值转换为原始JSON值，失败时返回错误JSON
+///
+/// # Errors
+///
+/// 当序列化失败且回退错误消息也序列化失败时返回错误
+pub fn to_raw_json_with_fallback<T: Serialize>(val: T) -> Result<Box<RawValue>> {
+    serde_json::value::to_raw_value(&val).or_else(|e| {
         error!("Serialization error: {e}");
-        // fallback
-        serde_json::value::to_raw_value(&serde_json::json!({
+        let fallback = serde_json::json!({
             "error_id": 101,
             "error_message": format!("Serialization error: {e}")
-        }))
-        .unwrap()
+        });
+        serde_json::value::to_raw_value(&fallback)
+            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     })
 }
 
