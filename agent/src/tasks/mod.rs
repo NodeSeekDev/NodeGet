@@ -2,11 +2,15 @@ use crate::AGENT_CONFIG;
 use crate::rpc::multi_server::{send_to, subscribe_to};
 use crate::rpc::{JsonRpcTask, wrap_json_into_rpc_with_id_1};
 use log::{error, info};
+use nodeget_lib::error::NodegetError;
 use nodeget_lib::task::{TaskEventResponse, TaskEventResult, TaskEventType};
 use nodeget_lib::utils::get_local_timestamp_ms;
 use std::time::Duration;
 use tokio::time;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
+
+/// Task 结果类型
+pub type Result<T> = anyhow::Result<T>;
 
 // 任务执行模块
 mod execute;
@@ -34,35 +38,35 @@ async fn execute_task(
     task_type: &TaskEventType,
     task_id: u64,
     task_token: &str,
-) -> Result<TaskEventResult, String> {
+) -> Result<TaskEventResult> {
     match task_type {
         TaskEventType::Ping(target) => ping::icmp::ping_target(target.clone())
             .await
             .map(|d| task_type.result_from_duration(d))
-            .map_err(|e| e),
+            .map_err(|e| NodegetError::Other(format!("{e}")).into()),
 
         TaskEventType::TcpPing(target) => ping::tcp::tcping_target(target.clone())
             .await
             .map(|d| task_type.result_from_duration(d))
-            .map_err(|e| e),
+            .map_err(|e| NodegetError::Other(format!("{e}")).into()),
 
         TaskEventType::HttpPing(target) => ping::http::httping_target(target.clone())
             .await
             .map(|d| task_type.result_from_duration(d))
-            .map_err(|e| e),
+            .map_err(|e| NodegetError::Other(format!("{e}")).into()),
 
         TaskEventType::WebShell(url) => {
             let url = pty::parse_url(url.clone(), task_id, task_token);
             pty::handle_pty_url(url)
                 .await
                 .map(|_| TaskEventResult::WebShell(true))
-                .map_err(|e| e)
+                .map_err(|e| NodegetError::Other(format!("{e}")).into())
         }
 
         TaskEventType::Execute(command) => execute::execute_command(command.clone())
             .await
             .map(TaskEventResult::Execute)
-            .map_err(|e| e),
+            .map_err(|e| NodegetError::Other(format!("{e}")).into()),
 
         TaskEventType::Ip => {
             let ip_info = ip::ip().await;
@@ -85,7 +89,7 @@ pub async fn handle_task() {
             if !server.allow_task.unwrap_or(false) {
                 return;
             }
-            let mut rx = match subscribe_to(server.name.as_str()).await {
+            let mut rx: tokio::sync::broadcast::Receiver<Message> = match subscribe_to(server.name.as_str()).await {
                 Ok(rx) => {
                     info!("[{}] Handle Task Started", server.name);
                     rx
@@ -117,7 +121,7 @@ pub async fn handle_task() {
 
                     let task_type = &json_rpc.params.result.task_event_type;
 
-                    let task_result = if is_task_allowed(&server_config, task_type) {
+                    let task_result: Result<TaskEventResult> = if is_task_allowed(&server_config, task_type) {
                         execute_task(
                             task_type,
                             json_rpc.params.result.task_id,
@@ -125,7 +129,7 @@ pub async fn handle_task() {
                         )
                         .await
                     } else {
-                        Err("102: Permission Denied".to_string())
+                        Err(NodegetError::PermissionDenied("Permission Denied: Task not allowed".to_owned()).into())
                     };
 
                     let timestamp = get_local_timestamp_ms().unwrap_or(0);
@@ -140,15 +144,18 @@ pub async fn handle_task() {
                             error_message: None,
                             task_event_result: Some(task_result),
                         },
-                        Err(e) => TaskEventResponse {
-                            task_id: json_rpc.params.result.task_id,
-                            agent_uuid: AGENT_CONFIG.get().unwrap().agent_uuid,
-                            task_token: json_rpc.params.result.task_token,
-                            timestamp,
-                            success: false,
-                            error_message: Some(e),
-                            task_event_result: None,
-                        },
+                        Err(e) => {
+                            let error_message = format!("{e}");
+                            TaskEventResponse {
+                                task_id: json_rpc.params.result.task_id,
+                                agent_uuid: AGENT_CONFIG.get().unwrap().agent_uuid,
+                                task_token: json_rpc.params.result.task_token,
+                                timestamp,
+                                success: false,
+                                error_message: Some(error_message),
+                                task_event_result: None,
+                            }
+                        }
                     };
 
                     let rpc = wrap_json_into_rpc_with_id_1(

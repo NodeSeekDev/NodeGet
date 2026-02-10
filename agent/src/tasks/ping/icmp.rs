@@ -1,8 +1,12 @@
 use log::error;
+use nodeget_lib::error::NodegetError;
 use rand::random;
 use surge_ping::{Client, Config, ICMP, PingIdentifier, PingSequence, SurgeError};
 use tokio::net::lookup_host;
 use tokio::sync::{Mutex, OnceCell};
+
+/// ICMP Ping 结果类型
+pub type Result<T> = std::result::Result<T, NodegetError>;
 
 // ICMP Ping 负载数据
 static ICMP_PAYLOAD: [u8; 8] = [0; 8];
@@ -20,7 +24,7 @@ static GLOBAL_ICMP_V6_CLIENT: OnceCell<Mutex<Client>> = OnceCell::const_new();
 //
 // # 返回值
 // 成功时返回往返时间，失败时返回错误
-async fn ping_v4_target(target: std::net::IpAddr) -> Result<std::time::Duration, SurgeError> {
+async fn ping_v4_target(target: std::net::IpAddr) -> std::result::Result<std::time::Duration, SurgeError> {
     let client_v4_mutex = GLOBAL_ICMP_V4_CLIENT
         .get_or_init(|| async {
             let config_v4 = Config::builder().kind(ICMP::V4).build();
@@ -51,7 +55,7 @@ async fn ping_v4_target(target: std::net::IpAddr) -> Result<std::time::Duration,
 //
 // # 返回值
 // 成功时返回往返时间，失败时返回错误
-async fn ping_v6_target(target: std::net::IpAddr) -> Result<std::time::Duration, SurgeError> {
+async fn ping_v6_target(target: std::net::IpAddr) -> std::result::Result<std::time::Duration, SurgeError> {
     let client_v6_mutex = GLOBAL_ICMP_V6_CLIENT
         .get_or_init(|| async {
             let config_v6 = Config::builder().kind(ICMP::V6).build();
@@ -84,7 +88,7 @@ async fn ping_v6_target(target: std::net::IpAddr) -> Result<std::time::Duration,
 //
 // # 返回值
 // 成功时返回往返时间，失败时返回错误信息
-pub async fn ping_target(target: String) -> Result<std::time::Duration, String> {
+pub async fn ping_target(target: String) -> Result<std::time::Duration> {
     let target_ip = match target.parse::<std::net::IpAddr>() {
         Ok(ip) => Some(ip),
         Err(_) => match lookup_host(format!("{}:{}", target, 80)).await {
@@ -97,12 +101,12 @@ pub async fn ping_target(target: String) -> Result<std::time::Duration, String> 
     };
 
     let Some(target) = target_ip else {
-        return Err("Invalid target".to_string());
+        return Err(NodegetError::Other("Invalid target".to_owned()));
     };
 
     if target.is_ipv4() {
-        ping_v4_target(target).await.map_err(|e| e.to_string())
+        ping_v4_target(target).await.map_err(|e| NodegetError::Other(format!("{e}")))
     } else {
-        ping_v6_target(target).await.map_err(|e| e.to_string())
+        ping_v6_target(target).await.map_err(|e| NodegetError::Other(format!("{e}")))
     }
 }

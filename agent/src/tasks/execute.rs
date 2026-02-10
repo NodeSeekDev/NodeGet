@@ -1,10 +1,14 @@
 use crate::AGENT_CONFIG;
+use nodeget_lib::error::NodegetError;
 use std::process::Stdio;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
 // 命令执行超时时间，设定为 60 秒
 const EXECUTE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// 命令执行结果类型
+pub type Result<T> = std::result::Result<T, NodegetError>;
 
 // 执行指定的命令
 //
@@ -15,7 +19,7 @@ const EXECUTE_TIMEOUT: Duration = Duration::from_secs(60);
 //
 // # 返回值
 // 成功时返回命令输出字符串，失败时返回错误信息
-pub async fn execute_command(command: String) -> Result<String, String> {
+pub async fn execute_command(command: String) -> Result<String> {
     let config = AGENT_CONFIG.get().expect("Agent config not initialized");
     let max_chars = config.exec_max_character.unwrap_or(10000);
 
@@ -48,7 +52,7 @@ pub async fn execute_command(command: String) -> Result<String, String> {
         }
     }
 
-    let mut last_error: String = "No shell was attempted.".to_string();
+    let mut last_error: NodegetError = NodegetError::Other("No shell was attempted.".to_owned());
 
     for shell in &shells_to_try {
         let (shell_path, shell_arg) = {
@@ -73,7 +77,7 @@ pub async fn execute_command(command: String) -> Result<String, String> {
             Ok(child) => child,
             Err(e) => {
                 log::warn!("Shell '{shell}' not found or usable, trying fallback: {e}");
-                last_error = e.to_string();
+                last_error = NodegetError::Other(format!("{e}"));
                 continue;
             }
         };
@@ -113,18 +117,18 @@ pub async fn execute_command(command: String) -> Result<String, String> {
 
                 return Ok(result);
             }
-            Ok(Err(e)) => return Err(format!("Failed to wait for process: {e}")),
+            Ok(Err(e)) => return Err(NodegetError::Other(format!("Failed to wait for process: {e}"))),
             Err(_) => {
-                return Err(format!(
+                return Err(NodegetError::Other(format!(
                     "Execution timed out (Limit: {}s)",
                     EXECUTE_TIMEOUT.as_secs()
-                ));
+                )));
             }
         }
     }
 
     // 所有 Shell 均失败
-    Err(format!(
+    Err(NodegetError::Other(format!(
         "All available shells failed to execute command. Last error: {last_error}"
-    ))
+    )))
 }

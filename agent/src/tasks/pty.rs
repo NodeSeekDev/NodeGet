@@ -1,6 +1,7 @@
 use crate::AGENT_CONFIG;
 use futures::{SinkExt, StreamExt};
 use log::{error, info};
+use nodeget_lib::error::NodegetError;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -11,6 +12,9 @@ use tokio_tungstenite::tungstenite::Bytes;
 use tokio_tungstenite::{WebSocketStream, connect_async, tungstenite::protocol::Message};
 use url::Url;
 
+/// PTY 结果类型
+pub type Result<T> = std::result::Result<T, NodegetError>;
+
 // 处理 PTY（伪终端）URL
 //
 // 该函数连接到指定的 WebSocket URL，并启动 PTY 会话
@@ -20,16 +24,16 @@ use url::Url;
 //
 // # 返回值
 // 成功时返回 Ok(())，失败时返回错误信息
-pub async fn handle_pty_url(url: Result<Url, String>) -> Result<(), String> {
+pub async fn handle_pty_url(url: std::result::Result<Url, String>) -> Result<()> {
     let url = match url {
         Ok(url) => url,
         Err(e) => {
-            return Err(e);
+            return Err(NodegetError::Other(e));
         }
     };
 
     let Ok(ws) = connect_async(url.to_string()).await else {
-        return Err(String::from("Failed to connect to WebSocket"));
+        return Err(NodegetError::AgentConnectionError("Failed to connect to WebSocket".to_owned()));
     };
 
     let ws_stream = ws.0;
@@ -55,7 +59,7 @@ pub async fn handle_pty_url(url: Result<Url, String>) -> Result<(), String> {
 //
 // # 返回值
 // 成功时返回 Ok(())，失败时返回错误信息
-async fn handle_pty_session<S>(ws_stream: WebSocketStream<S>, cmd: &str) -> Result<(), String>
+async fn handle_pty_session<S>(ws_stream: WebSocketStream<S>, cmd: &str) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -68,7 +72,7 @@ where
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| format!("Failed to create PTY: {e}"))?;
+        .map_err(|e| NodegetError::Other(format!("Failed to create PTY: {e}")))?;
 
     let mut cmd = CommandBuilder::new(cmd);
 
@@ -81,17 +85,17 @@ where
     let mut pty_reader = pair
         .master
         .try_clone_reader()
-        .map_err(|e| format!("Failed to get PTY Reader: {e}"))?;
+        .map_err(|e| NodegetError::Other(format!("Failed to get PTY Reader: {e}")))?;
     let pty_writer = Arc::new(Mutex::new(
         pair.master
             .take_writer()
-            .map_err(|e| format!("Failed to get PTY Writer: {e}"))?,
+            .map_err(|e| NodegetError::Other(format!("Failed to get PTY Writer: {e}")))?,
     ));
 
     let mut child = pair
         .slave
         .spawn_command(cmd)
-        .map_err(|e| format!("Failed to spawn process: {e}"))?;
+        .map_err(|e| NodegetError::Other(format!("Failed to spawn process: {e}")))?;
 
     info!("Terminal started in PTY, PID: {:?}", child.process_id());
 
@@ -169,7 +173,7 @@ where
     }
     child
         .wait()
-        .map_err(|e| format!("Failed to wait for child process: {e}"))?;
+        .map_err(|e| NodegetError::Other(format!("Failed to wait for child process: {e}")))?;
     info!("Session successfully closed.");
 
     Ok(())
@@ -205,7 +209,7 @@ struct HeartBeat {
 fn handle_ws_message(
     msg: Message,
     pty_writer: &Arc<Mutex<Box<dyn Write + Send>>>,
-) -> Result<Option<NeedResize>, String> {
+) -> std::result::Result<Option<NeedResize>, String> {
     match msg {
         Message::Text(text) => {
             if serde_json::from_str::<HeartBeat>(text.as_ref()).is_ok() {
@@ -246,7 +250,7 @@ fn handle_ws_message(
 //
 // # 返回值
 // 成功时返回解析后的 URL，失败时返回错误信息
-pub fn parse_url(url: Url, task_id: u64, task_token: &str) -> Result<Url, String> {
+pub fn parse_url(url: Url, task_id: u64, task_token: &str) -> std::result::Result<Url, String> {
     let scheme = url.scheme();
     if !((scheme == "ws") || (scheme == "wss")) {
         return Err(format!("Invalid scheme: {scheme}"));

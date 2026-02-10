@@ -7,6 +7,7 @@ use crate::rpc::wrap_json_into_rpc_with_id_1;
 use futures::{SinkExt, StreamExt};
 use log::{debug, error, info, warn};
 use nodeget_lib::config::agent::Server;
+use nodeget_lib::error::NodegetError;
 use serde::Deserialize;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::RecvError;
@@ -15,6 +16,9 @@ use tokio::time::{sleep, timeout};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+
+/// Agent 结果类型
+pub type Result<T> = std::result::Result<T, NodegetError>;
 
 // 服务器连接句柄，包含上行和下行消息通道
 pub struct ServerHandle {
@@ -91,9 +95,13 @@ async fn connection_manager(
     loop {
         info!("[{name}] Connecting to {url}...");
 
-        let Ok(ws_stream) = connect_with_retry(name, url).await else {
-            sleep(Duration::from_secs(5)).await;
-            continue;
+        let ws_stream = match connect_with_retry(name, url).await {
+            Ok(ws) => ws,
+            Err(e) => {
+                error!("[{name}] Failed to connect: {e}");
+                sleep(Duration::from_secs(5)).await;
+                continue;
+            }
         };
 
         info!("[{name}] Connected successfully");
@@ -187,7 +195,7 @@ async fn connection_manager(
 async fn connect_with_retry(
     name: &str,
     url: &str,
-) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, ()> {
+) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
     let mut retry_count = 0;
     loop {
         match timeout(Duration::from_secs(5), connect_async(url)).await {
@@ -201,6 +209,9 @@ async fn connect_with_retry(
         }
 
         retry_count += 1;
+        if retry_count >= 30 {
+            return Err(NodegetError::AgentConnectionError(format!("Failed to connect to {name} after {retry_count} retries")).into());
+        }
         let wait_secs = if retry_count < 5 { 2 } else { 5 };
         debug!("[{name}] Retry attempt {retry_count} in {wait_secs}s...");
         sleep(Duration::from_secs(wait_secs)).await;
@@ -217,21 +228,21 @@ async fn connect_with_retry(
 //
 // # 返回值
 // 成功时返回 Ok(())，失败时返回错误信息
-pub async fn send_to(server_name: &str, msg: Message) -> Result<(), String> {
+pub async fn send_to(server_name: &str, msg: Message) -> Result<()> {
     let pool = CONNECTION_POOL
         .get()
-        .ok_or("Connection pool not initialized")?
-        .read()
-        .await;
+        .ok_or_else(|| NodegetError::Other("Connection pool not initialized".to_owned()))?;
+    
+    let pool_guard = pool.read().await;
 
-    pool.get(server_name).map_or_else(
-        || Err(format!("Server not found: {server_name}")),
+    pool_guard.get(server_name).map_or_else(
+        || Err(NodegetError::Other(format!("Server not found: {server_name}"))),
         |handle| {
             handle
                 .uplink_tx
                 .send(msg)
                 .map(|_| ())
-                .map_err(|_| "Sending channel issue".to_string())
+                .map_err(|_| NodegetError::Other("Sending channel issue".to_owned()))
         },
     )
 }
@@ -245,15 +256,15 @@ pub async fn send_to(server_name: &str, msg: Message) -> Result<(), String> {
 //
 // # 返回值
 // 成功时返回消息接收器，失败时返回错误信息
-pub async fn subscribe_to(server_name: &str) -> Result<broadcast::Receiver<Message>, String> {
+pub async fn subscribe_to(server_name: &str) -> Result<broadcast::Receiver<Message>> {
     let pool = CONNECTION_POOL
         .get()
-        .ok_or("Connection pool not initialized")?
-        .read()
-        .await;
+        .ok_or_else(|| NodegetError::Other("Connection pool not initialized".to_owned()))?;
+    
+    let pool_guard = pool.read().await;
 
-    pool.get(server_name).map_or_else(
-        || Err(format!("Server not found: {server_name}")),
+    pool_guard.get(server_name).map_or_else(
+        || Err(NodegetError::Other(format!("Server not found: {server_name}"))),
         |handle| Ok(handle.downlink_tx.subscribe()),
     )
 }
