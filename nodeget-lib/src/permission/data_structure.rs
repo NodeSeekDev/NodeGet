@@ -33,10 +33,12 @@ pub struct Limit {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Scope {
-    // 全局作用域，适用于所有 Agent
+    // 全局作用域，适用于所有地点
     Global,
     // 特定 Agent 作用域，通过 UUID 指定
     AgentUuid(uuid::Uuid),
+    // KvNamespace 作用域，通过名称指定
+    KvNamespace(String),
 }
 
 // 权限枚举，定义不同类型的操作权限
@@ -49,10 +51,11 @@ pub enum Permission {
     DynamicMonitoring(DynamicMonitoring),
     // 任务权限
     Task(Task),
-    // Metadata 权限
-    Metadata(Metadata),
     // Crontab 权限
     Crontab(Crontab),
+
+    // Kv 权限
+    Kv(Kv),
 }
 
 // 静态监控权限枚举
@@ -91,14 +94,6 @@ pub enum Task {
     Listen,
 }
 
-// Metadata 权限枚举
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Metadata {
-    Read,
-    Write,
-}
-
 // Crontab 权限枚举
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,4 +101,14 @@ pub enum Crontab {
     Read,
     Write,
     Delete,
+}
+
+// Kv 权限枚举
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kv {
+    ListAllKeys,
+    Read(String),
+    Write(String),
+    Delete(String),
 }

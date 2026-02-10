@@ -9,12 +9,7 @@
     dead_code
 )]
 
-use crate::rpc::agent::RpcServer as AgentRpcServer;
-use crate::rpc::crontab::RpcServer as CrontabRpcServer;
-use crate::rpc::metadata::RpcServer as MetadataRpcServer;
-use crate::rpc::nodeget::RpcServer as NodeGetRpcServer;
-use crate::rpc::task::RpcServer as TaskRpcServer;
-use crate::rpc::token::RpcServer as TokenRpcServer;
+
 use axum::routing::any;
 use log::info;
 use std::str::FromStr;
@@ -24,6 +19,7 @@ use crate::crontab::init_crontab_worker;
 use crate::token::super_token::generate_super_token;
 #[cfg(all(not(target_os = "windows"), feature = "jemalloc"))]
 use tikv_jemallocator::Jemalloc;
+use crate::rpc::get_modules;
 
 #[cfg(all(not(target_os = "windows"), feature = "jemalloc"))]
 #[global_allocator]
@@ -40,9 +36,10 @@ mod terminal;
 // 令牌模块，处理令牌相关功能
 mod crontab;
 mod token;
+mod kv;
 
 // 全局数据库连接单例
-static DB: tokio::sync::OnceCell<sea_orm::DatabaseConnection> = tokio::sync::OnceCell::const_new();
+pub static DB: tokio::sync::OnceCell<sea_orm::DatabaseConnection> = tokio::sync::OnceCell::const_new();
 // 全局服务器配置单例
 static SERVER_CONFIG: std::sync::OnceLock<nodeget_lib::config::server::ServerConfig> =
     std::sync::OnceLock::new();
@@ -119,32 +116,11 @@ async fn main() {
         }
     }
 
-    let task_manager = rpc::task::TaskManager::global().clone();
     let terminal_state = terminal::TerminalState {
         sessions: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };
 
-    let mut rpc_module = rpc::nodeget::NodegetServerRpcImpl.into_rpc();
-    rpc_module
-        .merge(rpc::agent::AgentRpcImpl.into_rpc())
-        .unwrap();
-    rpc_module
-        .merge(
-            rpc::task::TaskRpcImpl {
-                manager: task_manager,
-            }
-            .into_rpc(),
-        )
-        .unwrap();
-    rpc_module
-        .merge(rpc::token::TokenRpcImpl.into_rpc())
-        .unwrap();
-    rpc_module
-        .merge(rpc::metadata::MetadataRpcImpl.into_rpc())
-        .unwrap();
-    rpc_module
-        .merge(rpc::crontab::CrontabRpcImpl.into_rpc())
-        .unwrap();
+    let mut rpc_module = get_modules();
 
     let (stop_handle, _server_handle) = jsonrpsee::server::stop_channel();
 

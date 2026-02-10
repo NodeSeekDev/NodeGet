@@ -5,7 +5,7 @@ pub mod prelude;
 pub mod crontab;
 pub mod crontab_result;
 pub mod dynamic_monitoring;
-pub mod metadata;
+pub mod kv;
 pub mod static_monitoring;
 pub mod task;
 pub mod token;

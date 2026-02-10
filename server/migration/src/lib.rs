@@ -10,7 +10,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260115_131325_create_dynamic_monitoring::Migration),
             Box::new(m20260118_030100_create_task::Migration),
             Box::new(m20260131_112949_create_token::Migration),
-            Box::new(m20260205_024306_create_metadata::Migration),
+            Box::new(m20260205_024306_create_kv::Migration),
             Box::new(m20260206_035808_create_crontab::Migration),
             Box::new(m20260206_040842_create_crontab_result::Migration),
         ]
@@ -20,6 +20,6 @@ mod m20260113_044428_create_static_monitoring;
 mod m20260115_131325_create_dynamic_monitoring;
 mod m20260118_030100_create_task;
 mod m20260131_112949_create_token;
-mod m20260205_024306_create_metadata;
+mod m20260205_024306_create_kv;
 mod m20260206_035808_create_crontab;
 mod m20260206_040842_create_crontab_result;

@@ -9,58 +9,46 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(MetadataInDatabase::Table)
+                    .table(KvInDatabase::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(MetadataInDatabase::Id)
+                        ColumnDef::new(KvInDatabase::Id)
                             .big_integer()
                             .not_null()
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(MetadataInDatabase::Uuid).uuid().not_null())
                     .col(
-                        ColumnDef::new(MetadataInDatabase::Name)
+                        ColumnDef::new(KvInDatabase::Name)
                             .string()
                             .not_null()
                             .unique_key(),
                     )
                     .col(
-                        ColumnDef::new(MetadataInDatabase::Tags)
+                        ColumnDef::new(KvInDatabase::KvValue)
                             .json_binary()
-                            .null(),
+                            .not_null(),
                     )
                     .to_owned(),
             )
             .await?;
 
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx-metadata-uuid") // 索引名称
-                    .table(MetadataInDatabase::Table)
-                    .col(MetadataInDatabase::Uuid)
-                    .unique()
-                    .to_owned(),
-            )
-            .await?;
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(MetadataInDatabase::Table).to_owned())
+            .drop_table(Table::drop().table(KvInDatabase::Table).to_owned())
             .await
     }
 }
 
 // 令牌表的标识符枚举，用于定义表和列的名称
 #[derive(DeriveIden)]
-enum MetadataInDatabase {
-    #[sea_orm(iden = "metadata")]
+enum KvInDatabase {
+    #[sea_orm(iden = "kv")]
     Table,
     Id,
-    Uuid,
     Name,
-    Tags,
+    KvValue,
 }
