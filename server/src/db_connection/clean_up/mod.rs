@@ -100,8 +100,8 @@ mod tests {
         // `{"kv": {"database_limit_task": 1000, ...}, "namespace": "..."}`
         let json: Value = serde_json::json!({
             "kv": {
-                "database_limit_static_monitoring": 86400000,
-                "database_limit_dynamic_monitoring": 3600000,
+                "database_limit_static_monitoring": 86_400_000,
+                "database_limit_dynamic_monitoring": 3_600_000,
                 "other_key": "value"
             },
             "namespace": "e8583352-39e8-5a5b-b66c-e450689088fd"
@@ -110,11 +110,11 @@ mod tests {
         // KV 中直接使用毫秒单位
         assert_eq!(
             utils::get_limit_millis(&json, "database_limit_static_monitoring"),
-            Some(86400000)
+            Some(86_400_000)
         );
         assert_eq!(
             utils::get_limit_millis(&json, "database_limit_dynamic_monitoring"),
-            Some(3600000)
+            Some(3_600_000)
         );
         assert_eq!(utils::get_limit_millis(&json, "database_limit_task"), None);
     }

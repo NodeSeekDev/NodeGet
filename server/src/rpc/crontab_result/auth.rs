@@ -12,11 +12,10 @@ use nodeget_lib::permission::token_auth::TokenOrAuth;
 /// # 返回值
 /// 如果 `cron_name` 匹配模式返回 true
 fn cron_name_matches_pattern(cron_name: &str, pattern: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        cron_name.starts_with(prefix)
-    } else {
-        cron_name == pattern
-    }
+    pattern.strip_suffix('*').map_or_else(
+        || cron_name == pattern,
+        |prefix| cron_name.starts_with(prefix),
+    )
 }
 
 /// 检查是否有 `CrontabResult` 读权限

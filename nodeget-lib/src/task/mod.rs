@@ -42,6 +42,9 @@ impl TaskEventType {
 
     /// 从延迟创建对应的结果类型
     /// 用于 Ping/TcpPing/HttpPing 任务
+    ///
+    /// # Panics
+    /// 当任务类型不是 Ping/TcpPing/HttpPing 时会 panic
     #[must_use]
     pub fn result_from_duration(&self, duration: Duration) -> TaskEventResult {
         let millis = duration.as_millis_f64();

@@ -47,10 +47,10 @@ pub async fn toggle_enable(token: String, name: String) -> RpcResult<Box<RawValu
             .await
             .map_err(|e| NodegetError::Other(format!("Failed to toggle crontab: {e}")))?;
 
-        let json_str = match new_state {
-            Some(state) => format!("{{\"success\":true,\"enabled\":{state}}}"),
-            None => "{\"success\":false,\"message\":\"Crontab not found\"}".to_string(),
-        };
+        let json_str = new_state.map_or_else(
+            || "{\"success\":false,\"message\":\"Crontab not found\"}".to_string(),
+            |state| format!("{{\"success\":true,\"enabled\":{state}}}"),
+        );
 
         RawValue::from_string(json_str)
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())

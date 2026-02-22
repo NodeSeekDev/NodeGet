@@ -179,9 +179,7 @@ async fn run_job_logic(job: Cron) {
 
 /// 运行数据库清理任务并记录结果
 async fn run_cleanup_database_job(cron_id: i64, cron_name: String) {
-    let db = if let Some(db) = DB.get() {
-        db
-    } else {
+    let Some(db) = DB.get() else {
         error!("DB not initialized for cleanup job [{cron_name}]");
         return;
     };

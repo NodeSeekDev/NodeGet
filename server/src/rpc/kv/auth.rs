@@ -29,11 +29,9 @@ pub fn validate_key(key: &str) -> anyhow::Result<()> {
 /// # 返回值
 /// 如果 key 匹配模式返回 true
 fn key_matches_pattern(key: &str, pattern: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        key.starts_with(prefix)
-    } else {
-        key == pattern
-    }
+    pattern
+        .strip_suffix('*')
+        .map_or_else(|| key == pattern, |prefix| key.starts_with(prefix))
 }
 
 /// 检查是否有 KV 读权限
@@ -90,7 +88,7 @@ pub async fn check_kv_read_permission(
         let scope_matches = limit.scopes.iter().any(|s| match s {
             Scope::Global => true,
             Scope::KvNamespace(ns) => ns == namespace,
-            _ => false,
+            Scope::AgentUuid(_) => false,
         });
 
         if !scope_matches {
@@ -165,7 +163,7 @@ pub async fn check_kv_write_permission(
         let scope_matches = limit.scopes.iter().any(|s| match s {
             Scope::Global => true,
             Scope::KvNamespace(ns) => ns == namespace,
-            _ => false,
+            Scope::AgentUuid(_) => false,
         });
 
         if !scope_matches {
@@ -243,7 +241,7 @@ pub async fn check_kv_delete_permission(
         let scope_matches = limit.scopes.iter().any(|s| match s {
             Scope::Global => true,
             Scope::KvNamespace(ns) => ns == namespace,
-            _ => false,
+            Scope::AgentUuid(_) => false,
         });
 
         if !scope_matches {

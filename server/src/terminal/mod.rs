@@ -195,9 +195,7 @@ async fn handle_user(
     info!("User connecting terminal to: {agent_uuid}");
 
     // 检查 token 是否存在
-    let token = if let Some(t) = token {
-        t
-    } else {
+    let Some(token) = token else {
         warn!("User connection rejected: missing token");
         return;
     };

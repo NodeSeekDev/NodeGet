@@ -98,9 +98,8 @@ async fn cleanup_static_monitoring_generic(
         .one(db)
         .await?;
 
-    let max_timestamp = match max_timestamp {
-        Some(ts) => ts,
-        None => return Ok(0),
+    let Some(max_timestamp) = max_timestamp else {
+        return Ok(0);
     };
 
     // 计算需要保留的最小 timestamp
@@ -137,9 +136,8 @@ async fn cleanup_dynamic_monitoring_generic(
         .one(db)
         .await?;
 
-    let max_timestamp = match max_timestamp {
-        Some(ts) => ts,
-        None => return Ok(0),
+    let Some(max_timestamp) = max_timestamp else {
+        return Ok(0);
     };
 
     // 计算需要保留的最小 timestamp
@@ -177,9 +175,8 @@ async fn cleanup_task_generic(
         .one(db)
         .await?;
 
-    let max_timestamp = match max_timestamp {
-        Some(ts) => ts,
-        None => return Ok(0),
+    let Some(max_timestamp) = max_timestamp else {
+        return Ok(0);
     };
 
     // 计算需要保留的最小 timestamp
@@ -213,9 +210,8 @@ async fn cleanup_crontab_result_generic(db: &DatabaseConnection, limit_millis: i
         .one(db)
         .await?;
 
-    let max_run_time = match max_run_time {
-        Some(ts) => ts,
-        None => return Ok(0),
+    let Some(max_run_time) = max_run_time else {
+        return Ok(0);
     };
 
     // 计算需要保留的最小 run_time

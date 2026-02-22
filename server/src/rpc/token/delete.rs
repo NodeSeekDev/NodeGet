@@ -11,7 +11,7 @@ pub async fn delete(token: String, target_token_key: Option<String>) -> RpcResul
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-        let _current_token_info = get_token(&token_or_auth).await?;
+        let current_token_info = get_token(&token_or_auth).await?;
 
         let is_super_token = check_super_token(&token_or_auth)
             .await
@@ -47,7 +47,7 @@ pub async fn delete(token: String, target_token_key: Option<String>) -> RpcResul
                 .into());
             }
 
-            let target_key_to_delete = _current_token_info.token_key.clone();
+            let target_key_to_delete = current_token_info.token_key.clone();
 
             let delete_result = token::delete_token_by_key(target_key_to_delete.clone())
                 .await

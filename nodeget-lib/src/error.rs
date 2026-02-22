@@ -41,7 +41,6 @@ impl NodegetError {
     #[must_use]
     pub const fn error_code(&self) -> i128 {
         match self {
-            Self::ParseError(_) => 101,
             Self::InvalidInput(_) => 108,
             Self::PermissionDenied(_) => 102,
             Self::DatabaseError(_) => 103,
@@ -49,9 +48,8 @@ impl NodegetError {
             Self::NotFound(_) => 105,
             Self::UuidNotFound(_) => 106,
             Self::ConfigNotFound(_) => 107,
-            Self::SerializationError(_) => 101,
-            Self::IoError(_) => 101,
             Self::Other(_) => 999,
+            Self::ParseError(_) | Self::SerializationError(_) | Self::IoError(_) => 101,
         }
     }
 

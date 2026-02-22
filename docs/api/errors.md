@@ -92,7 +92,7 @@ pub struct JsonError {
 {
   "error": {
     "code": 102,
-    "message": "Permission denied: Insufficient permissions to read requested task types",
+    "message": "Permission denied: Insufficient permissions to read requested task types"
   }
 }
 ```
