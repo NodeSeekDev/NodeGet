@@ -107,8 +107,11 @@ pub enum Kv {
 - `database_limit_*`:
   - `database_limit_static_monitoring`: 单位毫秒
         在以 Agent Uuid 为命名的 Kv 中，设置该值则表示:
+
         Crontab 执行 Server CleanUpDatabse 任务时，在 Static 表中查询最后一个该 Uuid 的数据，获取其 Timestamp
+        
         清理 `从 (Timestamp - 该值) 至 Timestamp` **以外的**数据，可以理解为清理旧数据，保留新数据
+        
         该设置不受数据条数影响，仅以 Timestamp 为标准
 
         若某一 Agent 设置了该值，并在历史某一时刻不再上传数据，则不会影响其 `从 (最后一个 Timestamp - 该值) 至 最后一个 Timestamp` 的数据
