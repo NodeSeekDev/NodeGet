@@ -91,6 +91,9 @@ pub enum Permission {
 
     // CrontabResult 权限
     CrontabResult(CrontabResult),
+    
+    // NodeGet 权限
+    NodeGet(NodeGet),
 }
 
 // 静态监控权限枚举
@@ -178,6 +181,16 @@ pub enum Terminal {
     // 注意：此处只是连接，而不是创建或主动让 Agent 连接
     Connect,
 }
+
+// NodeGet 权限枚举
+// 注意：该权限仅在 Global Scope 下有效
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeGet {
+    // 列出所有 Agent Uuid
+    ListAllAgentUuid,
+}
+
 ```
 
 若存在于 Limit 的 permissions 中，即为拥有该权限

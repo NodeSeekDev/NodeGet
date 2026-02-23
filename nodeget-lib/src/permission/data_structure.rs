@@ -62,6 +62,9 @@ pub enum Permission {
 
     // CrontabResult 权限
     CrontabResult(CrontabResult),
+
+    // NodeGet 权限
+    NodeGet(NodeGet),
 }
 
 // 静态监控权限枚举
@@ -135,4 +138,13 @@ pub enum Kv {
 #[serde(rename_all = "snake_case")]
 pub enum Terminal {
     Connect,
+}
+
+// NodeGet 权限枚举
+// 注意：该权限仅在 Global Scope 下有效
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeGet {
+    // 列出所有 Agent Uuid
+    ListAllAgentUuid,
 }
