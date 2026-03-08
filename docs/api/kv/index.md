@@ -95,32 +95,3 @@ pub enum Kv {
 
 该权限表示，在 `kv_test` Namespace 的 Kv 下，可以列出所有的 Keys，并 读写删除 以 `metadata_` 开头的键
 
-## 特殊 Kv 与 特殊键
-
-### 特殊 Kv
-
-每一个 Agent 都建议在 Kv 系统中拥有以自身 Uuid 为 Name 的 Kv Namespace，但该 Kv 并非必须，也不会自动创建
-
-每一个 Server 都建议在 Kv 系统中拥有 `global` 为 Name 的 Kv Namespace，但该 Kv 并非必须，也不会自动创建
-
-### 特殊键
-
-在一个 Kv 中，非 Agent / Server 开发者不建议使用以下的键，其在 Agent / Server 内部有特殊用途，或为共同认定的功能键
-
-- `database_limit_*`:
-    - `database_limit_static_monitoring`: 单位毫秒
-      在以 Agent Uuid 为命名的 Kv 中，设置该值则表示:
-
-          Crontab 执行 Server CleanUpDatabse 任务时，在 Static 表中查询最后一个该 Uuid 的数据，获取其 Timestamp
-          
-          清理 `从 (Timestamp - 该值) 至 Timestamp` **以外的**数据，可以理解为清理旧数据，保留新数据
-          
-          该设置不受数据条数影响，仅以 Timestamp 为标准
-
-          若某一 Agent 设置了该值，并在历史某一时刻不再上传数据，则不会影响其 `从 (最后一个 Timestamp - 该值) 至 最后一个 Timestamp` 的数据
-    - `database_limit_dynamic_monitoring`: 同上，Dynamic Monitoring Data
-    - `database_limit_task`: 同上，Task 记录
-    - `database_limit_crontab_result`: 同上，Crontab 执行记录，但必须存在于 `global` Kv 中，其他位置无效
-- `metadata_*`
-    - `metadata_name`: 前端展示 Agent 名字
-    - `metadata_tags`: 前端展示的 Tag，为数组，值为 String，如: `["tag1", "tag2"]`

@@ -219,6 +219,10 @@ export const themeZhConfig = {
 				{
 					text: '增删改查',
 					link: '/api/kv/crud.md'
+				},
+				{
+					text: '特殊 Kv',
+					link: '/api/kv/special.md'
 				}]
 			}]
 		}]
