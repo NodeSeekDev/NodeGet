@@ -1,10 +1,13 @@
 use crate::crontab::delete_crontab_by_name;
-use crate::token::get::get_token;
+use crate::entity::crontab;
+use crate::rpc::RpcHelper;
+use crate::rpc::crontab::CrontabRpcImpl;
+use crate::rpc::crontab::auth::{ensure_crontab_scope_permission, parse_cron_type};
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{Crontab as CrontabPermission, Permission};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
-use nodeget_lib::utils::get_local_timestamp_ms_i64;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::value::RawValue;
 
 pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
@@ -12,36 +15,27 @@ pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-        let token_info = get_token(&token_or_auth).await?;
+        let db = CrontabRpcImpl::get_db()?;
+        let model = crontab::Entity::find()
+            .filter(crontab::Column::Name.eq(&name))
+            .one(db)
+            .await
+            .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
-        let now = get_local_timestamp_ms_i64()
-            .map_err(|e| NodegetError::Other(format!("Failed to get timestamp: {e}")))?;
+        let Some(model) = model else {
+            let json_str = "{\"success\":false}".to_owned();
+            return RawValue::from_string(json_str)
+                .map_err(|e| NodegetError::SerializationError(format!("{e}")).into());
+        };
 
-        if let Some(from) = token_info.timestamp_from
-            && now < from
-        {
-            return Err(NodegetError::PermissionDenied("Token is not yet valid".to_owned()).into());
-        }
-
-        if let Some(to) = token_info.timestamp_to
-            && now > to
-        {
-            return Err(NodegetError::PermissionDenied("Token has expired".to_owned()).into());
-        }
-
-        let has_crontab_delete_permission = token_info.token_limit.iter().any(|limit| {
-            limit
-                .permissions
-                .iter()
-                .any(|perm| matches!(perm, Permission::Crontab(CrontabPermission::Delete)))
-        });
-
-        if !has_crontab_delete_permission {
-            return Err(NodegetError::PermissionDenied(
-                "Permission Denied: Insufficient Crontab Delete permission".to_owned(),
-            )
-            .into());
-        }
+        let cron_type = parse_cron_type(&model.cron_type, &name)?;
+        ensure_crontab_scope_permission(
+            &token_or_auth,
+            &cron_type,
+            Permission::Crontab(CrontabPermission::Delete),
+            "Permission Denied: Missing Crontab Delete permission for all target scopes",
+        )
+        .await?;
 
         let deleted = delete_crontab_by_name(name)
             .await

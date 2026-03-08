@@ -1,11 +1,14 @@
+use crate::DB;
+use crate::entity::token as token_entity;
 use crate::token;
 use crate::token::super_token::check_super_token;
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::token_auth::TokenOrAuth;
+use sea_orm::EntityTrait;
 use serde_json::value::RawValue;
 
-pub async fn delete(token: String, target_token: Option<String>) -> RpcResult<Box<RawValue>> {
+pub async fn delete(token: String, target_token: String) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
@@ -21,12 +24,33 @@ pub async fn delete(token: String, target_token: Option<String>) -> RpcResult<Bo
             .into());
         }
 
-        let Some(target_token_to_delete) = target_token else {
-            return Err(NodegetError::PermissionDenied(
-                "Target token (key/username) is required for SuperToken deletion".to_string(),
-            )
-            .into());
-        };
+        if target_token.trim().is_empty() {
+            return Err(
+                NodegetError::InvalidInput("target_token cannot be empty".to_string()).into(),
+            );
+        }
+        let target_token_to_delete = target_token;
+
+        let db = DB.get().ok_or_else(|| {
+            NodegetError::DatabaseError("Database connection not initialized".to_owned())
+        })?;
+        let super_record = token_entity::Entity::find_by_id(1)
+            .one(db)
+            .await
+            .map_err(|e| NodegetError::DatabaseError(format!("Database error: {e}")))?
+            .ok_or_else(|| {
+                NodegetError::NotFound("Super Token record (ID 1) not found in database".to_owned())
+            })?;
+
+        let target_is_super_by_key = target_token_to_delete == super_record.token_key;
+        let target_is_super_by_username =
+            super_record.username.as_deref() == Some(target_token_to_delete.as_str());
+
+        if target_is_super_by_key || target_is_super_by_username {
+            return Err(
+                NodegetError::PermissionDenied("SuperToken cannot be deleted".to_owned()).into(),
+            );
+        }
 
         let delete_result_by_key = token::delete_token_by_key(target_token_to_delete.clone())
             .await
@@ -34,7 +58,7 @@ pub async fn delete(token: String, target_token: Option<String>) -> RpcResult<Bo
 
         let json_str = if delete_result_by_key.rows_affected > 0 {
             format!(
-                "{{\"success\":true,\"message\":\"Token {} deleted successfully by SuperToken\",\"rows_affected\":{},\"matched_by\":\"token_key\"}}",
+                "{{\"message\":\"Token {} deleted successfully by SuperToken\",\"rows_affected\":{},\"matched_by\":\"token_key\"}}",
                 target_token_to_delete, delete_result_by_key.rows_affected
             )
         } else {
@@ -44,13 +68,14 @@ pub async fn delete(token: String, target_token: Option<String>) -> RpcResult<Bo
 
             if delete_result_by_username.rows_affected > 0 {
                 format!(
-                    "{{\"success\":true,\"message\":\"Token {} deleted successfully by SuperToken\",\"rows_affected\":{},\"matched_by\":\"username\"}}",
+                    "{{\"message\":\"Token {} deleted successfully by SuperToken\",\"rows_affected\":{},\"matched_by\":\"username\"}}",
                     target_token_to_delete, delete_result_by_username.rows_affected
                 )
             } else {
-                format!(
-                    "{{\"success\":false,\"message\":\"Token {target_token_to_delete} not found\"}}"
-                )
+                return Err(NodegetError::NotFound(format!(
+                    "Token not found by key/username: {target_token_to_delete}"
+                ))
+                .into());
             }
         };
 

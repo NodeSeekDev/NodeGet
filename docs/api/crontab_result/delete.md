@@ -2,12 +2,14 @@
 
 调用者可以通过 `crontab-result_delete` 删除记录
 
-需要传入 `token` / `crontab_result_delete`:
+注意：该字符串是完整 JSON-RPC 方法名（`namespace = crontab-result` + `method = delete`）。
+
+需要传入 `token` / `delete_params`:
 
 ```json
 {
   "token": "demo_token",
-  "crontab_result_delete": {
+  "delete_params": {
     "cron_name": "cleanup_database",
     // 可选，若指定则只删除该 cron_name 的记录
     "before_time": 1700000000000
@@ -32,7 +34,7 @@
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "crontab_result.delete",
+  "method": "crontab-result_delete",
   "params": [
     "demo_token",
     {
@@ -49,7 +51,7 @@
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "crontab_result.delete",
+  "method": "crontab-result_delete",
   "params": [
     "demo_token",
     {
@@ -62,7 +64,7 @@
 
 ## 权限说明
 
-删除操作需要 `crontab_result.delete` 权限:
+删除操作需要 `crontab_result` 下的 `delete` 权限:
 
 ```json
 {

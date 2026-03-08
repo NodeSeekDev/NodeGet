@@ -2,12 +2,14 @@
 
 调用者可以通过 `crontab-result_query` 查询
 
-需要传入 `token` / `crontab_result_data_query`:
+注意：该字符串是完整 JSON-RPC 方法名（`namespace = crontab-result` + `method = query`）。
+
+需要传入 `token` / `query`:
 
 ```json
 {
   "token": "demo_token",
-  "crontab_result_data_query": {
+  "query": {
     "condition": [
       // CrontabResultQueryCondition 结构体，该结构体参考 CrontabResult 总览
       // 该字段为 Vec<_>，可指定多个
@@ -39,7 +41,7 @@
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "crontab_result.query",
+  "method": "crontab-result_query",
   "params": [
     "demo_token",
     {
@@ -59,7 +61,7 @@
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "crontab_result.query",
+  "method": "crontab-result_query",
   "params": [
     "demo_token",
     {
@@ -88,7 +90,7 @@
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "crontab_result.query",
+  "method": "crontab-result_query",
   "params": [
     "demo_token",
     {
@@ -114,7 +116,7 @@
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "crontab_result.query",
+  "method": "crontab-result_query",
   "params": [
     "demo_token",
     {
@@ -139,7 +141,7 @@
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "crontab_result.query",
+  "method": "crontab-result_query",
   "params": [
     "demo_token",
     {

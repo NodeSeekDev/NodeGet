@@ -25,6 +25,9 @@ NodeGet 定义了一个统一的错误枚举 `NodegetError`，包含以下错误
 - **ParseError(String)** - 解析错误 (错误码: 101)
     - 当请求数据解析失败时抛出
 
+- **InvalidInput(String)** - 输入无效 (错误码: 108)
+    - 当请求参数格式合法但业务上无效时抛出
+
 - **PermissionDenied(String)** - 权限拒绝 (错误码: 102)
     - 当用户没有执行操作的足够权限时抛出
 
@@ -72,6 +75,7 @@ pub struct JsonError {
 - `105` - NotFound
 - `106` - UuidNotFound
 - `107` - ConfigNotFound
+- `108` - InvalidInput
 - `999` - Other
 
 ## 错误处理示例

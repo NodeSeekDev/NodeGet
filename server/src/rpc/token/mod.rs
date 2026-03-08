@@ -27,7 +27,7 @@ pub trait Rpc {
     async fn delete(
         &self,
         token: String,
-        target_token: Option<String>,
+        target_token: String,
     ) -> RpcResult<Box<RawValue>>;
 
     #[method(name = "list_all_tokens")]
@@ -61,7 +61,7 @@ impl RpcServer for TokenRpcImpl {
     async fn delete(
         &self,
         token: String,
-        target_token: Option<String>,
+        target_token: String,
     ) -> RpcResult<Box<RawValue>> {
         delete::delete(token, target_token).await
     }

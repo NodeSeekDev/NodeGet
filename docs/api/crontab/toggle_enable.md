@@ -21,3 +21,5 @@
 ## 权限要求
 
 切换 Crontab 启用状态需要 `Crontab::Write` 权限。
+
+服务端会先读取目标 Crontab，并要求该 Token 对其 `cron_type` 对应的所有 Scope 均具备写权限。

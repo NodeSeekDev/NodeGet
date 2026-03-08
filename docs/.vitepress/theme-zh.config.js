@@ -171,6 +171,10 @@ export const themeZhConfig = {
 					link: '/api/crontab/create.md'
 				},
 				{
+					text: '编辑 Crontab',
+					link: '/api/crontab/edit.md'
+				},
+				{
 					text: '读取 Crontab',
 					link: '/api/crontab/get.md'
 				},

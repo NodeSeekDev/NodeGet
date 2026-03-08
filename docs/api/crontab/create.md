@@ -17,6 +17,8 @@
 }
 ```
 
+该方法仅用于 **创建**。如果 `name` 已存在，会直接返回错误，不会覆盖原有 Crontab。
+
 ### Cron 表达式
 
 Cron 表达式遵循标准格式，包含秒、分、时、日、月、周字段。
@@ -68,7 +70,12 @@ ping 任务。
 
 ## 权限要求
 
-创建 Crontab 需要 `Crontab::Write` 权限。此外，如果创建 Agent 类型任务，还需要对应的 `Task::Create` 权限。
+创建 Crontab 需要：
+
+- `Crontab::Write`
+- 若是 Agent 类型，还需要对应任务类型的 `Task::Create`
+
+并且必须覆盖 `cron_type` 中声明的 **所有 Scope**（例如 Agent 列表中的每个 UUID）。
 
 示例权限配置:
 

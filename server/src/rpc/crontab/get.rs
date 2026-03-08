@@ -83,35 +83,26 @@ async fn get_crontabs_by_uuids(uuids: Vec<Uuid>) -> anyhow::Result<Vec<Cron>> {
 
     let uuid_set: HashSet<Uuid> = uuids.into_iter().collect();
 
-    let crons = models
-        .into_iter()
-        .filter_map(|model| {
-            let cron_type: CronType = serde_json::from_str(&format!("{}", model.cron_type))
-                .unwrap_or({
-                    CronType::Server(nodeget_lib::crontab::ServerCronType::CleanUpDatabase)
-                });
+    let mut crons = Vec::new();
+    for model in models {
+        let cron_type = parse_cron_type_strict(&model)?;
 
-            let should_include = match &cron_type {
-                CronType::Agent(agent_uuids, _) => {
-                    agent_uuids.iter().any(|uuid| uuid_set.contains(uuid))
-                }
-                CronType::Server(_) => false,
-            };
+        let should_include = match &cron_type {
+            CronType::Agent(agent_uuids, _) => agent_uuids.iter().any(|uuid| uuid_set.contains(uuid)),
+            CronType::Server(_) => false,
+        };
 
-            if should_include {
-                Some(Cron {
-                    id: model.id,
-                    name: model.name,
-                    enable: model.enable,
-                    cron_expression: model.cron_expression,
-                    cron_type,
-                    last_run_time: model.last_run_time,
-                })
-            } else {
-                None
-            }
-        })
-        .collect();
+        if should_include {
+            crons.push(Cron {
+                id: model.id,
+                name: model.name,
+                enable: model.enable,
+                cron_expression: model.cron_expression,
+                cron_type,
+                last_run_time: model.last_run_time,
+            });
+        }
+    }
 
     Ok(crons)
 }
@@ -126,25 +117,30 @@ async fn get_all_crontabs() -> anyhow::Result<Vec<Cron>> {
         .await
         .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
-    let crons = models
-        .into_iter()
-        .map(|model| {
-            let cron_type: CronType = serde_json::from_str(&format!("{}", model.cron_type))
-                .unwrap_or({
-                    CronType::Server(nodeget_lib::crontab::ServerCronType::CleanUpDatabase)
-                });
-            Cron {
-                id: model.id,
-                name: model.name,
-                enable: model.enable,
-                cron_expression: model.cron_expression,
-                cron_type,
-                last_run_time: model.last_run_time,
-            }
-        })
-        .collect();
+    let mut crons = Vec::with_capacity(models.len());
+    for model in models {
+        let cron_type = parse_cron_type_strict(&model)?;
+        crons.push(Cron {
+            id: model.id,
+            name: model.name,
+            enable: model.enable,
+            cron_expression: model.cron_expression,
+            cron_type,
+            last_run_time: model.last_run_time,
+        });
+    }
 
     Ok(crons)
+}
+
+fn parse_cron_type_strict(model: &crontab::Model) -> anyhow::Result<CronType> {
+    serde_json::from_value::<CronType>(model.cron_type.clone()).map_err(|e| {
+        NodegetError::SerializationError(format!(
+            "Failed to parse cron_type for crontab '{}' (id {}): {e}",
+            model.name, model.id
+        ))
+        .into()
+    })
 }
 
 async fn extract_allowed_uuids(token_info: &Token) -> anyhow::Result<Vec<Cron>> {

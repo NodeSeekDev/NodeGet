@@ -40,6 +40,7 @@ pub async fn delete_token_by_key(token_key: String) -> Result<DeleteResult, sea_
 
     // 根据 token_key 删除令牌
     let delete_result = token::Entity::delete_many()
+        .filter(token::Column::Id.ne(1))
         .filter(token::Column::TokenKey.eq(&token_key))
         .exec(db)
         .await?;
@@ -63,6 +64,7 @@ pub async fn delete_token_by_username(username: String) -> Result<DeleteResult, 
 
     // 根据用户名删除令牌
     let delete_result = token::Entity::delete_many()
+        .filter(token::Column::Id.ne(1))
         .filter(token::Column::Username.eq(&username))
         .exec(db)
         .await?;

@@ -5,8 +5,10 @@ use jsonrpsee::proc_macros::rpc;
 use nodeget_lib::crontab::CronType;
 use serde_json::value::RawValue;
 
+mod auth;
 mod create;
 mod delete;
+mod edit;
 mod get;
 mod set_enable;
 mod toggle_enable;
@@ -15,6 +17,15 @@ mod toggle_enable;
 pub trait Rpc {
     #[method(name = "create")]
     async fn create(
+        &self,
+        token: String,
+        name: String,
+        cron_expression: String,
+        cron_type: CronType,
+    ) -> RpcResult<Box<RawValue>>;
+
+    #[method(name = "edit")]
+    async fn edit(
         &self,
         token: String,
         name: String,
@@ -54,6 +65,16 @@ impl RpcServer for CrontabRpcImpl {
         cron_type: CronType,
     ) -> RpcResult<Box<RawValue>> {
         create::create(token, name, cron_expression, cron_type).await
+    }
+
+    async fn edit(
+        &self,
+        token: String,
+        name: String,
+        cron_expression: String,
+        cron_type: CronType,
+    ) -> RpcResult<Box<RawValue>> {
+        edit::edit(token, name, cron_expression, cron_type).await
     }
 
     async fn get(&self, token: String) -> RpcResult<Box<RawValue>> {
