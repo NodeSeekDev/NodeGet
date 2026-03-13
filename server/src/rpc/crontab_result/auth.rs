@@ -3,21 +3,6 @@ use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{CrontabResult, Permission, Scope};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 
-/// 检查 `cron_name` 是否匹配权限模式
-///
-/// # 参数
-/// * `cron_name` - 要检查的 `cron_name`
-/// * `pattern` - 权限模式（可能包含 * 通配符）
-///
-/// # 返回值
-/// 如果 `cron_name` 匹配模式返回 true
-fn cron_name_matches_pattern(cron_name: &str, pattern: &str) -> bool {
-    pattern.strip_suffix('*').map_or_else(
-        || cron_name == pattern,
-        |prefix| cron_name.starts_with(prefix),
-    )
-}
-
 /// 检查是否有 `CrontabResult` 读权限
 ///
 /// # 参数
@@ -59,27 +44,6 @@ pub async fn check_crontab_result_read_permission(
 
     if has_specific_read {
         return Ok(());
-    }
-
-    // 检查通配符权限
-    let token_info = crate::token::get::get_token(&token_or_auth).await?;
-
-    for limit in &token_info.token_limit {
-        // 检查 scope 是否匹配（必须是 Global）
-        let scope_matches = limit.scopes.iter().any(|s| matches!(s, Scope::Global));
-
-        if !scope_matches {
-            continue;
-        }
-
-        // 检查权限
-        for perm in &limit.permissions {
-            if let Permission::CrontabResult(CrontabResult::Read(pattern)) = perm
-                && cron_name_matches_pattern(cron_name, pattern)
-            {
-                return Ok(());
-            }
-        }
     }
 
     Err(NodegetError::PermissionDenied(format!(
@@ -137,26 +101,6 @@ pub async fn check_crontab_result_delete_permission(
             return Ok(());
         }
 
-        // 检查通配符权限
-        let token_info = crate::token::get::get_token(&token_or_auth).await?;
-
-        for limit in &token_info.token_limit {
-            // 检查 scope 是否匹配（必须是 Global）
-            let scope_matches = limit.scopes.iter().any(|s| matches!(s, Scope::Global));
-
-            if !scope_matches {
-                continue;
-            }
-
-            // 检查权限
-            for perm in &limit.permissions {
-                if let Permission::CrontabResult(CrontabResult::Delete(pattern)) = perm
-                    && cron_name_matches_pattern(name, pattern)
-                {
-                    return Ok(());
-                }
-            }
-        }
     }
 
     Err(NodegetError::PermissionDenied(format!(

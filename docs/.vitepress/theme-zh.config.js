@@ -221,6 +221,10 @@ export const themeZhConfig = {
 					link: '/api/kv/create_namespace.md'
 				},
 				{
+					text: '列出所有命名空间',
+					link: '/api/kv/list_all_namespace.md'
+				},
+				{
 					text: '增删改查',
 					link: '/api/kv/crud.md'
 				},

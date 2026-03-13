@@ -1,6 +1,7 @@
 use crate::DB;
 use crate::entity::crontab;
 use crate::token::get::get_token;
+use crate::token::super_token::check_super_token;
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::crontab::{Cron, CronType};
 use nodeget_lib::error::NodegetError;
@@ -18,6 +19,19 @@ pub async fn get(token: String) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
+
+        let is_super_token = check_super_token(&token_or_auth)
+            .await
+            .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
+        if is_super_token {
+            let crontabs = get_all_crontabs().await?;
+            let json_str = serde_json::to_string(&crontabs).map_err(|e| {
+                NodegetError::SerializationError(format!("Failed to serialize crontabs: {e}"))
+            })?;
+
+            return RawValue::from_string(json_str)
+                .map_err(|e| NodegetError::SerializationError(e.to_string()).into());
+        }
 
         let token_info = get_token(&token_or_auth).await?;
 

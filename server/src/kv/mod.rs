@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::kv::KVStore;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+};
 use serde_json::Value;
 
 use crate::DB;
@@ -268,4 +270,19 @@ pub async fn get_kv_store(namespace: String) -> Result<KVStore> {
             Err(NodegetError::DatabaseError(format!("Namespace '{namespace}' not found")).into())
         }
     }
+}
+
+/// 列出所有 KV 命名空间
+///
+/// # 返回值
+/// 成功时返回命名空间列表，失败返回错误
+pub async fn list_all_namespaces() -> Result<Vec<String>> {
+    let db = get_db()?;
+
+    let models = kv::Entity::find()
+        .order_by_asc(kv::Column::Name)
+        .all(db)
+        .await?;
+
+    Ok(models.into_iter().map(|model| model.name).collect())
 }

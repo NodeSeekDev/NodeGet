@@ -10,6 +10,7 @@ mod create;
 mod delete_key;
 mod get_all_keys;
 mod get_value;
+mod list_all_namespace;
 mod set_value;
 
 #[rpc(server, namespace = "kv")]
@@ -44,6 +45,9 @@ pub trait Rpc {
 
     #[method(name = "get_all_keys")]
     async fn get_all_keys(&self, token: String, namespace: String) -> RpcResult<Box<RawValue>>;
+
+    #[method(name = "list_all_namespace")]
+    async fn list_all_namespace(&self, token: String) -> RpcResult<Box<RawValue>>;
 }
 
 pub struct KvRpcImpl;
@@ -86,5 +90,9 @@ impl RpcServer for KvRpcImpl {
 
     async fn get_all_keys(&self, token: String, namespace: String) -> RpcResult<Box<RawValue>> {
         get_all_keys::get_all_keys(token, namespace).await
+    }
+
+    async fn list_all_namespace(&self, token: String) -> RpcResult<Box<RawValue>> {
+        list_all_namespace::list_all_namespace(token).await
     }
 }

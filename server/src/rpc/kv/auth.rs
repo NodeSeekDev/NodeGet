@@ -3,6 +3,12 @@ use crate::token::super_token::check_super_token;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{Kv, Permission, Scope};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
+use std::collections::HashSet;
+
+pub enum KvNamespaceListPermission {
+    All,
+    Scoped(HashSet<String>),
+}
 
 /// 检查 key 是否包含非法字符（如 *）
 ///
@@ -18,20 +24,6 @@ pub fn validate_key(key: &str) -> anyhow::Result<()> {
         );
     }
     Ok(())
-}
-
-/// 检查 key 是否匹配权限模式
-///
-/// # 参数
-/// * `key` - 要检查的 key
-/// * `pattern` - 权限模式（可能包含 * 通配符）
-///
-/// # 返回值
-/// 如果 key 匹配模式返回 true
-fn key_matches_pattern(key: &str, pattern: &str) -> bool {
-    pattern
-        .strip_suffix('*')
-        .map_or_else(|| key == pattern, |prefix| key.starts_with(prefix))
 }
 
 /// 检查是否有 KV 读权限
@@ -77,32 +69,6 @@ pub async fn check_kv_read_permission(
 
     if has_specific_read {
         return Ok(());
-    }
-
-    // 检查通配符权限（如 "metadata_*"）
-    // 需要获取 token 并手动检查权限
-    let token_info = crate::token::get::get_token(&token_or_auth).await?;
-
-    for limit in &token_info.token_limit {
-        // 检查 scope 是否匹配
-        let scope_matches = limit.scopes.iter().any(|s| match s {
-            Scope::Global => true,
-            Scope::KvNamespace(ns) => ns == namespace,
-            Scope::AgentUuid(_) => false,
-        });
-
-        if !scope_matches {
-            continue;
-        }
-
-        // 检查权限
-        for perm in &limit.permissions {
-            if let Permission::Kv(Kv::Read(pattern)) = perm
-                && key_matches_pattern(key, pattern)
-            {
-                return Ok(());
-            }
-        }
     }
 
     Err(NodegetError::PermissionDenied(format!(
@@ -154,29 +120,6 @@ pub async fn check_kv_write_permission(
 
     if has_specific_write {
         return Ok(());
-    }
-
-    // 检查通配符权限
-    let token_info = crate::token::get::get_token(&token_or_auth).await?;
-
-    for limit in &token_info.token_limit {
-        let scope_matches = limit.scopes.iter().any(|s| match s {
-            Scope::Global => true,
-            Scope::KvNamespace(ns) => ns == namespace,
-            Scope::AgentUuid(_) => false,
-        });
-
-        if !scope_matches {
-            continue;
-        }
-
-        for perm in &limit.permissions {
-            if let Permission::Kv(Kv::Write(pattern)) = perm
-                && key_matches_pattern(key, pattern)
-            {
-                return Ok(());
-            }
-        }
     }
 
     Err(NodegetError::PermissionDenied(format!(
@@ -234,29 +177,6 @@ pub async fn check_kv_delete_permission(
         return Ok(());
     }
 
-    // 检查通配符权限
-    let token_info = crate::token::get::get_token(&token_or_auth).await?;
-
-    for limit in &token_info.token_limit {
-        let scope_matches = limit.scopes.iter().any(|s| match s {
-            Scope::Global => true,
-            Scope::KvNamespace(ns) => ns == namespace,
-            Scope::AgentUuid(_) => false,
-        });
-
-        if !scope_matches {
-            continue;
-        }
-
-        for perm in &limit.permissions {
-            if let Permission::Kv(Kv::Delete(pattern)) = perm
-                && key_matches_pattern(key, pattern)
-            {
-                return Ok(());
-            }
-        }
-    }
-
     Err(NodegetError::PermissionDenied(format!(
         "No delete permission for key '{key}' in namespace '{namespace}'"
     ))
@@ -291,6 +211,77 @@ pub async fn check_kv_list_keys_permission(token: &str, namespace: &str) -> anyh
         "No permission to list keys in namespace '{namespace}'"
     ))
     .into())
+}
+
+/// 解析列出 KV 命名空间的权限范围
+///
+/// 规则：
+/// - `Kv::ListAllNamespace` + `Scope::Global` => 可列出所有命名空间
+/// - `Kv::ListAllNamespace` + `Scope::KvNamespace(xxx)` => 仅可列出这些命名空间
+/// - 其他情况 => 无权限
+pub async fn resolve_kv_list_namespace_permission(
+    token: &str,
+) -> anyhow::Result<KvNamespaceListPermission> {
+    let token_or_auth = TokenOrAuth::from_full_token(token)
+        .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
+
+    // 与其他权限校验保持一致：SuperToken 直接放行
+    let is_super_token = check_super_token(&token_or_auth)
+        .await
+        .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
+    if is_super_token {
+        return Ok(KvNamespaceListPermission::All);
+    }
+
+    let token_info = crate::token::get::get_token(&token_or_auth).await?;
+
+    // 与 check_token_limit 保持一致：检查 Token 有效期
+    let now = nodeget_lib::utils::get_local_timestamp_ms_i64()?;
+    if let Some(from) = token_info.timestamp_from
+        && now < from
+    {
+        return Err(NodegetError::PermissionDenied(
+            "Token is not yet valid for listing KV namespaces".to_owned(),
+        )
+        .into());
+    }
+    if let Some(to) = token_info.timestamp_to
+        && now > to
+    {
+        return Err(
+            NodegetError::PermissionDenied("Token has expired for listing KV namespaces".to_owned())
+                .into(),
+        );
+    }
+
+    let mut allowed_namespaces = HashSet::new();
+
+    for limit in &token_info.token_limit {
+        let has_list_namespace_permission = limit
+            .permissions
+            .iter()
+            .any(|perm| matches!(perm, Permission::Kv(Kv::ListAllNamespace)));
+
+        if !has_list_namespace_permission {
+            continue;
+        }
+
+        for scope in &limit.scopes {
+            match scope {
+                Scope::Global => return Ok(KvNamespaceListPermission::All),
+                Scope::KvNamespace(namespace) => {
+                    allowed_namespaces.insert(namespace.clone());
+                }
+                Scope::AgentUuid(_) => {}
+            }
+        }
+    }
+
+    if !allowed_namespaces.is_empty() {
+        return Ok(KvNamespaceListPermission::Scoped(allowed_namespaces));
+    }
+
+    Err(NodegetError::PermissionDenied("No permission to list KV namespaces".to_owned()).into())
 }
 
 /// 检查是否有创建命名空间的权限

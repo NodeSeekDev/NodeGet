@@ -47,6 +47,7 @@ pub enum Permission {
 
 ```rust
 pub enum Kv {
+    ListAllNamespace,
     ListAllKeys,
     Read(String),
     Write(String),
@@ -55,6 +56,10 @@ pub enum Kv {
 ```
 
 ### 注意事项
+
+`ListAllNamespace` 可以列出当前 Token 有权限看到的 Kv Namespace
+
+在 `Global` Scope 下拥有该权限时，可列出所有 Namespace；在 `KvNamespace(xxx)` Scope 下拥有该权限时，仅可列出对应的 `xxx`
 
 `ListAllKeys` 可以列出在这一 KvNamespace Scope 下的所有键 (但是不一定可以读取键对应的值)
 

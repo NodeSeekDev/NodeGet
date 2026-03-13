@@ -127,6 +127,7 @@ pub enum CrontabResult {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kv {
+    ListAllNamespace,
     ListAllKeys,
     Read(String),
     Write(String),

@@ -3,7 +3,7 @@ use crate::entity::token;
 use crate::token::hash_string;
 use crate::token::super_token::check_super_token;
 use nodeget_lib::error::NodegetError;
-use nodeget_lib::permission::data_structure::{Limit, Permission, Scope, Token};
+use nodeget_lib::permission::data_structure::{CrontabResult, Kv, Limit, Permission, Scope, Token};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::get_local_timestamp_ms_i64;
 use sea_orm::ColumnTrait;
@@ -107,6 +107,39 @@ pub fn parse_token_limit_with_compat(token_limit_value: Value) -> anyhow::Result
     }
 }
 
+fn wildcard_matches_pattern(value: &str, pattern: &str) -> bool {
+    pattern
+        .strip_suffix('*')
+        .map_or_else(|| value == pattern, |prefix| value.starts_with(prefix))
+}
+
+fn permission_matches(granted: &Permission, required: &Permission) -> bool {
+    if granted == required {
+        return true;
+    }
+
+    match (granted, required) {
+        (Permission::Kv(Kv::Read(pattern)), Permission::Kv(Kv::Read(key))) => {
+            wildcard_matches_pattern(key, pattern)
+        }
+        (Permission::Kv(Kv::Write(pattern)), Permission::Kv(Kv::Write(key))) => {
+            wildcard_matches_pattern(key, pattern)
+        }
+        (Permission::Kv(Kv::Delete(pattern)), Permission::Kv(Kv::Delete(key))) => {
+            wildcard_matches_pattern(key, pattern)
+        }
+        (
+            Permission::CrontabResult(CrontabResult::Read(pattern)),
+            Permission::CrontabResult(CrontabResult::Read(cron_name)),
+        ) => wildcard_matches_pattern(cron_name, pattern),
+        (
+            Permission::CrontabResult(CrontabResult::Delete(pattern)),
+            Permission::CrontabResult(CrontabResult::Delete(cron_name)),
+        ) => wildcard_matches_pattern(cron_name, pattern),
+        _ => false,
+    }
+}
+
 // 检查令牌是否有足够的权限执行特定操作
 //
 // # 参数
@@ -178,7 +211,11 @@ pub async fn check_token_limit(
                     continue;
                 }
 
-                if limit.permissions.contains(req_perm) {
+                if limit
+                    .permissions
+                    .iter()
+                    .any(|perm| permission_matches(perm, req_perm))
+                {
                     is_allowed = true;
                     break;
                 }
