@@ -46,8 +46,8 @@ pub async fn cleanup_expired_data() -> Result<CleanupResult> {
 }
 
 /// 搜索数据库中 kv 表，查找满足以下条件的 UUID：
-/// - kv name 为有效的 UUID 格式
-/// - `kv_value` 中存在以 `database_limit_*` 开头的 key
+/// - kv namespace 为有效的 UUID 格式
+/// - kv key 以 `database_limit_*` 开头
 ///
 /// 对于 PostgreSQL，使用 JSONB 操作符优化查询
 /// 对于 SQLite，使用内存过滤
@@ -68,8 +68,8 @@ pub async fn find_uuids_with_database_limit() -> Result<Vec<String>> {
 }
 
 /// 搜索数据库中 kv 表，查找满足以下条件的 UUID（分页处理版本）：
-/// - kv name 为有效的 UUID 格式
-/// - `kv_value` 中存在以 `database_limit_*` 开头的 key
+/// - kv namespace 为有效的 UUID 格式
+/// - kv key 以 `database_limit_*` 开头
 ///
 /// 这个版本使用分页处理，适合处理大量数据，避免一次性加载所有记录
 ///
@@ -96,26 +96,12 @@ mod tests {
 
     #[test]
     fn test_get_limit_millis() {
-        // KV 值存储在 `kv` 字段下，格式为：
-        // `{"kv": {"database_limit_task": 1000, ...}, "namespace": "..."}`
-        let json: Value = serde_json::json!({
-            "kv": {
-                "database_limit_static_monitoring": 86_400_000,
-                "database_limit_dynamic_monitoring": 3_600_000,
-                "other_key": "value"
-            },
-            "namespace": "e8583352-39e8-5a5b-b66c-e450689088fd"
-        });
+        let json_num: Value = serde_json::json!(86_400_000);
+        let json_str: Value = serde_json::json!("3600000");
+        let json_invalid: Value = serde_json::json!("abc");
 
-        // KV 中直接使用毫秒单位
-        assert_eq!(
-            utils::get_limit_millis(&json, "database_limit_static_monitoring"),
-            Some(86_400_000)
-        );
-        assert_eq!(
-            utils::get_limit_millis(&json, "database_limit_dynamic_monitoring"),
-            Some(3_600_000)
-        );
-        assert_eq!(utils::get_limit_millis(&json, "database_limit_task"), None);
+        assert_eq!(utils::get_limit_millis(&json_num), Some(86_400_000));
+        assert_eq!(utils::get_limit_millis(&json_str), Some(3_600_000));
+        assert_eq!(utils::get_limit_millis(&json_invalid), None);
     }
 }

@@ -3,7 +3,7 @@ use super::config::CleanupConfig;
 use anyhow::Result;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, FromQueryResult, Statement};
 
-/// `PostgreSQL` 优化版本 - 使用 JSONB 操作符
+/// `PostgreSQL` 优化版本
 pub async fn cleanup_expired_data_postgres(db: &DatabaseConnection) -> Result<CleanupResult> {
     let mut result = CleanupResult::default();
 
@@ -43,22 +43,20 @@ pub async fn cleanup_expired_data_postgres(db: &DatabaseConnection) -> Result<Cl
 
 /// `PostgreSQL`: 获取所有需要清理的配置
 async fn get_cleanup_configs_postgres(db: &DatabaseConnection) -> Result<Vec<CleanupConfig>> {
-    // 使用 PostgreSQL JSONB 操作符查询
-    // 注意：KV 值存储在 `kv` 字段下，格式为：
-    // `{"kv": {"database_limit_task": 1000, ...}, "namespace": "..."}`
     let sql = r"
         SELECT 
-            name as agent_uuid,
-            kv_value->'kv'->>'database_limit_static_monitoring' as static_limit,
-            kv_value->'kv'->>'database_limit_dynamic_monitoring' as dynamic_limit,
-            kv_value->'kv'->>'database_limit_task' as task_limit
+            namespace as agent_uuid,
+            MAX(CASE WHEN key = 'database_limit_static_monitoring' THEN value #>> '{}' END) as static_limit,
+            MAX(CASE WHEN key = 'database_limit_dynamic_monitoring' THEN value #>> '{}' END) as dynamic_limit,
+            MAX(CASE WHEN key = 'database_limit_task' THEN value #>> '{}' END) as task_limit
         FROM kv
-        WHERE name ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-        AND (
-            kv_value->'kv' ? 'database_limit_static_monitoring'
-            OR kv_value->'kv' ? 'database_limit_dynamic_monitoring'
-            OR kv_value->'kv' ? 'database_limit_task'
+        WHERE namespace ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        AND key IN (
+            'database_limit_static_monitoring',
+            'database_limit_dynamic_monitoring',
+            'database_limit_task'
         )
+        GROUP BY namespace
     ";
 
     #[derive(FromQueryResult)]
@@ -173,19 +171,18 @@ async fn cleanup_crontab_result_table_postgres(
     Ok(result.rows_affected())
 }
 
-/// `PostgreSQL` 优化版本
-/// 使用 JSONB 特性直接在数据库层面过滤
 /// 从 global 配置中获取 `crontab_result` 的清理限制 (`PostgreSQL` 版本)
 ///
-/// 查找 name 为 "global" 的 KV 记录，读取其中的 `database_limit_crontab_result`
+/// 查找 namespace 为 `global` 且 key 为 `database_limit_crontab_result` 的 KV 记录
 /// 若不存在则返回 None
 async fn get_global_crontab_result_limit_postgres(db: &DatabaseConnection) -> Result<Option<i64>> {
     let sql = r"
         SELECT 
-            kv_value->'kv'->>'database_limit_crontab_result' as limit_value
+            value #>> '{}' as limit_value
         FROM kv
-        WHERE name = 'global'
-        AND kv_value->'kv' ? 'database_limit_crontab_result'
+        WHERE namespace = 'global'
+        AND key = 'database_limit_crontab_result'
+        LIMIT 1
     ";
 
     #[derive(FromQueryResult)]
@@ -206,22 +203,12 @@ async fn get_global_crontab_result_limit_postgres(db: &DatabaseConnection) -> Re
 pub async fn find_uuids_with_database_limit_postgres(
     db: &DatabaseConnection,
 ) -> Result<Vec<String>> {
-    // 使用 PostgreSQL 的 JSONB 操作符优化查询
-    // 查询逻辑：
-    // 1. 先找出所有 name 是 UUID 格式的记录
-    // 2. 检查 kv_value->'kv' 中是否存在以 'database_limit_' 开头的 key
-    //
-    // 注意：KV 值存储在 `kv` 字段下，格式为：
-    // `{"kv": {"database_limit_task": 1000, ...}, "namespace": "..."}`
-    //
-    // 使用 EXISTS + jsonb_object_keys + LIKE 来检查前缀匹配
     let sql = r"
-        SELECT name FROM kv
-        WHERE name ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-        AND EXISTS (
-            SELECT 1 FROM jsonb_object_keys(kv_value->'kv') AS key
-            WHERE key LIKE 'database_limit_%'
-        )
+        SELECT DISTINCT namespace as name
+        FROM kv
+        WHERE namespace ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        AND key LIKE 'database_limit_%'
+        ORDER BY name ASC
     ";
 
     #[derive(FromQueryResult)]

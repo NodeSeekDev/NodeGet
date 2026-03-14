@@ -19,16 +19,40 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(
-                        ColumnDef::new(KvInDatabase::Name)
+                        ColumnDef::new(KvInDatabase::Namespace)
                             .string()
-                            .not_null()
-                            .unique_key(),
+                            .not_null(),
                     )
                     .col(
-                        ColumnDef::new(KvInDatabase::KvValue)
+                        ColumnDef::new(KvInDatabase::Key).string().not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(KvInDatabase::Value)
                             .json_binary()
                             .not_null(),
                     )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx-kv-namespace-key-unique")
+                    .table(KvInDatabase::Table)
+                    .col(KvInDatabase::Namespace)
+                    .col(KvInDatabase::Key)
+                    .unique()
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx-kv-namespace")
+                    .table(KvInDatabase::Table)
+                    .col(KvInDatabase::Namespace)
                     .to_owned(),
             )
             .await?;
@@ -43,12 +67,12 @@ impl MigrationTrait for Migration {
     }
 }
 
-// 令牌表的标识符枚举，用于定义表和列的名称
 #[derive(DeriveIden)]
 enum KvInDatabase {
     #[sea_orm(iden = "kv")]
     Table,
     Id,
-    Name,
-    KvValue,
+    Namespace,
+    Key,
+    Value,
 }

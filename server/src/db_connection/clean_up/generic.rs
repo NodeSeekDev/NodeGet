@@ -7,6 +7,7 @@ use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect,
 };
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// 通用版本（适用于 `SQLite`）
@@ -47,34 +48,47 @@ pub async fn cleanup_expired_data_generic(db: &DatabaseConnection) -> Result<Cle
 
 /// 通用版本: 获取所有需要清理的配置
 async fn get_cleanup_configs_generic(db: &DatabaseConnection) -> Result<Vec<CleanupConfig>> {
-    // 查询所有 kv 记录
-    let records = kv::Entity::find().all(db).await?;
+    let records = kv::Entity::find()
+        .filter(kv::Column::Key.is_in([
+            "database_limit_static_monitoring",
+            "database_limit_dynamic_monitoring",
+            "database_limit_task",
+        ]))
+        .all(db)
+        .await?;
 
-    let mut configs = Vec::new();
+    let mut config_map: HashMap<String, CleanupConfig> = HashMap::new();
 
     for record in records {
-        // 检查 name 是否为有效的 UUID 格式
-        if !is_valid_uuid(&record.name) {
+        if !is_valid_uuid(&record.namespace) {
             continue;
         }
 
-        // 检查是否有任何 limit 配置（单位：毫秒）
-        let static_limit = get_limit_millis(&record.kv_value, "database_limit_static_monitoring");
-        let dynamic_limit = get_limit_millis(&record.kv_value, "database_limit_dynamic_monitoring");
-        let task_limit = get_limit_millis(&record.kv_value, "database_limit_task");
+        let Some(limit_millis) = get_limit_millis(&record.value) else {
+            continue;
+        };
 
-        if static_limit.is_some() || dynamic_limit.is_some() || task_limit.is_some() {
-            configs.push(CleanupConfig {
-                agent_uuid: record.name,
-                static_monitoring_limit: static_limit,
-                dynamic_monitoring_limit: dynamic_limit,
-                task_limit,
+        let config = config_map
+            .entry(record.namespace.clone())
+            .or_insert_with(|| CleanupConfig {
+                agent_uuid: record.namespace.clone(),
+                static_monitoring_limit: None,
+                dynamic_monitoring_limit: None,
+                task_limit: None,
                 crontab_result_limit: None,
             });
+
+        match record.key.as_str() {
+            "database_limit_static_monitoring" => config.static_monitoring_limit = Some(limit_millis),
+            "database_limit_dynamic_monitoring" => {
+                config.dynamic_monitoring_limit = Some(limit_millis);
+            }
+            "database_limit_task" => config.task_limit = Some(limit_millis),
+            _ => {}
         }
     }
 
-    Ok(configs)
+    Ok(config_map.into_values().collect())
 }
 
 /// 通用版本: 清理 `static_monitoring` 表
@@ -229,72 +243,43 @@ async fn cleanup_crontab_result_generic(db: &DatabaseConnection, limit_millis: i
 
 /// 从 global 配置中获取 `crontab_result` 的清理限制
 ///
-/// 查找 name 为 "global" 的 KV 记录，读取其中的 `database_limit_crontab_result`
+/// 查找 namespace 为 `global` 且 key 为 `database_limit_crontab_result` 的 KV 记录
 /// 若不存在则返回 None
 async fn get_global_crontab_result_limit(db: &DatabaseConnection) -> Result<Option<i64>> {
     let global_record = kv::Entity::find()
-        .filter(kv::Column::Name.eq("global"))
+        .filter(kv::Column::Namespace.eq("global"))
+        .filter(kv::Column::Key.eq("database_limit_crontab_result"))
         .one(db)
         .await?;
 
-    match global_record {
-        Some(record) => Ok(get_limit_millis(
-            &record.kv_value,
-            "database_limit_crontab_result",
-        )),
-        None => Ok(None),
-    }
+    Ok(global_record.and_then(|record| get_limit_millis(&record.value)))
 }
 
 /// 通用版本（适用于 `SQLite`）
 pub async fn find_uuids_with_database_limit_generic(
     db: &DatabaseConnection,
 ) -> Result<Vec<String>> {
-    // 第一步：查询所有 name
+    // 查询所有包含 `database_limit_*` 配置的 namespace（去重）
     let all_names: Vec<String> = kv::Entity::find()
         .select_only()
-        .column(kv::Column::Name)
+        .column(kv::Column::Namespace)
+        .filter(kv::Column::Key.like("database_limit_%"))
+        .distinct()
         .into_tuple()
         .all(db)
         .await?;
 
-    // 第二步：筛选出可以解析为 UUID 的 name
     let uuid_names: Vec<String> = all_names
         .into_iter()
         .filter(|name| is_valid_uuid(name))
         .collect();
 
-    if uuid_names.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // 第三步：根据 uuid_names 查询完整的记录
-    let records = kv::Entity::find()
-        .filter(kv::Column::Name.is_in(uuid_names))
-        .all(db)
-        .await?;
-
-    // 第四步：检查 kv_value.kv 中是否存在以 `database_limit_` 开头的 key
-    // 注意：KV 值存储在 `kv` 字段下，格式为：
-    // `{"kv": {"database_limit_task": 1000, ...}, "namespace": "..."}`
-    let result: Vec<String> = records
-        .into_iter()
-        .filter(|record| {
-            record
-                .kv_value
-                .get("kv")
-                .and_then(|kv| kv.as_object())
-                .is_some_and(|obj| obj.keys().any(|k| k.starts_with("database_limit_")))
-        })
-        .map(|record| record.name)
-        .collect();
-
-    Ok(result)
+    Ok(uuid_names)
 }
 
 /// 搜索数据库中 kv 表，查找满足以下条件的 UUID（分页处理版本）：
-/// - kv name 为有效的 UUID 格式
-/// - `kv_value` 中存在以 `database_limit_*` 开头的 key
+/// - kv namespace 为有效的 UUID 格式
+/// - kv key 以 `database_limit_*` 开头
 ///
 /// 这个版本使用分页处理，适合处理大量数据，避免一次性加载所有记录
 ///
@@ -307,29 +292,22 @@ pub async fn find_uuids_with_database_limit_paginated(
     db: &DatabaseConnection,
     page_size: u64,
 ) -> Result<Vec<String>> {
-    let mut result = Vec::new();
-    let mut paginator = kv::Entity::find().paginate(db, page_size);
+    let mut result = HashSet::new();
+    let mut paginator = kv::Entity::find()
+        .filter(kv::Column::Key.like("database_limit_%"))
+        .paginate(db, page_size);
 
     while let Some(records) = paginator.fetch_and_next().await? {
         for record in records {
-            // 检查 name 是否为有效的 UUID 格式
-            if !is_valid_uuid(&record.name) {
+            if !is_valid_uuid(&record.namespace) {
                 continue;
             }
 
-            // 检查 kv_value.kv 中是否存在以 `database_limit_` 开头的 key
-            // 注意：KV 值存储在 `kv` 字段下，格式为：
-            // `{"kv": {"database_limit_task": 1000, ...}, "namespace": "..."}`
-            if record
-                .kv_value
-                .get("kv")
-                .and_then(|kv| kv.as_object())
-                .is_some_and(|obj| obj.keys().any(|k| k.starts_with("database_limit_")))
-            {
-                result.push(record.name);
-            }
+            result.insert(record.namespace);
         }
     }
 
-    Ok(result)
+    let mut output: Vec<String> = result.into_iter().collect();
+    output.sort_unstable();
+    Ok(output)
 }
