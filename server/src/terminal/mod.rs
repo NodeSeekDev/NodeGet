@@ -102,14 +102,7 @@ async fn handle_socket(socket: WebSocket, params: TerminalParams, state: Termina
             .await;
         }
     } else {
-        handle_user(
-            socket,
-            agent_uuid,
-            terminal_id,
-            token,
-            state,
-        )
-        .await;
+        handle_user(socket, agent_uuid, terminal_id, token, state).await;
     }
 }
 
@@ -163,9 +156,7 @@ async fn handle_agent(
         terminal_id,
     };
 
-    info!(
-        "Agent connecting terminal: agent_uuid={agent_uuid}, terminal_id={terminal_id}"
-    );
+    info!("Agent connecting terminal: agent_uuid={agent_uuid}, terminal_id={terminal_id}");
 
     // User -> Agent
     let (tx_to_agent, mut rx_from_user) = mpsc::unbounded_channel::<Message>();
@@ -250,8 +241,10 @@ async fn handle_user(
 ) {
     let Some(terminal_id) = terminal_id else {
         warn!("User connection rejected: missing terminal_id");
-        let error_json =
-            generate_error_message(108, "Invalid Input: Missing terminal_id for user terminal connection");
+        let error_json = generate_error_message(
+            108,
+            "Invalid Input: Missing terminal_id for user terminal connection",
+        );
         let _ = socket
             .send(Message::Text(Utf8Bytes::from(error_json.to_string())))
             .await;
@@ -283,13 +276,13 @@ async fn handle_user(
             if let Some(rx) = slots.rx_from_agent.take() {
                 (slots.tx_to_agent.clone(), rx)
             } else {
-                warn!("Terminal session already has an attached user: agent_uuid={agent_uuid}, terminal_id={terminal_id}");
+                warn!(
+                    "Terminal session already has an attached user: agent_uuid={agent_uuid}, terminal_id={terminal_id}"
+                );
                 return;
             }
         } else {
-            warn!(
-                "Terminal session not found: agent_uuid={agent_uuid}, terminal_id={terminal_id}"
-            );
+            warn!("Terminal session not found: agent_uuid={agent_uuid}, terminal_id={terminal_id}");
             return;
         }
     };

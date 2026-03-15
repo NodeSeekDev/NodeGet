@@ -321,10 +321,10 @@ pub async fn resolve_kv_list_namespace_permission(
     if let Some(to) = token_info.timestamp_to
         && now > to
     {
-        return Err(
-            NodegetError::PermissionDenied("Token has expired for listing KV namespaces".to_owned())
-                .into(),
-        );
+        return Err(NodegetError::PermissionDenied(
+            "Token has expired for listing KV namespaces".to_owned(),
+        )
+        .into());
     }
 
     let mut allowed_namespaces = HashSet::new();

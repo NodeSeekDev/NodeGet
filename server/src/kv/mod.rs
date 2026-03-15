@@ -38,10 +38,10 @@ async fn ensure_namespace_exists(db: &DatabaseConnection, namespace: &str) -> Re
 
 fn ensure_not_reserved_key(key: &str) -> Result<()> {
     if key == NAMESPACE_MARKER_KEY {
-        return Err(
-            NodegetError::InvalidInput("Key is reserved for internal namespace marker".to_owned())
-                .into(),
-        );
+        return Err(NodegetError::InvalidInput(
+            "Key is reserved for internal namespace marker".to_owned(),
+        )
+        .into());
     }
     Ok(())
 }
@@ -117,30 +117,26 @@ pub async fn set_v_to_kv(namespace: String, key: String, value: Value) -> Result
         .one(db)
         .await?;
 
-    match model {
-        Some(record) => {
-            let active_model = kv::ActiveModel {
-                id: Set(record.id),
-                namespace: Set(record.namespace),
-                key: Set(record.key),
-                value: Set(value),
-            };
+    if let Some(record) = model {
+        let active_model = kv::ActiveModel {
+            id: Set(record.id),
+            namespace: Set(record.namespace),
+            key: Set(record.key),
+            value: Set(value),
+        };
 
-            active_model.update(db).await?;
-            Ok(())
-        }
-        None => {
-            let active_model = kv::ActiveModel {
-                namespace: Set(namespace),
-                key: Set(key),
-                value: Set(value),
-                ..Default::default()
-            };
+        active_model.update(db).await?;
+    } else {
+        let active_model = kv::ActiveModel {
+            namespace: Set(namespace),
+            key: Set(key),
+            value: Set(value),
+            ..Default::default()
+        };
 
-            active_model.insert(db).await?;
-            Ok(())
-        }
+        active_model.insert(db).await?;
     }
+    Ok(())
 }
 
 /// 获取或创建 KV 存储（如果不存在则创建）

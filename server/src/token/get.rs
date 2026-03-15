@@ -119,20 +119,16 @@ fn permission_matches(granted: &Permission, required: &Permission) -> bool {
     }
 
     match (granted, required) {
-        (Permission::Kv(Kv::Read(pattern)), Permission::Kv(Kv::Read(key))) => {
-            wildcard_matches_pattern(key, pattern)
-        }
-        (Permission::Kv(Kv::Write(pattern)), Permission::Kv(Kv::Write(key))) => {
-            wildcard_matches_pattern(key, pattern)
-        }
-        (Permission::Kv(Kv::Delete(pattern)), Permission::Kv(Kv::Delete(key))) => {
+        (Permission::Kv(Kv::Read(pattern)), Permission::Kv(Kv::Read(key)))
+        | (Permission::Kv(Kv::Write(pattern)), Permission::Kv(Kv::Write(key)))
+        | (Permission::Kv(Kv::Delete(pattern)), Permission::Kv(Kv::Delete(key))) => {
             wildcard_matches_pattern(key, pattern)
         }
         (
             Permission::CrontabResult(CrontabResult::Read(pattern)),
             Permission::CrontabResult(CrontabResult::Read(cron_name)),
-        ) => wildcard_matches_pattern(cron_name, pattern),
-        (
+        )
+        | (
             Permission::CrontabResult(CrontabResult::Delete(pattern)),
             Permission::CrontabResult(CrontabResult::Delete(cron_name)),
         ) => wildcard_matches_pattern(cron_name, pattern),

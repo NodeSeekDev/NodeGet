@@ -118,9 +118,9 @@ fn build_union_last_statement(
     db: &DatabaseConnection,
 ) -> anyhow::Result<Statement> {
     let mut uuid_iter = uuids.iter().copied();
-    let first_uuid = uuid_iter.next().ok_or_else(|| {
-        NodegetError::InvalidInput("The uuids list cannot be empty".to_owned())
-    })?;
+    let first_uuid = uuid_iter
+        .next()
+        .ok_or_else(|| NodegetError::InvalidInput("The uuids list cannot be empty".to_owned()))?;
 
     let mut union_query = build_single_last_select(first_uuid, fields);
     for uuid in uuid_iter {
@@ -172,7 +172,7 @@ fn build_single_last_select(uuid: Uuid, fields: &[StaticDataQueryField]) -> Sele
         }
     }
 
-    wrapped.to_owned()
+    wrapped.clone()
 }
 
 async fn execute_statement_query(
@@ -212,10 +212,10 @@ async fn execute_statement_query(
 
                 if let Err(e) = serde_json::to_writer(&mut output_buffer, &value) {
                     error!("Serialization failed: {e}");
-                    return Err(
-                        NodegetError::SerializationError(format!("Serialization failed: {e}"))
-                            .into(),
-                    );
+                    return Err(NodegetError::SerializationError(format!(
+                        "Serialization failed: {e}"
+                    ))
+                    .into());
                 }
             }
             Err(e) => {

@@ -18,19 +18,9 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(KvInDatabase::Namespace)
-                            .string()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(KvInDatabase::Key).string().not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(KvInDatabase::Value)
-                            .json_binary()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(KvInDatabase::Namespace).string().not_null())
+                    .col(ColumnDef::new(KvInDatabase::Key).string().not_null())
+                    .col(ColumnDef::new(KvInDatabase::Value).json_binary().not_null())
                     .to_owned(),
             )
             .await?;

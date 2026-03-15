@@ -16,9 +16,9 @@
 
 - Permission: `Kv::ListAllNamespace`
 - Scope 规则:
-  - 在 `Global` Scope 下拥有该权限: 可以列出所有 Namespace
-  - 在 `KvNamespace(xxx)` Scope 下拥有该权限: 仅能列出该 Scope 对应的 Namespace
-  - 未拥有该权限: 返回权限错误
+    - 在 `Global` Scope 下拥有该权限: 可以列出所有 Namespace
+    - 在 `KvNamespace(xxx)` Scope 下拥有该权限: 仅能列出该 Scope 对应的 Namespace
+    - 未拥有该权限: 返回权限错误
 
 ## 返回结果
 

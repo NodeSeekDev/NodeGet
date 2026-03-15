@@ -27,10 +27,9 @@ pub async fn get_multi_value(
         );
 
         if namespace_key.is_empty() {
-            return Err(NodegetError::InvalidInput(
-                "namespace_key cannot be empty".to_owned(),
-            )
-            .into());
+            return Err(
+                NodegetError::InvalidInput("namespace_key cannot be empty".to_owned()).into(),
+            );
         }
 
         // 先做完整权限校验：任一项无权限则直接拒绝

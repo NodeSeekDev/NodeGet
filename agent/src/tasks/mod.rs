@@ -57,12 +57,7 @@ async fn execute_task(
 
         TaskEventType::WebShell(web_shell) => {
             let terminal_id = web_shell.terminal_id.to_string();
-            let url = pty::parse_url(
-                web_shell.url.clone(),
-                task_id,
-                task_token,
-                &terminal_id,
-            );
+            let url = pty::parse_url(web_shell.url.clone(), task_id, task_token, &terminal_id);
             pty::handle_pty_url(url, terminal_id)
                 .await
                 .map(|()| TaskEventResult::WebShell(true))

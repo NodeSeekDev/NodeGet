@@ -58,7 +58,7 @@
 - `frontend_custom_body`
 - `frontend_custom_head`
 
-
 需要解释的是，Frontend 和 Token 的 Namespace 并不冲突。
 
-Token Namespace 意为在使用这一 Token 登陆后，前端会使用的参数 (这里的 Token 应该是供给展示的)，前端可以进行拼接或优先使用 Token Namespace 定义的参数
+Token Namespace 意为在使用这一 Token 登陆后，前端会使用的参数 (这里的 Token 应该是供给展示的)，前端可以进行拼接或优先使用
+Token Namespace 定义的参数

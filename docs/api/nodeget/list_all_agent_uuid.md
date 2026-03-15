@@ -16,9 +16,10 @@
 
 - **Permission**: `NodeGet::ListAllAgentUuid`
 - **Scope 行为**:
-  - `Global` Scope 下拥有该权限: 返回系统内所有 Agent UUID
-  - `AgentUuid(xxx)` Scope 下拥有该权限: 可参与返回 `xxx`
-  - 最终返回结果会再过滤为“当前 token 在该 `AgentUuid` 下至少有一种可操作权限（任一非 `NodeGet::ListAllAgentUuid` 权限）”的 UUID
+    - `Global` Scope 下拥有该权限: 返回系统内所有 Agent UUID
+    - `AgentUuid(xxx)` Scope 下拥有该权限: 可参与返回 `xxx`
+    - 最终返回结果会再过滤为“当前 token 在该 `AgentUuid` 下至少有一种可操作权限（任一非 `NodeGet::ListAllAgentUuid` 权限）”的
+      UUID
 
 ## 返回结果
 

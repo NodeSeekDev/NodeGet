@@ -100,7 +100,6 @@ pub async fn check_crontab_result_delete_permission(
         if has_specific_delete {
             return Ok(());
         }
-
     }
 
     Err(NodegetError::PermissionDenied(format!(

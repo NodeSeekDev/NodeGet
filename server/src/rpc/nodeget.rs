@@ -154,7 +154,11 @@ mod list_all_agent_uuid {
                 .any(|perm| matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid)));
 
             if has_list_permission {
-                if limit.scopes.iter().any(|scope| matches!(scope, Scope::Global)) {
+                if limit
+                    .scopes
+                    .iter()
+                    .any(|scope| matches!(scope, Scope::Global))
+                {
                     has_global_list_permission = true;
                 }
 
@@ -166,9 +170,10 @@ mod list_all_agent_uuid {
             }
 
             // "可操作" = 对该 AgentUuid Scope 至少拥有一种非 NodeGet::ListAllAgentUuid 的权限
-            let has_any_operation_permission = limit.permissions.iter().any(
-                |perm| !matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid)),
-            );
+            let has_any_operation_permission = limit
+                .permissions
+                .iter()
+                .any(|perm| !matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid)));
 
             if has_any_operation_permission {
                 for scope in &limit.scopes {
