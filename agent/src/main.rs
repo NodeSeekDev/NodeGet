@@ -20,98 +20,114 @@ use nodeget_lib::config::agent::AgentConfig;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::utils::uuid::compare_uuid;
 use std::str::FromStr;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
-// 监控模块
 mod monitoring;
-// RPC 模块
 mod rpc;
-// 任务模块
 mod tasks;
 
-// 全局代理配置静态变量
-static AGENT_CONFIG: OnceLock<AgentConfig> = OnceLock::new();
+static AGENT_CONFIG: OnceLock<RwLock<AgentConfig>> = OnceLock::new();
+pub(crate) static RELOAD_NOTIFY: OnceLock<Notify> = OnceLock::new();
 
-// 主函数，程序入口点
-//
-// 该函数负责初始化代理配置、设置日志级别、启动监控数据上报、任务处理等功能
-//
-// # 详细流程
-// 1. 加载配置文件
-// 2. 初始化日志系统
-// 3. 设置全局配置
-// 4. 初始化与服务器的连接
-// 5. 启动各种异步任务（监控数据上报、任务处理等）
-// 6. 等待 Ctrl+C 信号退出
-//
-// # Errors
-//
-// 当配置加载失败、日志初始化失败或关键组件初始化失败时返回错误
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    println!("Starting nodeget-agent");
-
-    // 从配置文件加载代理配置
-    let config = AgentConfig::get_and_parse_config("./config.toml")
-        .await
-        .map_err(|e| NodegetError::ConfigNotFound(format!("Failed to load config: {e}")))?;
-
-    // 使用配置的日志级别初始化简单日志系统
+fn parse_log_level(config: &AgentConfig) -> anyhow::Result<Level> {
     let log_level = config
         .log_level
         .as_ref()
         .ok_or_else(|| NodegetError::ParseError("log_level is not set".to_owned()))?;
-    simple_logger::init_with_level(
-        Level::from_str(log_level)
-            .map_err(|e| NodegetError::ParseError(format!("Invalid log_level: {e}")))?,
-    )
-    .map_err(|e| NodegetError::Other(format!("Failed to init logger: {e}")))?;
 
-    // 比较并验证代理 UUID
-    if let Err(e) = compare_uuid(config.agent_uuid) {
-        error!("UUID comparison failed: {e}");
+    Level::from_str(log_level)
+        .map_err(|e| NodegetError::ParseError(format!("Invalid log_level: {e}")))
+        .map_err(Into::into)
+}
+
+fn update_global_config(config: AgentConfig) -> anyhow::Result<()> {
+    if let Some(lock) = AGENT_CONFIG.get() {
+        let mut guard = lock.write().map_err(|e| {
+            NodegetError::Other(format!("Failed to lock AGENT_CONFIG for write: {e}"))
+        })?;
+        *guard = config;
+        return Ok(());
     }
 
-    info!("Starting nodeget-agent with config: {config:?}");
-
-    // 将配置设置到全局静态变量中
     AGENT_CONFIG
-        .set(config)
-        .map_err(|_| NodegetError::Other("Failed to set AGENT_CONFIG".to_owned()))?;
+        .set(RwLock::new(config))
+        .map_err(|_| NodegetError::Other("Failed to set AGENT_CONFIG".to_owned()).into())
+}
 
-    //////////
+fn abort_handles(handles: &mut Vec<JoinHandle<()>>) {
+    for handle in handles.drain(..) {
+        handle.abort();
+    }
+}
 
-    // 初始化与多个服务器的连接
-    let servers =
-        AGENT_CONFIG.get().unwrap().server.clone().ok_or_else(|| {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    println!("Starting nodeget-agent");
+
+    RELOAD_NOTIFY.get_or_init(Notify::new);
+    let mut logger_initialized = false;
+
+    loop {
+        let config = AgentConfig::get_and_parse_config("./config.toml")
+            .await
+            .map_err(|e| NodegetError::ConfigNotFound(format!("Failed to load config: {e}")))?;
+
+        let level = parse_log_level(&config)?;
+
+        if logger_initialized {
+            log::set_max_level(level.to_level_filter());
+        } else {
+            simple_logger::init_with_level(level)
+                .map_err(|e| NodegetError::Other(format!("Failed to init logger: {e}")))?;
+            logger_initialized = true;
+        }
+
+        if let Err(e) = compare_uuid(config.agent_uuid) {
+            error!("UUID comparison failed: {e}");
+        }
+
+        info!("Starting nodeget-agent with config: {config:?}");
+
+        update_global_config(config.clone())?;
+
+        let servers = config.server.clone().ok_or_else(|| {
             NodegetError::ConfigNotFound("No server configuration found".to_owned())
         })?;
-    rpc::multi_server::init_connections(servers);
 
-    // 启动静态监控数据上报任务
-    tokio::spawn(async {
-        handle_static_monitoring_data_report().await;
-    });
+        let mut handles = rpc::multi_server::init_connections(servers).await;
 
-    // 启动动态监控数据上报任务
-    tokio::spawn(async {
-        handle_dynamic_monitoring_data_report().await;
-    });
+        handles.push(tokio::spawn(async {
+            handle_static_monitoring_data_report().await;
+        }));
 
-    // 启动错误消息处理任务
-    tokio::spawn(async {
-        handle_error_message().await;
-    });
+        handles.push(tokio::spawn(async {
+            handle_dynamic_monitoring_data_report().await;
+        }));
 
-    // 启动任务处理任务
-    tokio::spawn(async {
-        handle_task().await;
-    });
+        handles.push(tokio::spawn(async {
+            handle_error_message().await;
+        }));
 
-    // 等待 Ctrl+C 信号以优雅地关闭程序
-    tokio::signal::ctrl_c()
-        .await
-        .map_err(|e| NodegetError::Other(format!("Failed to listen for ctrl_c: {e}")))?;
+        handles.push(tokio::spawn(async {
+            handle_task().await;
+        }));
+
+        tokio::select! {
+            ctrl_c_result = tokio::signal::ctrl_c() => {
+                ctrl_c_result
+                    .map_err(|e| NodegetError::Other(format!("Failed to listen for ctrl_c: {e}")))?;
+                abort_handles(&mut handles);
+                break;
+            }
+            () = RELOAD_NOTIFY.get().expect("Reload notify not initialized").notified() => {
+                info!("Config reload requested, restarting runtime tasks...");
+                abort_handles(&mut handles);
+                continue;
+            }
+        }
+    }
 
     Ok(())
 }

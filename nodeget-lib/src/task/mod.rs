@@ -31,6 +31,11 @@ pub enum TaskEventType {
     // 命令执行任务
     Execute(String), // 命令执行
 
+    // 读取 Agent 配置任务
+    ReadConfig,
+    // 编辑 Agent 配置任务
+    EditConfig(String),
+
     // IP 获取任务
     Ip,
 }
@@ -45,6 +50,8 @@ impl TaskEventType {
             Self::HttpPing(_) => "http_ping",
             Self::WebShell(_) => "web_shell",
             Self::Execute(_) => "execute",
+            Self::EditConfig(_) => "edit_config",
+            Self::ReadConfig => "read_config",
             Self::Ip => "ip",
         }
     }
@@ -81,6 +88,8 @@ impl TaskEventType {
             Self::HttpPing(_) => "allow_http_ping",
             Self::WebShell(_) => "allow_web_shell",
             Self::Execute(_) => "allow_execute",
+            Self::ReadConfig => "allow_read_config",
+            Self::EditConfig(_) => "allow_edit_config",
             Self::Ip => "allow_ip",
         }
     }
@@ -113,6 +122,11 @@ pub enum TaskEventResult {
     // 命令执行任务结果，返回命令输出
     Execute(String), // 命令输出
 
+    // 读取 Agent 配置任务结果，返回配置内容
+    ReadConfig(String),
+    // 编辑 Agent 配置任务结果，返回是否成功
+    EditConfig(bool),
+
     // IP 获取任务结果，返回 IPv4 和 IPv6 地址
     Ip(Option<Ipv4Addr>, Option<Ipv6Addr>), // V4 V6 IP
 }
@@ -127,6 +141,8 @@ impl TaskEventResult {
             Self::HttpPing(_) => "http_ping",
             Self::WebShell(_) => "web_shell",
             Self::Execute(_) => "execute",
+            Self::ReadConfig(_) => "read_config",
+            Self::EditConfig(_) => "edit_config",
             Self::Ip(_, _) => "ip",
         }
     }

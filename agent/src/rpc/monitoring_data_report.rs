@@ -12,7 +12,12 @@ use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 //
 // 该函数每隔 1 分钟刷新并获取静态监控数据（如 CPU、系统、GPU 基本信息），然后将其发送到配置的服务器
 pub async fn handle_static_monitoring_data_report() {
-    let agent_config = AGENT_CONFIG.get().expect("Agent config not initialized");
+    let agent_config = AGENT_CONFIG
+        .get()
+        .expect("Agent config not initialized")
+        .read()
+        .expect("AGENT_CONFIG lock poisoned")
+        .clone();
 
     let mut ticker = interval(Duration::from_mins(1));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -52,7 +57,12 @@ pub async fn handle_static_monitoring_data_report() {
 // 该函数按照配置的间隔时间刷新并获取动态监控数据（如 CPU 使用率、内存、负载、网络等实时数据），然后将其发送到配置的服务器
 // 默认间隔时间为 1 秒
 pub async fn handle_dynamic_monitoring_data_report() {
-    let agent_config = AGENT_CONFIG.get().expect("Agent config not initialized");
+    let agent_config = AGENT_CONFIG
+        .get()
+        .expect("Agent config not initialized")
+        .read()
+        .expect("AGENT_CONFIG lock poisoned")
+        .clone();
     let interval_ms = agent_config.monitoring_report_interval_ms.unwrap_or(1000);
 
     let mut ticker = interval(Duration::from_millis(interval_ms));

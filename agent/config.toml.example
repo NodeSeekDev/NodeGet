@@ -57,6 +57,9 @@ allow_web_shell = true
 # 是否允许执行命令，极度危险，谨慎开启
 allow_execute = true
 
+# 是否允许阅读配置，极度危险，谨慎开启
+allow_read_config = true
+
 # 是否允许编辑配置，极度危险，谨慎开启
 allow_edit_config = true
 

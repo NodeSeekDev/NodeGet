@@ -80,7 +80,7 @@ async fn get_cleanup_configs_generic(db: &DatabaseConnection) -> Result<Vec<Clea
 
         match record.key.as_str() {
             "database_limit_static_monitoring" => {
-                config.static_monitoring_limit = Some(limit_millis)
+                config.static_monitoring_limit = Some(limit_millis);
             }
             "database_limit_dynamic_monitoring" => {
                 config.dynamic_monitoring_limit = Some(limit_millis);

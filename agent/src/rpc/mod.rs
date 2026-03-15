@@ -67,9 +67,14 @@ pub struct JsonRpcErrorMessage {
 pub async fn handle_error_message() {
     time::sleep(Duration::from_secs(1)).await;
 
-    let agent_config = AGENT_CONFIG.get().expect("Agent config not initialized");
+    let agent_config = AGENT_CONFIG
+        .get()
+        .expect("Agent config not initialized")
+        .read()
+        .expect("AGENT_CONFIG lock poisoned")
+        .clone();
 
-    for server in agent_config.server.clone().unwrap_or(vec![]) {
+    for server in agent_config.server.unwrap_or(vec![]) {
         tokio::spawn(async move {
             let mut rx = match subscribe_to(server.name.as_str()).await {
                 Ok(rx) => rx,

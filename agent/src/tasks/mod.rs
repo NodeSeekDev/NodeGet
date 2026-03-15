@@ -1,12 +1,13 @@
-use crate::AGENT_CONFIG;
 use crate::rpc::multi_server::{send_to, subscribe_to};
 use crate::rpc::{JsonRpcTask, wrap_json_into_rpc_with_id_1};
+use crate::{AGENT_CONFIG, RELOAD_NOTIFY};
 use log::{error, info};
+use nodeget_lib::config::agent::AgentConfig;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::task::{TaskEventResponse, TaskEventResult, TaskEventType};
 use nodeget_lib::utils::get_local_timestamp_ms;
 use std::time::Duration;
-use tokio::time;
+use tokio::{fs, time};
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
 /// Task 结果类型
@@ -29,6 +30,8 @@ fn is_task_allowed(server: &nodeget_lib::config::agent::Server, task_type: &Task
         TaskEventType::HttpPing(_) => server.allow_http_ping.unwrap_or(false),
         TaskEventType::WebShell(_) => server.allow_web_shell.unwrap_or(false),
         TaskEventType::Execute(_) => server.allow_execute.unwrap_or(false),
+        TaskEventType::ReadConfig => server.allow_read_config.unwrap_or(false),
+        TaskEventType::EditConfig(_) => server.allow_edit_config.unwrap_or(false),
         TaskEventType::Ip => server.allow_ip.unwrap_or(false),
     }
 }
@@ -69,6 +72,28 @@ async fn execute_task(
             .map(TaskEventResult::Execute)
             .map_err(|e| NodegetError::Other(format!("{e}")).into()),
 
+        TaskEventType::ReadConfig => {
+            let file = fs::read_to_string("./config.toml")
+                .await
+                .map_err(|e| NodegetError::Other(format!("{e}")))?;
+            Ok(TaskEventResult::ReadConfig(file))
+        }
+
+        TaskEventType::EditConfig(config_string) => {
+            let _parsed: AgentConfig = match toml::from_str(config_string) {
+                Ok(config) => config,
+                Err(e) => {
+                    return Err(NodegetError::Other(format!("Config parse error: {e}")).into());
+                }
+            };
+
+            fs::write("./config.toml", config_string)
+                .await
+                .map_err(|e| NodegetError::Other(format!("Failed to write config.toml: {e}")))?;
+
+            Ok(TaskEventResult::EditConfig(true))
+        }
+
         TaskEventType::Ip => {
             let ip_info = ip::ip().await;
             Ok(TaskEventResult::Ip(ip_info.ipv4, ip_info.ipv6))
@@ -83,9 +108,14 @@ async fn execute_task(
 pub async fn handle_task() {
     time::sleep(Duration::from_secs(1)).await;
 
-    let agent_config = AGENT_CONFIG.get().expect("Agent config not initialized");
+    let agent_config = AGENT_CONFIG
+        .get()
+        .expect("Agent config not initialized")
+        .read()
+        .expect("AGENT_CONFIG lock poisoned")
+        .clone();
 
-    for server in agent_config.server.clone().unwrap_or(vec![]) {
+    for server in agent_config.server.unwrap_or(vec![]) {
         tokio::spawn(async move {
             if !server.allow_task.unwrap_or(false) {
                 return;
@@ -138,12 +168,20 @@ pub async fn handle_task() {
                             .into())
                         };
 
+                    let should_restart = matches!(task_type, TaskEventType::EditConfig(_))
+                        && matches!(&task_result, Ok(TaskEventResult::EditConfig(true)));
+
                     let timestamp = get_local_timestamp_ms().unwrap_or(0);
 
                     let response = match task_result {
                         Ok(task_result) => TaskEventResponse {
                             task_id: json_rpc.params.result.task_id,
-                            agent_uuid: AGENT_CONFIG.get().unwrap().agent_uuid,
+                            agent_uuid: AGENT_CONFIG
+                                .get()
+                                .expect("Agent config not initialized")
+                                .read()
+                                .expect("AGENT_CONFIG lock poisoned")
+                                .agent_uuid,
                             task_token: json_rpc.params.result.task_token,
                             timestamp,
                             success: true,
@@ -154,7 +192,12 @@ pub async fn handle_task() {
                             let error_message = format!("{e}");
                             TaskEventResponse {
                                 task_id: json_rpc.params.result.task_id,
-                                agent_uuid: AGENT_CONFIG.get().unwrap().agent_uuid,
+                                agent_uuid: AGENT_CONFIG
+                                    .get()
+                                    .expect("Agent config not initialized")
+                                    .read()
+                                    .expect("AGENT_CONFIG lock poisoned")
+                                    .agent_uuid,
                                 task_token: json_rpc.params.result.task_token,
                                 timestamp,
                                 success: false,
@@ -175,6 +218,18 @@ pub async fn handle_task() {
                     if let Err(e) = send_to(&server_name, Message::Text(Utf8Bytes::from(rpc))).await
                     {
                         error!("{e}");
+                    }
+
+                    if should_restart {
+                        info!(
+                            "[{server_name}] EditConfig applied successfully, restarting agent..."
+                        );
+                        time::sleep(Duration::from_millis(300)).await;
+                        if let Some(notify) = RELOAD_NOTIFY.get() {
+                            notify.notify_one();
+                        } else {
+                            error!("Reload notify is not initialized");
+                        }
                     }
                 });
             }

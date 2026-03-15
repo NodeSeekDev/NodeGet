@@ -32,8 +32,14 @@ impl Monitor for StaticMonitoringData {
     async fn refresh_and_get() -> Self {
         let (system_data, gpu_data) =
             tokio::join!(StaticDataFromSystem::get(), StaticDataFromGpu::get());
+        let agent_uuid = AGENT_CONFIG
+            .get()
+            .expect("Agent config not initialized")
+            .read()
+            .expect("AGENT_CONFIG lock poisoned")
+            .agent_uuid;
         Self {
-            uuid: AGENT_CONFIG.get().unwrap().agent_uuid.clone().to_string(),
+            uuid: agent_uuid.to_string(),
             time: get_local_timestamp_ms().unwrap_or(0),
 
             cpu: system_data.0.clone(),
@@ -73,9 +79,15 @@ impl Monitor for DynamicMonitoringData {
 
         let disk_data = handle_disk.await.unwrap();
         let network_data = handle_network.await.unwrap();
+        let agent_uuid = AGENT_CONFIG
+            .get()
+            .expect("Agent config not initialized")
+            .read()
+            .expect("AGENT_CONFIG lock poisoned")
+            .agent_uuid;
 
         Self {
-            uuid: AGENT_CONFIG.get().unwrap().agent_uuid.clone().to_string(),
+            uuid: agent_uuid.to_string(),
             time: get_local_timestamp_ms().unwrap_or(0),
 
             cpu,

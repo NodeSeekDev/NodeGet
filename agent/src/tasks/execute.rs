@@ -5,7 +5,7 @@ use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
 // 命令执行超时时间，设定为 60 秒
-const EXECUTE_TIMEOUT: Duration = Duration::from_secs(60);
+const EXECUTE_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// 命令执行结果类型
 pub type Result<T> = std::result::Result<T, NodegetError>;
@@ -20,7 +20,12 @@ pub type Result<T> = std::result::Result<T, NodegetError>;
 // # 返回值
 // 成功时返回命令输出字符串，失败时返回错误信息
 pub async fn execute_command(command: String) -> Result<String> {
-    let config = AGENT_CONFIG.get().expect("Agent config not initialized");
+    let config = AGENT_CONFIG
+        .get()
+        .expect("Agent config not initialized")
+        .read()
+        .expect("AGENT_CONFIG lock poisoned")
+        .clone();
     let max_chars = config.exec_max_character.unwrap_or(10000);
 
     let exec_shell_config = config.exec_shell.clone().unwrap_or_else(|| {

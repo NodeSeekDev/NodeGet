@@ -12,6 +12,7 @@ use serde::Deserialize;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{OnceCell, RwLock, broadcast};
+use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
@@ -36,8 +37,9 @@ static CONNECTION_POOL: OnceCell<RwLock<HashMap<String, Arc<ServerHandle>>>> =
 //
 // # 参数
 // * `servers` - 服务器配置向量
-pub fn init_connections(servers: Vec<Server>) {
+pub async fn init_connections(servers: Vec<Server>) -> Vec<JoinHandle<()>> {
     let mut map = HashMap::new();
+    let mut handles = Vec::new();
 
     for server in servers {
         let (uplink_tx, uplink_rx) = broadcast::channel::<Message>(32);
@@ -51,14 +53,25 @@ pub fn init_connections(servers: Vec<Server>) {
 
         map.insert(server.name.clone(), Arc::new(handle));
 
-        tokio::spawn(connection_manager(server, uplink_rx, downlink_tx));
+        handles.push(tokio::spawn(connection_manager(
+            server,
+            uplink_rx,
+            downlink_tx,
+        )));
     }
 
-    if CONNECTION_POOL.set(RwLock::new(map)).is_err() {
-        warn!("Connection pool has already been initialized");
+    if let Some(pool) = CONNECTION_POOL.get() {
+        let mut guard = pool.write().await;
+        *guard = map;
+        info!("Connection pool refreshed");
     } else {
+        if CONNECTION_POOL.set(RwLock::new(map)).is_err() {
+            warn!("Connection pool initialization raced; reusing existing pool");
+        }
         info!("Connection pool initialized");
     }
+
+    handles
 }
 
 // 连接生命周期维护
@@ -116,7 +129,13 @@ async fn connection_manager(
                     vec![
                         serde_json::Value::String(token.clone()),
                         serde_json::Value::String(
-                            AGENT_CONFIG.get().unwrap().agent_uuid.to_string(),
+                            AGENT_CONFIG
+                                .get()
+                                .expect("Agent config not initialized")
+                                .read()
+                                .expect("AGENT_CONFIG lock poisoned")
+                                .agent_uuid
+                                .to_string(),
                         ),
                     ],
                 );

@@ -57,6 +57,8 @@ pub struct Server {
 
     // 是否允许 Web Shell
     pub allow_web_shell: Option<bool>,
+    // 是否允许阅读配置
+    pub allow_read_config: Option<bool>, // Dangerous
     // 是否允许编辑配置
     pub allow_edit_config: Option<bool>, // Dangerous
     // 是否允许执行命令

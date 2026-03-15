@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::Bytes;
 use tokio_tungstenite::{WebSocketStream, connect_async, tungstenite::protocol::Message};
 use url::Url;
 
-/// PTY 结果类型
+/// PTY result type
 pub type Result<T> = std::result::Result<T, NodegetError>;
 
 type TerminalConnectionPool = Arc<RwLock<HashSet<String>>>;
@@ -45,16 +45,16 @@ async fn release_terminal_id(terminal_id: &str) {
     guard.remove(terminal_id);
 }
 
-// 处理 PTY（伪终端）URL
+// Handle PTY (pseudo terminal) websocket URL.
 //
-// 该函数连接到指定的 WebSocket URL，并启动 PTY 会话
+// This function connects to the target websocket URL and starts a PTY session.
 //
-// # 参数
-// * `url` - WebSocket URL，包装在 Result 中
-// * `terminal_id` - 终端连接 ID
+// # Arguments
+// * `url` - websocket URL wrapped in Result
+// * `terminal_id` - terminal connection ID
 //
-// # 返回值
-// 成功时返回 Ok(())，失败时返回错误信息
+// # Returns
+// Returns `Ok(())` on success, otherwise an error message.
 pub async fn handle_pty_url(
     url: std::result::Result<Url, String>,
     terminal_id: String,
@@ -94,16 +94,16 @@ pub async fn handle_pty_url(
     connect_result
 }
 
-// 处理 PTY 会话
+// Handle a PTY session.
 //
-// 该函数创建一个 PTY（伪终端），并将 WebSocket 消息与 PTY 输入输出进行双向转发
+// This function creates a PTY, and forwards websocket messages and PTY IO bidirectionally.
 //
-// # 参数
-// * `ws_stream` - WebSocket 流
-// * `cmd` - 要在 PTY 中运行的命令
+// # Arguments
+// * `ws_stream` - websocket stream
+// * `cmd` - command to run inside PTY
 //
-// # 返回值
-// 成功时返回 Ok(())，失败时返回错误信息
+// # Returns
+// Returns `Ok(())` on success, otherwise an error message.
 async fn handle_pty_session<S>(ws_stream: WebSocketStream<S>, cmd: &str) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -223,33 +223,33 @@ where
     Ok(())
 }
 
-// 终端调整大小请求结构体
+// Terminal resize request payload.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct NeedResize {
     #[serde(rename = "type")]
-    type_str: String, // 消息类型
-    cols: u16, // 列数
-    rows: u16, // 行数
+    type_str: String, // message type
+    cols: u16, // columns
+    rows: u16, // rows
 }
 
-// 心跳消息结构体
+// Heartbeat payload.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct HeartBeat {
     #[serde(rename = "type")]
-    type_str: String, // 消息类型
-    timestamp: String, // 时间戳
+    type_str: String, // message type
+    timestamp: String, // timestamp
 }
 
-// 处理 WebSocket 消息
+// Handle websocket message.
 //
-// 该函数根据消息类型决定如何处理 WebSocket 消息，可能是心跳、调整大小或终端输入
+// Depending on message type, this can be heartbeat, resize, or terminal input.
 //
-// # 参数
-// * `msg` - WebSocket 消息
-// * `pty_writer` - PTY 写入器
+// # Arguments
+// * `msg` - websocket message
+// * `pty_writer` - PTY writer
 //
-// # 返回值
-// 成功时返回调整大小信息（如果有），失败时返回错误信息
+// # Returns
+// Returns resize info (if any), otherwise `None`. Returns error on failure.
 fn handle_ws_message(
     msg: Message,
     pty_writer: &Arc<Mutex<Box<dyn Write + Send>>>,
@@ -283,18 +283,19 @@ fn handle_ws_message(
     Ok(None)
 }
 
-// 解析 PTY URL
+// Parse PTY URL.
 //
-// 该函数将原始 URL 转换为有效的终端连接 URL，如果路径是 "/auto_gen" 则替换为实际的终端连接路径
+// Converts an original URL into an effective terminal URL.
+// If path is `/auto_gen`, it is replaced with a generated terminal path.
 //
-// # 参数
-// * `url` - 原始 URL
-// * `task_id` - 任务 ID
-// * `task_token` - 任务令牌
-// * `terminal_id` - 终端连接 ID
+// # Arguments
+// * `url` - original URL
+// * `task_id` - task ID
+// * `task_token` - task token
+// * `terminal_id` - terminal connection ID
 //
-// # 返回值
-// 成功时返回解析后的 URL，失败时返回错误信息
+// # Returns
+// Returns parsed URL on success, or an error message.
 pub fn parse_url(
     url: Url,
     task_id: u64,
@@ -309,7 +310,9 @@ pub fn parse_url(
     let mut url = if url.path() == "/auto_gen" {
         let agent_uuid = AGENT_CONFIG
             .get()
-            .ok_or("Agent Config 未初始化")?
+            .ok_or("Agent config not initialized")?
+            .read()
+            .map_err(|_| "Agent Config lock poisoned")?
             .agent_uuid;
         let host = url
             .host_str()

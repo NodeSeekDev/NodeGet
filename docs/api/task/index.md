@@ -29,6 +29,8 @@ pub enum TaskEventType {
 
     WebShell(WebShellTask), // Websocket URL + terminal_id
     Execute(String),    // 命令执行
+    ReadConfig,         // 读取本地 config.toml
+    EditConfig(String), // 编辑本地 config.toml（完整 TOML 字符串）
 
     Ip,
 }
@@ -43,26 +45,32 @@ pub struct WebShellTask {
 
 ```json
 {
-    "ping": "1.1.1.1"
+  "ping": "1.1.1.1"
 }
 
 {
-    "tcp_ping": "1.1.1.1:80"
+  "tcp_ping": "1.1.1.1:80"
 }
 
 {
-    "http_ping": "https://1.1.1.1/"
+  "http_ping": "https://1.1.1.1/"
 }
 
 {
-    "web_shell": {
-        "url": "wss://example.com/auto_gen",
-        "terminal_id": "4c8d1cba-244e-4baf-9b65-c881f86ca60a"
-    }
+  "web_shell": {
+    "url": "wss://example.com/auto_gen",
+    "terminal_id": "4c8d1cba-244e-4baf-9b65-c881f86ca60a"
+  }
 }
 
 {
-    "execute": "echo 'WE LOVE OPEN-SOURCE'"
+  "execute": "echo 'WE LOVE OPEN-SOURCE'"
+}
+
+"read_config"
+
+{
+  "edit_config": "log_level = \"info\"\\nagent_uuid = \"auto_gen\""
 }
 
 "ip" // 对就是一个 `ip`，无其他东西
@@ -81,6 +89,8 @@ pub enum TaskEventResult {
 
     WebShell(bool),  // Is Connected
     Execute(String), // 命令输出
+    ReadConfig(String), // 当前 config.toml 原文
+    EditConfig(bool),   // 是否成功写入
 
     Ip(Option<Ipv4Addr>, Option<Ipv6Addr>), // V4 V6 IP
 }
@@ -92,15 +102,27 @@ pub enum TaskEventResult {
 
 ```json
 {
-    "ping": 114.51
+  "ping": 114.51
 }
 
 {
-    "execute": "WE LOVE OPEN-SOURCE" // 在执行复杂命令时还有其他的部分，不过都包含于一个 String 内
+  "execute": "WE LOVE OPEN-SOURCE"
+  // 在执行复杂命令时还有其他的部分，不过都包含于一个 String 内
 }
 
 {
-    "ip": ["1.1.1.1", "2606:4700:4700::1111"]
+  "read_config": "log_level = \"info\"\\nagent_uuid = \"auto_gen\""
+}
+
+{
+  "edit_config": true
+}
+
+{
+  "ip": [
+    "1.1.1.1",
+    "2606:4700:4700::1111"
+  ]
 }
 ```
 

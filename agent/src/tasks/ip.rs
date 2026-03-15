@@ -15,11 +15,16 @@ pub struct IPInfo {
 }
 
 pub async fn ip() -> IPInfo {
-    match AGENT_CONFIG
+    let provider = AGENT_CONFIG
         .get()
-        .and_then(|config| config.ip_provider.clone())
-        .unwrap_or(IpProvider::Cloudflare)
-    {
+        .and_then(|lock| {
+            lock.read()
+                .ok()
+                .and_then(|config| config.ip_provider.clone())
+        })
+        .unwrap_or(IpProvider::Cloudflare);
+
+    match provider {
         IpProvider::Cloudflare => ip_cloudflare().await,
         IpProvider::IpInfo => ip_ipinfo().await,
     }
