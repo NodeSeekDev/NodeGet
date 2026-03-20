@@ -73,7 +73,7 @@ async fn execute_task(
             .map_err(|e| NodegetError::Other(format!("{e}")).into()),
 
         TaskEventType::ReadConfig => {
-            let file = fs::read_to_string("./config.toml")
+            let file = fs::read_to_string(AGENT_ARGS.get().unwrap().config.clone())
                 .await
                 .map_err(|e| NodegetError::Other(format!("{e}")))?;
             Ok(TaskEventResult::ReadConfig(file))

@@ -60,7 +60,9 @@ async fn main() {
     SERVER_ARGS.set(args.clone()).unwrap();
 
     // Config Parse
-    let config = nodeget_lib::config::server::ServerConfig::get_and_parse_config("./config.toml")
+    let config = nodeget_lib::config::server::ServerConfig::get_and_parse_config(
+        SERVER_ARGS.get().unwrap().config.clone(),
+    )
         .await
         .unwrap();
 
