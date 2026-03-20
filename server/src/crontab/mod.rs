@@ -209,6 +209,7 @@ async fn run_cleanup_database_job(cron_id: i64, cron_name: String) {
         id: ActiveValue::NotSet,
         cron_id: Set(cron_id),
         cron_name: Set(cron_name.clone()),
+        task_id: Set(None),
         run_time: Set(Some(Utc::now().timestamp_millis())),
         success: Set(Some(success)),
         message: Set(Some(message)),
