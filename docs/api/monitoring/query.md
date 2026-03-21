@@ -72,6 +72,36 @@
 
 这两个方法当前仅支持 PostgreSQL。
 
+## 删除历史监控数据
+
+新增两个删除方法：
+
+- `agent_delete_static`
+- `agent_delete_dynamic`
+
+需要传入 `token` / `agent_uuid` / `before_timestamp`：
+
+```json
+{
+    "token": "demo_token",
+    "agent_uuid": "830cec66-8fc9-5c21-9e2d-2da2b2f2d3b3",
+    "before_timestamp": 1769344168646
+}
+```
+
+语义说明：
+
+1. 仅删除 `timestamp < before_timestamp` 的数据。
+2. 删除范围限定在指定 `agent_uuid`。
+3. 返回值包含删除数量 `deleted`。
+
+权限要求：
+
+1. `agent_delete_static` 需要 `StaticMonitoring::Delete`。
+2. `agent_delete_dynamic` 需要 `DynamicMonitoring::Delete`。
+
+两者都要求 Token 在目标 `agent_uuid` Scope（或 Global Scope）下具备对应权限。
+
 ## 批量获取多个 Agent 的最新数据
 
 为了便于直接查询多个 Agent 的最新一条监控数据，新增了两个方法：

@@ -75,6 +75,8 @@ pub enum StaticMonitoring {
     Read(StaticDataQueryField),
     // 写入权限
     Write,
+    // 删除权限
+    Delete,
 }
 
 // 动态监控权限枚举
@@ -85,6 +87,8 @@ pub enum DynamicMonitoring {
     Read(DynamicDataQueryField),
     // 写入权限
     Write,
+    // 删除权限
+    Delete,
 }
 
 // 任务权限枚举

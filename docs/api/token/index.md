@@ -108,6 +108,8 @@ pub enum StaticMonitoring {
     Read(StaticDataQueryField),
     // 写入权限
     Write,
+    // 删除权限
+    Delete,
 }
 
 // 动态监控权限枚举
@@ -118,6 +120,8 @@ pub enum DynamicMonitoring {
     Read(DynamicDataQueryField),
     // 写入权限
     Write,
+    // 删除权限
+    Delete,
 }
 
 // 任务权限枚举
@@ -199,6 +203,13 @@ pub enum NodeGet {
 ```
 
 若存在于 Limit 的 permissions 中，即为拥有该权限
+
+### Monitoring 删除权限
+
+- `StaticMonitoring::Delete`：允许调用 `agent_delete_static`
+- `DynamicMonitoring::Delete`：允许调用 `agent_delete_dynamic`
+
+两者均需配合目标 Agent 的 Scope（`AgentUuid`）使用，或在 `Global` Scope 下全局生效。
 
 ## Demo
 

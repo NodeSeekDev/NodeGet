@@ -12,6 +12,8 @@ use uuid::Uuid;
 mod query_dynamic_avg;
 mod query_dynamic;
 mod query_dynamic_multi_last;
+mod delete_dynamic;
+mod delete_static;
 mod query_static_avg;
 mod query_static;
 mod query_static_multi_last;
@@ -76,6 +78,22 @@ pub trait Rpc {
         token: String,
         uuids: Vec<Uuid>,
         fields: Vec<DynamicDataQueryField>,
+    ) -> RpcResult<Box<RawValue>>;
+
+    #[method(name = "delete_static")]
+    async fn delete_static(
+        &self,
+        token: String,
+        agent_uuid: Uuid,
+        before_timestamp: i64,
+    ) -> RpcResult<Box<RawValue>>;
+
+    #[method(name = "delete_dynamic")]
+    async fn delete_dynamic(
+        &self,
+        token: String,
+        agent_uuid: Uuid,
+        before_timestamp: i64,
     ) -> RpcResult<Box<RawValue>>;
 }
 
@@ -149,5 +167,23 @@ impl RpcServer for AgentRpcImpl {
         fields: Vec<DynamicDataQueryField>,
     ) -> RpcResult<Box<RawValue>> {
         query_dynamic_multi_last::dynamic_data_multi_last_query(token, uuids, fields).await
+    }
+
+    async fn delete_static(
+        &self,
+        token: String,
+        agent_uuid: Uuid,
+        before_timestamp: i64,
+    ) -> RpcResult<Box<RawValue>> {
+        delete_static::delete_static(token, agent_uuid, before_timestamp).await
+    }
+
+    async fn delete_dynamic(
+        &self,
+        token: String,
+        agent_uuid: Uuid,
+        before_timestamp: i64,
+    ) -> RpcResult<Box<RawValue>> {
+        delete_dynamic::delete_dynamic(token, agent_uuid, before_timestamp).await
     }
 }
