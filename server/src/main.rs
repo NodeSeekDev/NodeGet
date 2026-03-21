@@ -5,20 +5,13 @@
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::similar_names,
-    clippy::too_many_lines,
     dead_code
 )]
 
-use axum::routing::any;
 use log::info;
-use std::io::{self, Write};
 use std::str::FromStr;
-use tower::Service;
 use nodeget_lib::args_parse::server::{ServerArgs, ServerCommand};
-use crate::crontab::init_crontab_worker;
-use crate::rpc::get_modules;
-use crate::rpc_timing::{RpcTimingMiddleware, parse_rpc_timing_log_level};
-use crate::token::super_token::{generate_super_token, roll_super_token};
+use crate::rpc_timing::parse_rpc_timing_log_level;
 #[cfg(all(not(target_os = "windows"), feature = "jemalloc"))]
 use tikv_jemallocator::Jemalloc;
 
@@ -38,6 +31,7 @@ mod terminal;
 mod crontab;
 mod kv;
 mod rpc_timing;
+mod subcommands;
 mod token;
 
 // 全局数据库连接单例
@@ -57,8 +51,6 @@ async fn main() {
     println!("Starting nodeget-server");
 
     let args = ServerArgs::par();
-    let is_init = matches!(&args.command, ServerCommand::Init { .. });
-    let is_roll_super_token = matches!(&args.command, ServerCommand::RollSuperToken { .. });
 
     // Config Parse
     let config = nodeget_lib::config::server::ServerConfig::get_and_parse_config(args.config_path())
@@ -119,126 +111,15 @@ async fn main() {
     // 连接数据库
     db_connection::init_db_connection().await;
 
-    if is_roll_super_token {
-        roll_super_token_with_confirmation().await;
-        return;
-    }
-
-    init_or_skip_super_token().await;
-
-    if is_init {
-        info!("Initialization completed, exiting.");
-        return;
-    }
-
-    // 对比 Uuid，发送警告
-    let _ = nodeget_lib::utils::uuid::compare_uuid(config.server_uuid);
-
-    let terminal_state = terminal::TerminalState {
-        sessions: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-    };
-
-    let rpc_module = get_modules();
-
-    let (stop_handle, _server_handle) = jsonrpsee::server::stop_channel();
-    let rpc_middleware = jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new()
-        .layer_fn(move |service| RpcTimingMiddleware {
-            service,
-            level: rpc_timing_log_level,
-        });
-
-    let jsonrpc_service = jsonrpsee::server::Server::builder()
-        .set_rpc_middleware(rpc_middleware)
-        .set_config(
-            jsonrpsee::server::ServerConfig::builder()
-                .max_connections(config.jsonrpc_max_connections.unwrap_or(100))
-                .max_response_body_size(u32::MAX)
-                .max_request_body_size(u32::MAX)
-                .build(),
-        )
-        .to_service_builder()
-        .build(rpc_module, stop_handle);
-
-    let app = axum::Router::new()
-        .route("/terminal", any(terminal::terminal_ws_handler))
-        .with_state(terminal_state)
-        .fallback(any(move |req: axum::extract::Request| {
-            let mut rpc_service = jsonrpc_service.clone();
-            async move { rpc_service.call(req).await.unwrap() }
-        }));
-
-    init_crontab_worker();
-
-    let listener =
-        tokio::net::TcpListener::bind(config.ws_listener.parse::<std::net::SocketAddr>().unwrap())
-            .await
-            .unwrap();
-
-    axum::serve(listener, app).await.unwrap();
-}
-
-async fn init_or_skip_super_token() {
-    let token = match generate_super_token().await {
-        Ok(token) => token,
-        Err(e) => {
-            panic!("Failed to generate super token: {e}");
+    match args.command {
+        ServerCommand::Serve { .. } => {
+            subcommands::serve::run(&config, rpc_timing_log_level).await;
         }
-    };
-
-    match token {
-        Some(token) => {
-            info!("Super Token: {}", token.0);
-            info!("Root Password: {}", token.1);
+        ServerCommand::Init { .. } => {
+            subcommands::init::run().await;
         }
-        None => {
-            info!("Super Token already exists, skipped.");
-        }
-    }
-}
-
-async fn roll_super_token_with_confirmation() {
-    let should_continue = prompt_yes_or_no(
-        "This action will delete the current super token (id=1) and generate a new one. Continue? [y/n]: ",
-    );
-    if !should_continue {
-        info!("Super token rotation cancelled by user.");
-        return;
-    }
-
-    match roll_super_token().await {
-        Ok((token, root_password)) => {
-            info!("Super token rotated successfully.");
-            info!("Super Token: {}", token);
-            info!("Root Password: {}", root_password);
-        }
-        Err(e) => {
-            panic!("Failed to rotate super token: {e}");
-        }
-    }
-}
-
-fn prompt_yes_or_no(prompt: &str) -> bool {
-    loop {
-        print!("{prompt}");
-        if let Err(e) = io::stdout().flush() {
-            println!("Failed to flush stdout: {e}. Please type y or n.");
-        }
-
-        let mut input = String::new();
-        match io::stdin().read_line(&mut input) {
-            Ok(_) => {
-                let normalized = input.trim().to_ascii_lowercase();
-                match normalized.as_str() {
-                    "y" | "yes" => return true,
-                    "n" | "no" => return false,
-                    _ => {
-                        println!("Invalid input. Please type y or n.");
-                    }
-                }
-            }
-            Err(e) => {
-                println!("Failed to read input: {e}. Please type y or n.");
-            }
+        ServerCommand::RollSuperToken { .. } => {
+            subcommands::roll_super_token::run().await;
         }
     }
 }
