@@ -14,6 +14,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260206_035808_create_crontab::Migration),
             Box::new(m20260206_040842_create_crontab_result::Migration),
             Box::new(m20260327_150739_create_js_worker::Migration),
+            Box::new(m20260328_033808_create_js_result::Migration),
         ]
     }
 }
@@ -25,3 +26,4 @@ mod m20260205_024306_create_kv;
 mod m20260206_035808_create_crontab;
 mod m20260206_040842_create_crontab_result;
 mod m20260327_150739_create_js_worker;
+mod m20260328_033808_create_js_result;

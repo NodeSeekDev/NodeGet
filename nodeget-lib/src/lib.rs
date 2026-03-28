@@ -31,3 +31,4 @@ pub mod crontab_result;
 pub mod kv;
 pub mod utils;
 pub mod js_runtime;
+pub mod js_result;

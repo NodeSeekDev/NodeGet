@@ -9,50 +9,48 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(JsWorkerInDatabase::Table)
+                    .table(JsResultInDatabase::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(JsWorkerInDatabase::Id)
+                        ColumnDef::new(JsResultInDatabase::Id)
                             .big_integer()
                             .not_null()
                             .auto_increment()
                             .primary_key(),
                     )
                     .col(
-                        ColumnDef::new(JsWorkerInDatabase::Name)
-                            .string()
-                            .unique_key()
+                        ColumnDef::new(JsResultInDatabase::JsWorkerId)
+                            .big_integer()
                             .not_null(),
                     )
                     .col(
-                        ColumnDef::new(JsWorkerInDatabase::JsScript)
+                        ColumnDef::new(JsResultInDatabase::JsWorkerName)
                             .string()
                             .not_null(),
                     )
                     .col(
-                        ColumnDef::new(JsWorkerInDatabase::JsByteCode)
-                            .binary()
+                        ColumnDef::new(JsResultInDatabase::StartTime)
+                            .big_integer()
                             .null(),
                     )
                     .col(
-                        ColumnDef::new(JsWorkerInDatabase::Env)
+                        ColumnDef::new(JsResultInDatabase::FinishTime)
+                            .big_integer()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(JsResultInDatabase::Param)
                             .json_binary()
                             .null(),
                     )
                     .col(
-                        ColumnDef::new(JsWorkerInDatabase::RuntimeCleanTime)
-                            .big_integer()
+                        ColumnDef::new(JsResultInDatabase::Result)
+                            .json_binary()
                             .null(),
                     )
                     .col(
-                        ColumnDef::new(JsWorkerInDatabase::CreateAt)
-                            .big_integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(JsWorkerInDatabase::UpdateAt)
-                            .big_integer()
-                            .not_null(),
+                        ColumnDef::new(JsResultInDatabase::ErrorMessage)
+                            .string().null(),
                     )
                     .to_owned(),
             )
@@ -61,9 +59,9 @@ impl MigrationTrait for Migration {
         manager
             .create_index(
                 Index::create()
-                    .name("idx-js_worker-id") // 索引名称
-                    .table(JsWorkerInDatabase::Table)
-                    .col(JsWorkerInDatabase::Id)
+                    .name("idx-js_result-id") // 索引名称
+                    .table(JsResultInDatabase::Table)
+                    .col(JsResultInDatabase::Id)
                     .unique()
                     .to_owned(),
             )
@@ -75,7 +73,7 @@ impl MigrationTrait for Migration {
         manager
             .drop_table(
                 Table::drop()
-                    .table(JsWorkerInDatabase::Table)
+                    .table(JsResultInDatabase::Table)
                     .to_owned(),
             )
             .await
@@ -84,18 +82,15 @@ impl MigrationTrait for Migration {
 
 // 令牌表的标识符枚举，用于定义表和列的名称
 #[derive(DeriveIden)]
-enum JsWorkerInDatabase {
-    #[sea_orm(iden = "js_worker")]
+enum JsResultInDatabase {
+    #[sea_orm(iden = "js_result")]
     Table,
-
     Id,
-    Name,
-    JsScript,
-    JsByteCode,
-
-    Env,
-    RuntimeCleanTime,
-
-    CreateAt,
-    UpdateAt,
+    JsWorkerId,
+    JsWorkerName,
+    StartTime,
+    FinishTime,
+    Param,
+    Result,
+    ErrorMessage,
 }

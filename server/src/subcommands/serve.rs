@@ -4,6 +4,7 @@ use tower::Service;
 
 use crate::RELOAD_NOTIFY;
 use crate::crontab::init_crontab_worker;
+use crate::js_runtime::runtime_pool;
 use crate::rpc::get_modules;
 use crate::rpc_timing::RpcTimingMiddleware;
 
@@ -21,6 +22,8 @@ pub async fn run(
     let terminal_state = crate::terminal::TerminalState {
         sessions: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };
+
+    runtime_pool::init_global_pool();
 
     let rpc_module = get_modules();
 

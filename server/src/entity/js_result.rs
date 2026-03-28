@@ -4,18 +4,19 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "js_worker")]
+#[sea_orm(table_name = "js_result")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
-    #[sea_orm(unique)]
-    pub name: String,
-    pub js_script: String,
-    pub js_byte_code: Option<Vec<u8>>,
-    pub env: Option<Json>,
-    pub runtime_clean_time: Option<i64>,
-    pub create_at: i64,
-    pub update_at: i64,
+    pub js_worker_id: i64,
+    pub js_worker_name: String,
+    pub start_time: Option<i64>,
+    pub finish_time: Option<i64>,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub param: Option<Json>,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub result: Option<Json>,
+    pub error_message: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
