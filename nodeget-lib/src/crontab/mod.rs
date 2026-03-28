@@ -2,6 +2,7 @@ pub mod result;
 
 use crate::task::TaskEventType;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,4 +33,5 @@ pub enum AgentCronType {
 #[serde(rename_all = "snake_case")]
 pub enum ServerCronType {
     CleanUpDatabase,
+    JsWorker(String, Value) // 脚本名, 传入参数
 }

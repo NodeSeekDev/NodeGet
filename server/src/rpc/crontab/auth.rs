@@ -1,8 +1,8 @@
 use crate::token::get::check_token_limit;
-use nodeget_lib::crontab::{AgentCronType, CronType};
+use nodeget_lib::crontab::{AgentCronType, CronType, ServerCronType};
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{
-    Crontab as CrontabPermission, Permission, Scope, Task,
+    Crontab as CrontabPermission, JsWorker as JsWorkerPermission, Permission, Scope, Task,
 };
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use serde_json::Value;
@@ -60,18 +60,53 @@ pub async fn ensure_crontab_payload_write_permission(
     cron_type: &CronType,
 ) -> anyhow::Result<()> {
     let scopes = scopes_from_cron_type(cron_type)?;
-    let permissions = write_permissions_from_cron_type(cron_type);
+    let mut permissions = write_permissions_from_cron_type(cron_type);
+    if matches!(cron_type, CronType::Agent(_, _)) {
+        let is_allowed = check_token_limit(token_or_auth, scopes, permissions).await?;
+        if is_allowed {
+            return Ok(());
+        }
 
-    let is_allowed = check_token_limit(token_or_auth, scopes, permissions).await?;
-    if is_allowed {
-        Ok(())
-    } else {
-        Err(NodegetError::PermissionDenied(
+        return Err(NodegetError::PermissionDenied(
             "Permission Denied: Insufficient Crontab/Task permissions for all target scopes"
                 .to_owned(),
         )
-        .into())
+        .into());
     }
+
+    permissions.retain(|perm| matches!(perm, Permission::Crontab(CrontabPermission::Write)));
+    let has_crontab_write = check_token_limit(token_or_auth, scopes, permissions).await?;
+    if !has_crontab_write {
+        return Err(NodegetError::PermissionDenied(
+            "Permission Denied: Missing crontab write permission in global scope".to_owned(),
+        )
+        .into());
+    }
+
+    if let CronType::Server(ServerCronType::JsWorker(worker_name, _)) = cron_type {
+        if worker_name.trim().is_empty() {
+            return Err(NodegetError::InvalidInput(
+                "Invalid crontab payload: js worker name cannot be empty".to_owned(),
+            )
+            .into());
+        }
+
+        let has_js_worker_run = check_token_limit(
+            token_or_auth,
+            vec![Scope::JsWorker(worker_name.clone())],
+            vec![Permission::JsWorker(JsWorkerPermission::RunDefinedJsWorker)],
+        )
+        .await?;
+
+        if !has_js_worker_run {
+            return Err(NodegetError::PermissionDenied(format!(
+                "Permission Denied: Missing js_worker run permission for '{worker_name}'"
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn ensure_crontab_scope_permission(

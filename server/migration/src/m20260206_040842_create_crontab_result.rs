@@ -29,7 +29,7 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(
-                        ColumnDef::new(CrontabResultInDatabase::TaskId)
+                        ColumnDef::new(CrontabResultInDatabase::SpecialId)
                             .big_integer()
                             .null(),
                     )
@@ -65,9 +65,9 @@ impl MigrationTrait for Migration {
         manager
             .create_index(
                 Index::create()
-                    .name("idx-crontab_result-task_id")
+                    .name("idx-crontab_result-special_id")
                     .table(CrontabResultInDatabase::Table)
-                    .col(CrontabResultInDatabase::TaskId)
+                    .col(CrontabResultInDatabase::SpecialId)
                     .to_owned(),
             )
             .await?;
@@ -93,7 +93,7 @@ enum CrontabResultInDatabase {
     Id,
     CronId,
     CronName,
-    TaskId,
+    SpecialId,
     RunTime,
     Success,
     Message,

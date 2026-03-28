@@ -26,6 +26,9 @@ CrontabResult 结构如下:
   // Crontab 名称
   "run_time": 1769341269012,
   // 执行时间（毫秒时间戳）
+  "special_id": null,
+  // 如果是下发 Agent Task 的 Cron，这里为 task_id
+  // 如果是触发 JsWorker 的 Cron，这里为 js_result_id
   "success": true,
   // 是否执行成功
   "message": "Cleaned 100 records"

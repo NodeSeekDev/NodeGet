@@ -12,6 +12,7 @@ mod get_rt_pool;
 mod list_all_js_worker;
 mod read;
 mod run;
+pub(crate) mod service;
 mod update;
 
 #[rpc(server, namespace = "js-worker")]

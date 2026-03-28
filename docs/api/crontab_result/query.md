@@ -24,6 +24,7 @@
     "id": 1,
     "cron_id": 5,
     "cron_name": "cleanup_database",
+    "special_id": null,
     "run_time": 1769341269012,
     "success": true,
     "message": "Cleaned 100 records"

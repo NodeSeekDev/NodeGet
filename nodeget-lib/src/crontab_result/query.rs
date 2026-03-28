@@ -42,7 +42,7 @@ pub struct CrontabResultResponseItem {
     pub cron_id: i64,
     // Cron 名称
     pub cron_name: String,
-    pub task_id: Option<i64>,
+    pub special_id: Option<i64>,
     // 运行时间戳（毫秒）
     pub run_time: Option<i64>,
     // 是否成功
