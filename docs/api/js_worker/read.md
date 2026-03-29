@@ -16,6 +16,7 @@
 ```json
 {
   "name": "demo_worker",
+  "route_name": "demo_route",
   "js_script_base64": "ZXhwb3J0IGRlZmF1bHQgeyBhc3luYyBvbkNhbGwocGFyYW1zLCBlbnYsIGN0eCkgeyByZXR1cm4geyBvazogdHJ1ZSB9OyB9IH07",
   "runtime_clean_time": 60000,
   "env": {

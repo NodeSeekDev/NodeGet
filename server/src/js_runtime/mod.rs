@@ -195,6 +195,41 @@ pub fn js_runner(
                         );
                     }
 
+                    if (runHandler === "onRoute") {
+                        if (!input || typeof input !== "object") {
+                            throw new Error("onRoute input must be an object");
+                        }
+
+                        const routeHeaders = Array.isArray(input.headers)
+                            ? input.headers.map((h) => [
+                                String(h?.name ?? ""),
+                                String(h?.value ?? "")
+                            ])
+                            : [];
+                        const routeInit = {
+                            method: String(input.method ?? "GET"),
+                            headers: routeHeaders
+                        };
+                        if (Array.isArray(input.body_bytes) && input.body_bytes.length > 0) {
+                            routeInit.body = new Uint8Array(input.body_bytes);
+                        }
+
+                        const routeRequest = new Request(String(input.url ?? ""), routeInit);
+                        const routeResponse = await handler(routeRequest, env, runtimeCtx);
+
+                        if (!(routeResponse instanceof Response)) {
+                            throw new Error("onRoute must return a Response object");
+                        }
+
+                        const routeBody = new Uint8Array(await routeResponse.arrayBuffer());
+                        return {
+                            status: routeResponse.status,
+                            headers: Array.from(routeResponse.headers.entries())
+                                .map(([name, value]) => ({ name, value })),
+                            body_bytes: Array.from(routeBody)
+                        };
+                    }
+
                     const result = await handler(input, env, runtimeCtx);
                     if (typeof result === "undefined") {
                         throw new Error("JS handler must return a JSON-serializable value");

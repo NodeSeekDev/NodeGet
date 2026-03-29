@@ -14,6 +14,10 @@ export default {
 
   async onCron(params, env, ctx) {
     return { ok: true, from: "onCron", params, env };
+  },
+
+  async onRoute(request, env, ctx) {
+    return new Response("ok", { status: 200 });
   }
 };
 ```
@@ -22,10 +26,11 @@ export default {
 
 - `call` -> `export default.onCall(...)`
 - `cron` -> `export default.onCron(...)`
+- `route` -> `export default.onRoute(...)`
 
 ## 参数约定
 
-入口函数签名：
+`onCall` / `onCron` 入口签名：
 
 ```js
 async function handler(params, env, ctx) {}
@@ -35,12 +40,24 @@ async function handler(params, env, ctx) {}
 - `env`：来自 `js-worker_run.env` 或数据库保存的 `env`
 - `ctx`：运行时上下文，当前包含：
   - `ctx.nodeget(rawJsonString)`：调用 Server 内部 JSON-RPC
-  - `ctx.runType`：当前入口名（`onCall` / `onCron`）
+  - `ctx.uuid()`：生成随机 UUID v4 字符串
+  - `ctx.runType`：当前入口名（`onCall` / `onCron` / `onRoute`）
+
+`onRoute` 入口签名：
+
+```js
+async function onRoute(request, env, ctx) {}
+```
+
+- `request`：运行时直接传入的 Fetch 标准 `Request` 对象
+- `env`：来自数据库保存的 `env`
+- `ctx`：与其他入口一致
 
 ## 返回值约束
 
 - 必须返回可 JSON 序列化的数据（对象/数组/字符串/数字/布尔/null）。
 - 不允许返回 `undefined`。
+- `onRoute` 必须返回 `Response` 对象。
 
 ## 可用能力
 
@@ -76,6 +93,23 @@ export default {
 
   async onCron(params, env, ctx) {
     return { ok: true, from: "cron", params, env };
+  },
+
+  async onRoute(request, env, ctx) {
+    const text = await request.text();
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        method: request.method,
+        url: request.url,
+        text,
+        env
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" }
+      }
+    );
   }
 };
 ```
@@ -89,3 +123,4 @@ export default {
 
 - 创建/更新时会进行“仅编译”预检查，不会执行业务逻辑。
 - 真正执行发生在 `js-worker_run`。
+- HTTP 路由调用发生在 `/worker-route/{route_name}`。

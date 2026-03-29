@@ -245,6 +245,10 @@ export const themeZhConfig = {
 					link: '/api/js_worker/run.md'
 				},
 				{
+					text: 'HTTP 路由绑定',
+					link: '/api/js_worker/route.md'
+				},
+				{
 					text: '列出可见脚本',
 					link: '/api/js_worker/list_all_js_worker.md'
 				},

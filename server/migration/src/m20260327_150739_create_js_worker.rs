@@ -35,6 +35,11 @@ impl MigrationTrait for Migration {
                             .null(),
                     )
                     .col(
+                        ColumnDef::new(JsWorkerInDatabase::RouteName)
+                            .string()
+                            .null(),
+                    )
+                    .col(
                         ColumnDef::new(JsWorkerInDatabase::Env)
                             .json_binary()
                             .null(),
@@ -68,6 +73,17 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx-js_worker-route_name-unique")
+                    .table(JsWorkerInDatabase::Table)
+                    .col(JsWorkerInDatabase::RouteName)
+                    .unique()
+                    .to_owned(),
+            )
+            .await?;
         Ok(())
     }
 
@@ -92,6 +108,7 @@ enum JsWorkerInDatabase {
     Name,
     JsScript,
     JsByteCode,
+    RouteName,
 
     Env,
     RuntimeCleanTime,

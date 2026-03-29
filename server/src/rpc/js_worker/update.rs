@@ -3,13 +3,14 @@ use crate::js_runtime::compile_js_module_to_bytecode;
 use crate::js_runtime::runtime_pool;
 use crate::rpc::RpcHelper;
 use crate::rpc::js_worker::auth::check_js_worker_permission;
+use crate::rpc::js_worker::route_name::normalize_route_name;
 use crate::rpc::js_worker::JsWorkerRpcImpl;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use chrono::Utc;
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::JsWorker as JsWorkerPermission;
+use nodeget_lib::utils::get_local_timestamp_ms_i64;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -18,13 +19,17 @@ pub async fn update(
     token: String,
     name: String,
     js_script_base64: String,
+    route_name: Option<String>,
     runtime_clean_time: Option<i64>,
     env: Option<Value>,
-    ) -> RpcResult<Box<RawValue>> {
+) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
-        if name.trim().is_empty() {
+        let name = name.trim().to_owned();
+        if name.is_empty() {
             return Err(NodegetError::InvalidInput("name cannot be empty".to_owned()).into());
         }
+
+        let route_name = normalize_route_name(route_name)?;
 
         check_js_worker_permission(&token, name.as_str(), JsWorkerPermission::Write).await?;
 
@@ -53,6 +58,22 @@ pub async fn update(
             .map_err(|e| NodegetError::DatabaseError(e.to_string()))?
             .ok_or_else(|| NodegetError::NotFound(format!("js_worker not found: {name}")))?;
 
+        if let Some(route_name) = route_name.as_deref() {
+            let existing_route = js_worker::Entity::find()
+                .filter(js_worker::Column::RouteName.eq(route_name))
+                .filter(js_worker::Column::Name.ne(name.as_str()))
+                .one(db)
+                .await
+                .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
+
+            if existing_route.is_some() {
+                return Err(NodegetError::InvalidInput(format!(
+                    "route_name already exists: {route_name}"
+                ))
+                .into());
+            }
+        }
+
         let js_byte_code = tokio::task::spawn_blocking({
             let compile_input = js_script.clone();
             move || compile_js_module_to_bytecode(compile_input)
@@ -61,10 +82,11 @@ pub async fn update(
         .map_err(|e| NodegetError::Other(format!("JavaScript precompile task join failed: {e}")))?
         .map_err(|e| NodegetError::Other(format!("JavaScript precompile failed: {e}")))?;
 
-        let now_ms = Utc::now().timestamp_millis();
+        let now_ms = get_local_timestamp_ms_i64().unwrap_or(0);
         let mut active_model: js_worker::ActiveModel = model.into();
         active_model.js_script = Set(js_script);
         active_model.js_byte_code = Set(Some(js_byte_code));
+        active_model.route_name = Set(route_name);
         active_model.runtime_clean_time = Set(runtime_clean_time);
         active_model.env = Set(env);
         active_model.update_at = Set(now_ms);
@@ -78,6 +100,7 @@ pub async fn update(
         let response = serde_json::json!({
             "success": true,
             "name": updated.name,
+            "route_name": updated.route_name,
             "update_at": updated.update_at
         });
 

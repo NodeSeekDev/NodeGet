@@ -29,6 +29,7 @@ pub async fn read(token: String, name: String) -> RpcResult<Box<RawValue>> {
 
         let response = serde_json::json!({
             "name": model.name,
+            "route_name": model.route_name,
             "js_script_base64": js_script_base64,
             "runtime_clean_time": model.runtime_clean_time,
             "env": model.env,

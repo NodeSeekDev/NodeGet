@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum RunType {
     Call,
     Cron,
+    Route,
 }
 
 impl RunType {
@@ -13,6 +14,7 @@ impl RunType {
         match self {
             Self::Call => "onCall",
             Self::Cron => "onCron",
+            Self::Route => "onRoute",
         }
     }
 }

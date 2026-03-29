@@ -11,6 +11,7 @@
 | [update](./update.md)                        | 更新脚本并重新预编译                         |
 | [delete](./delete.md)                        | 删除脚本                               |
 | [run](./run.md)                              | 异步运行已注册脚本，立即返回 `js_result` 记录 ID |
+| [route](./route.md)                          | HTTP 路由绑定与 `onRoute` 处理说明             |
 | [list_all_js_worker](./list_all_js_worker.md) | 列出当前 Token 可见且存在的脚本名              |
 | [get_rt_pool](./get_rt_pool.md)              | 查看 JS Runtime 池状态                 |
 | [script](./script.md)                        | JS 脚本编写规范与示例                       |

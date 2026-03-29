@@ -1,5 +1,10 @@
+use crate::entity::js_worker;
 use axum::routing::any;
+use axum::{extract::Path, http::StatusCode};
 use log::info;
+use nodeget_lib::js_runtime::RunType;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use serde::{Deserialize, Serialize};
 use tower::Service;
 
 use crate::RELOAD_NOTIFY;
@@ -72,6 +77,23 @@ pub async fn run(
                     rpc_service.call(req).await.unwrap()
                 }
             }),
+        )
+        .route(
+            "/worker-route/{route_name}",
+            any(
+                |Path(route_name): Path<String>, req: axum::extract::Request| async move {
+                    handle_js_worker_route(route_name, req).await
+                },
+            ),
+        )
+        .route(
+            "/worker-route/{route_name}/{*path}",
+            any(
+                |Path((route_name, _path)): Path<(String, String)>,
+                 req: axum::extract::Request| async move {
+                    handle_js_worker_route(route_name, req).await
+                },
+            ),
         )
         .route("/terminal", any(crate::terminal::terminal_ws_handler))
         .with_state(terminal_state)
@@ -151,6 +173,194 @@ fn is_websocket_upgrade(headers: &axum::http::HeaderMap) -> bool {
         });
 
     has_upgrade_header && has_connection_upgrade
+}
+
+#[derive(Debug, Serialize)]
+struct JsRouteHeader {
+    name: String,
+    value: String,
+}
+
+#[derive(Debug, Serialize)]
+struct JsRouteInput {
+    method: String,
+    url: String,
+    headers: Vec<JsRouteHeader>,
+    body_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsRouteOutputHeader {
+    name: String,
+    value: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsRouteOutput {
+    status: u16,
+    headers: Vec<JsRouteOutputHeader>,
+    body_bytes: Vec<u8>,
+}
+
+async fn handle_js_worker_route(
+    route_name: String,
+    req: axum::extract::Request,
+) -> axum::http::Response<jsonrpsee::server::HttpBody> {
+    const ROUTE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+
+    let route_name = route_name.trim().to_owned();
+    if route_name.is_empty() {
+        return build_http_error(StatusCode::BAD_REQUEST, "route_name cannot be empty");
+    }
+
+    let (parts, body) = req.into_parts();
+    let method = parts.method.to_string();
+    let uri = parts.uri.to_string();
+    let scheme = parts
+        .headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+    let host = parts
+        .headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let url = if uri.starts_with("http://") || uri.starts_with("https://") {
+        uri
+    } else {
+        format!("{scheme}://{host}{uri}")
+    };
+
+    let headers = parts
+        .headers
+        .iter()
+        .filter_map(|(name, value)| {
+            value.to_str().ok().map(|v| JsRouteHeader {
+                name: name.as_str().to_owned(),
+                value: v.to_owned(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let body_bytes = match axum::body::to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
+        Ok(bytes) => bytes.to_vec(),
+        Err(e) => {
+            return build_http_error(
+                StatusCode::BAD_REQUEST,
+                format!("Failed to read request body: {e}"),
+            );
+        }
+    };
+
+    let db = match crate::DB.get() {
+        Some(db) => db.clone(),
+        None => {
+            return build_http_error(StatusCode::INTERNAL_SERVER_ERROR, "Database is not initialized");
+        }
+    };
+
+    let model = match js_worker::Entity::find()
+        .filter(js_worker::Column::RouteName.eq(route_name.as_str()))
+        .one(&db)
+        .await
+    {
+        Ok(Some(model)) => model,
+        Ok(None) => {
+            return build_http_error(StatusCode::NOT_FOUND, "No js_worker bound to this route_name");
+        }
+        Err(e) => {
+            return build_http_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Database query failed: {e}"),
+            );
+        }
+    };
+
+    let Some(bytecode) = model.js_byte_code else {
+        return build_http_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("js_worker '{}' has no precompiled bytecode", model.name),
+        );
+    };
+
+    let js_input = JsRouteInput {
+        method,
+        url,
+        headers,
+        body_bytes,
+    };
+    let params = match serde_json::to_value(js_input) {
+        Ok(v) => v,
+        Err(e) => {
+            return build_http_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to serialize route input: {e}"),
+            );
+        }
+    };
+
+    let env = model.env.unwrap_or_else(|| serde_json::json!({}));
+    let run_result = crate::js_runtime::runtime_pool::init_global_pool()
+        .execute_script(
+            model.name.as_str(),
+            bytecode,
+            RunType::Route,
+            params,
+            env,
+            model.runtime_clean_time,
+        )
+        .await;
+
+    let js_value = match run_result {
+        Ok(v) => v,
+        Err(e) => {
+            return build_http_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Route worker execution failed: {e}"),
+            );
+        }
+    };
+
+    let js_output: JsRouteOutput = match serde_json::from_value(js_value) {
+        Ok(v) => v,
+        Err(e) => {
+            return build_http_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Invalid onRoute return format: {e}"),
+            );
+        }
+    };
+
+    let status = StatusCode::from_u16(js_output.status).unwrap_or(StatusCode::OK);
+    let mut response = axum::http::Response::builder().status(status);
+    for header in js_output.headers {
+        if let Ok(name) = axum::http::header::HeaderName::from_bytes(header.name.as_bytes())
+            && let Ok(value) = axum::http::header::HeaderValue::from_str(header.value.as_str())
+        {
+            response = response.header(name, value);
+        }
+    }
+
+    response
+        .body(jsonrpsee::server::HttpBody::from(js_output.body_bytes))
+        .unwrap_or_else(|e| {
+            build_http_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to build response: {e}"),
+            )
+        })
+}
+
+fn build_http_error(
+    status: StatusCode,
+    message: impl ToString,
+) -> axum::http::Response<jsonrpsee::server::HttpBody> {
+    axum::http::Response::builder()
+        .status(status)
+        .header(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(jsonrpsee::server::HttpBody::from(message.to_string()))
+        .expect("Failed to build error response")
 }
 
 #[cfg(all(not(target_os = "windows"), feature = "jemalloc"))]

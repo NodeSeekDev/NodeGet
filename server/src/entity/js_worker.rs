@@ -12,6 +12,7 @@ pub struct Model {
     pub name: String,
     pub js_script: String,
     pub js_byte_code: Option<Vec<u8>>,
+    pub route_name: Option<String>,
     pub env: Option<Json>,
     pub runtime_clean_time: Option<i64>,
     pub create_at: i64,

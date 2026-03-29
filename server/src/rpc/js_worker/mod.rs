@@ -11,6 +11,7 @@ mod delete;
 mod get_rt_pool;
 mod list_all_js_worker;
 mod read;
+mod route_name;
 mod run;
 pub(crate) mod service;
 mod update;
@@ -23,6 +24,7 @@ pub trait Rpc {
         token: String,
         name: String,
         js_script_base64: String,
+        route_name: Option<String>,
         runtime_clean_time: Option<i64>,
         env: Option<Value>,
     ) -> RpcResult<Box<RawValue>>;
@@ -33,6 +35,7 @@ pub trait Rpc {
         token: String,
         name: String,
         js_script_base64: String,
+        route_name: Option<String>,
         runtime_clean_time: Option<i64>,
         env: Option<Value>,
     ) -> RpcResult<Box<RawValue>>;
@@ -71,10 +74,19 @@ impl RpcServer for JsWorkerRpcImpl {
         token: String,
         name: String,
         js_script_base64: String,
+        route_name: Option<String>,
         runtime_clean_time: Option<i64>,
         env: Option<Value>,
     ) -> RpcResult<Box<RawValue>> {
-        create::create(token, name, js_script_base64, runtime_clean_time, env).await
+        create::create(
+            token,
+            name,
+            js_script_base64,
+            route_name,
+            runtime_clean_time,
+            env,
+        )
+        .await
     }
 
     async fn update(
@@ -82,10 +94,19 @@ impl RpcServer for JsWorkerRpcImpl {
         token: String,
         name: String,
         js_script_base64: String,
+        route_name: Option<String>,
         runtime_clean_time: Option<i64>,
         env: Option<Value>,
     ) -> RpcResult<Box<RawValue>> {
-        update::update(token, name, js_script_base64, runtime_clean_time, env).await
+        update::update(
+            token,
+            name,
+            js_script_base64,
+            route_name,
+            runtime_clean_time,
+            env,
+        )
+        .await
     }
 
     async fn delete(&self, token: String, name: String) -> RpcResult<Box<RawValue>> {
