@@ -90,6 +90,12 @@ pub async fn run(
                 }),
             )
             .route(
+                "/worker-route/{route_name}/",
+                any(|Path(route_name): Path<String>, req: axum::extract::Request| async move {
+                    handle_js_worker_route(route_name, req).await
+                }),
+            )
+            .route(
                 "/worker-route/{route_name}/{*path}",
                 any(
                     |Path((route_name, _path)): Path<(String, String)>,
