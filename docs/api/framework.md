@@ -37,6 +37,9 @@ WebSocket JsonRpc 无异
 
 推荐使用 JsonRpc 进行二次开发时同时兼容 WebSocket 与 Http，并优先使用 WebSocket 通信
 
+在非 Windows 平台可选启用 Unix Socket 监听（`enable_unix_socket` / `unix_socket_path`），该入口复用与 TCP 完全一致的
+Axum 主路由。
+
 ## 数据库
 
 目前兼容了 Sqlite 与 PostgreSQL，请根据需要选择

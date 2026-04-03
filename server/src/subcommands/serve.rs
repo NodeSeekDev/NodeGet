@@ -1,6 +1,6 @@
 use crate::entity::js_worker;
 use axum::routing::any;
-use axum::{extract::ConnectInfo, extract::Path, http::StatusCode};
+use axum::{extract::Path, http::StatusCode};
 use log::info;
 use nodeget_lib::js_runtime::RunType;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -85,21 +85,16 @@ pub async fn run(
             )
             .route(
                 "/worker-route/{route_name}",
-                any(
-                    |Path(route_name): Path<String>,
-                     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
-                     req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, peer_addr, req).await
-                    },
-                ),
+                any(|Path(route_name): Path<String>, req: axum::extract::Request| async move {
+                    handle_js_worker_route(route_name, req).await
+                }),
             )
             .route(
                 "/worker-route/{route_name}/{*path}",
                 any(
                     |Path((route_name, _path)): Path<(String, String)>,
-                     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
                      req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, peer_addr, req).await
+                        handle_js_worker_route(route_name, req).await
                     },
                 ),
             )
@@ -111,6 +106,36 @@ pub async fn run(
             }));
 
     init_crontab_worker();
+
+    #[cfg(not(target_os = "windows"))]
+    let mut unix_server_task: Option<tokio::task::JoinHandle<()>> = None;
+    #[cfg(not(target_os = "windows"))]
+    let mut unix_socket_path: Option<String> = None;
+
+    #[cfg(not(target_os = "windows"))]
+    if config.enable_unix_socket.unwrap_or(false) {
+        let socket_path = config
+            .unix_socket_path
+            .clone()
+            .unwrap_or_else(|| "/var/lib/nodeget.sock".to_owned());
+
+        match bind_unix_listener(socket_path.as_str()).await {
+            Ok(unix_listener) => {
+                let unix_app = app.clone();
+                unix_socket_path = Some(socket_path.clone());
+                unix_server_task = Some(tokio::spawn(async move {
+                    if let Err(e) = axum::serve(unix_listener, unix_app.into_make_service()).await
+                    {
+                        log::error!("Unix socket server stopped with error: {e}");
+                    }
+                }));
+                info!("Unix socket listener started: {socket_path}");
+            }
+            Err(e) => {
+                log::error!("Failed to bind unix socket listener: {e}");
+            }
+        }
+    }
 
     let listener =
         tokio::net::TcpListener::bind(config.ws_listener.parse::<std::net::SocketAddr>().unwrap())
@@ -126,6 +151,12 @@ pub async fn run(
     tokio::select! {
         result = &mut serve_future => {
             result.unwrap();
+            #[cfg(not(target_os = "windows"))]
+            if let Some(task) = unix_server_task.take() {
+                task.abort();
+            }
+            #[cfg(not(target_os = "windows"))]
+            cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
         }
         () = RELOAD_NOTIFY
             .get()
@@ -136,6 +167,12 @@ pub async fn run(
             tokio::spawn(async move {
                 let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
             });
+            #[cfg(not(target_os = "windows"))]
+            if let Some(task) = unix_server_task.take() {
+                task.abort();
+            }
+            #[cfg(not(target_os = "windows"))]
+            cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
         }
     }
 }
@@ -215,7 +252,6 @@ struct JsRouteOutput {
 
 async fn handle_js_worker_route(
     route_name: String,
-    peer_addr: SocketAddr,
     req: axum::extract::Request,
 ) -> axum::http::Response<jsonrpsee::server::HttpBody> {
     const ROUTE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
@@ -224,6 +260,11 @@ async fn handle_js_worker_route(
     if route_name.is_empty() {
         return build_http_error(StatusCode::BAD_REQUEST, "route_name cannot be empty");
     }
+
+    let peer_ip = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map_or_else(|| "127.0.0.1".to_owned(), |info| info.0.ip().to_string());
 
     let (parts, body) = req.into_parts();
     let method = parts.method.to_string();
@@ -257,7 +298,7 @@ async fn handle_js_worker_route(
     headers.retain(|h| !h.name.eq_ignore_ascii_case("ng-connecting-ip"));
     headers.push(JsRouteHeader {
         name: "ng-connecting-ip".to_owned(),
-        value: peer_addr.ip().to_string(),
+        value: peer_ip,
     });
 
     let body_bytes = match axum::body::to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
@@ -387,6 +428,36 @@ fn build_http_error(
         )
         .body(jsonrpsee::server::HttpBody::from(message.into()))
         .expect("Failed to build error response")
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn bind_unix_listener(path: &str) -> std::io::Result<tokio::net::UnixListener> {
+    use std::io::ErrorKind;
+    use std::path::Path;
+
+    let socket_path = Path::new(path);
+    if let Some(parent) = socket_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    match tokio::fs::remove_file(socket_path).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+
+    tokio::net::UnixListener::bind(socket_path)
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn cleanup_unix_socket_file(path: Option<&str>) {
+    use std::io::ErrorKind;
+    let Some(path) = path else { return };
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => log::warn!("Failed to remove unix socket file '{path}': {e}"),
+    }
 }
 
 #[cfg(all(not(target_os = "windows"), feature = "jemalloc"))]

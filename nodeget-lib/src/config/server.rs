@@ -21,6 +21,12 @@ pub struct ServerConfig {
     // JSON-RPC 耗时日志级别，默认 trace
     pub jsonrpc_timing_log_level: Option<String>,
 
+    // 是否启用 Unix Socket（仅非 Windows 平台）
+    pub enable_unix_socket: Option<bool>,
+
+    // Unix Socket 路径（仅非 Windows 平台，默认 /var/lib/nodeget.sock）
+    pub unix_socket_path: Option<String>,
+
     // 数据库配置
     pub database: DatabaseConfig,
 }

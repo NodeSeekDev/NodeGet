@@ -13,6 +13,14 @@ jsonrpc_max_connections = 100
 # 该项独立于 log_level，仅控制 RPC 耗时日志
 jsonrpc_timing_log_level = "trace"
 
+# 是否启用 Unix Socket（仅非 Windows 平台）
+# 启用后会额外监听 unix_socket_path 对应的 Axum 主路由
+enable_unix_socket = false
+
+# Unix Socket 路径（仅非 Windows 平台）
+# 若 enable_unix_socket = true 且不配置该项，则默认 /var/lib/nodeget.sock
+unix_socket_path = "/var/lib/nodeget.sock"
+
 # Server 的 Uuid，建议设置为 auto_gen 以自动生成，根据系统环境自动生成，可保证数据不冲突（概率极小）
 # 如果不是 auto_gen，请自行确保 Uuid 唯一，否则可能导致数据混乱或 UB
 server_uuid = "auto_gen"
