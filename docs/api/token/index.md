@@ -1,6 +1,16 @@
-﻿# Token 总览
+# Token 总览
 
 Token 是本项目的鉴权核心，任何有权限的操作都应持有 有对应权限的 Token
+
+## 方法列表
+
+| 方法名 | 描述 |
+|-------|------|
+| [token_get](./crud.md#get-token) | 获取 Token 信息 |
+| [token_create](./crud.md#create-token) | 创建新 Token |
+| [token_delete](./crud.md#delete-token) | 删除 Token |
+| [token_edit](./crud.md#edit-token) | 编辑 Token |
+| [token_list_all_tokens](./crud.md#list-all-tokens) | 列出所有 Token |
 
 ## Token 分类
 
@@ -32,12 +42,12 @@ Token 可以是下列值:
 
 ```rust
 pub struct Token {
-    pub version: i32, // 暂时为 1
-    pub token_key: String, // 标识 Token 最主要的键
+    pub version: i32,              // 暂时为 1
+    pub token_key: String,         // 标识 Token 最主要的键
     pub timestamp_from: Option<i64>, // Token 有效期，毫秒时间戳
     pub timestamp_to: Option<i64>,
-    pub token_limit: Vec<Limit>, // 权限范围
-    pub username: Option<String>, // 用户名
+    pub token_limit: Vec<Limit>,   // 权限范围
+    pub username: Option<String>,  // 用户名
 }
 ```
 
@@ -62,14 +72,10 @@ Scope 为作用域，即表示在某一个对象上有权限（Agent / Kv Namesp
 
 ```rust
 pub enum Scope {
-    // 全局作用域，适用于所有地点
-    Global,
-    // 特定 Agent 作用域，通过 UUID 指定
-    AgentUuid(uuid::Uuid),
-    // KvNamespace 作用域，通过名称指定
-    KvNamespace(String),
-    // JsWorker 作用域，通过脚本名指定，支持后缀 * 通配
-    JsWorker(String),
+    Global,                    // 全局作用域，适用于所有地点
+    AgentUuid(uuid::Uuid),     // 特定 Agent 作用域，通过 UUID 指定
+    KvNamespace(String),       // KvNamespace 作用域，通过名称指定
+    JsWorker(String),          // JsWorker 作用域，通过脚本名指定，支持后缀 * 通配
 }
 ```
 
@@ -80,55 +86,34 @@ pub enum Scope {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Permission {
-    // 静态监控权限
-    StaticMonitoring(StaticMonitoring),
-    // 动态监控权限
-    DynamicMonitoring(DynamicMonitoring),
-    // 任务权限
-    Task(Task),
-    // Crontab 权限
-    Crontab(Crontab),
-
-    // CrontabResult 权限
-    CrontabResult(CrontabResult),
-
-    // Kv 权限
-    Kv(Kv),
-
-    // Terminal 权限
-    Terminal(Terminal),
-    
-    // NodeGet 权限
-    NodeGet(NodeGet),
-
-    // Js Worker 权限
-    JsWorker(JsWorker),
-    // Js Result 权限
-    JsResult(JsResult),
+    StaticMonitoring(StaticMonitoring),   // 静态监控权限
+    DynamicMonitoring(DynamicMonitoring), // 动态监控权限
+    Task(Task),                           // 任务权限
+    Crontab(Crontab),                     // Crontab 权限
+    CrontabResult(CrontabResult),         // CrontabResult 权限
+    Kv(Kv),                               // Kv 权限
+    Terminal(Terminal),                   // Terminal 权限
+    NodeGet(NodeGet),                     // NodeGet 权限
+    JsWorker(JsWorker),                   // Js Worker 权限
+    JsResult(JsResult),                   // Js Result 权限
 }
 
 // 静态监控权限枚举
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StaticMonitoring {
-    // 读取权限，指定可读取的字段类型
-    Read(StaticDataQueryField),
-    // 写入权限
-    Write,
-    // 删除权限
-    Delete,
+    Read(StaticDataQueryField), // 读取权限，指定可读取的字段类型
+    Write,                      // 写入权限
+    Delete,                     // 删除权限
 }
 
 // 动态监控权限枚举
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DynamicMonitoring {
-    // 读取权限，指定可读取的字段类型
-    Read(DynamicDataQueryField),
-    // 写入权限
-    Write,
-    // 删除权限
-    Delete,
+    Read(DynamicDataQueryField), // 读取权限，指定可读取的字段类型
+    Write,                       // 写入权限
+    Delete,                      // 删除权限
 }
 
 // 任务权限枚举
@@ -137,30 +122,22 @@ pub enum DynamicMonitoring {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Task {
-    // 创建权限，指定任务类型
-    Create(String),
-    // 读取权限，指定任务类型
-    Read(String),
-    // 写入权限，指定任务类型
-    Write(String),
-    // 删除权限，指定任务类型
-    Delete(String),
-    // 监听权限
-    Listen,
+    Create(String), // 创建权限，指定任务类型
+    Read(String),   // 读取权限，指定任务类型
+    Write(String),  // 写入权限，指定任务类型
+    Delete(String), // 删除权限，指定任务类型
+    Listen,         // 监听权限
 }
 
 // Crontab 权限枚举
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Crontab {
-    // 可以读取在自己 Scope 下的所有 Crontab
-    Read,
-    // 可以创建 Crontab
-    // 若 Crontab 类型为下发给 Agent 任务，则该 Token 还必须拥有对应 Agent 的 Task Create 权限
-    // 若 Crontab 类型为 Server 任务，则 Scope 必须为 Global，否则无效
-    Write,
-    // 删除 Crontab
-    Delete,
+    Read,   // 可以读取在自己 Scope 下的所有 Crontab
+    Write,  // 可以创建 Crontab
+            // 若 Crontab 类型为下发给 Agent 任务，则该 Token 还必须拥有对应 Agent 的 Task Create 权限
+            // 若 Crontab 类型为 Server 任务，则 Scope 必须为 Global，否则无效
+    Delete, // 删除 Crontab
 }
 
 // CrontabResult 权限枚举
@@ -168,10 +145,8 @@ pub enum Crontab {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CrontabResult {
-    // 读取权限，指定可读取的 cron_name
-    Read(String),
-    // 删除权限，指定可删除的 cron_name
-    Delete(String),
+    Read(String),   // 读取权限，指定可读取的 cron_name
+    Delete(String), // 删除权限，指定可删除的 cron_name
 }
 
 // Kv 权限枚举
@@ -179,26 +154,20 @@ pub enum CrontabResult {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kv {
-    // 列出可见 Namespace
-    ListAllNamespace,
-    // 列出该 Namespace 下所有键
-    ListAllKeys,
-    // 下面为 KV 数据库的 CRUD 操作
-    // Write 在遇到同名 Key 会覆盖操作
-    // 可以拥有通配符，比如 `metadata_*`，表达可以操作 这一 KvNamespace Scope 下的所有以 `metadata_` 开头的键
-    Read(String),
-    Write(String),
-    Delete(String),
+    ListAllNamespace, // 列出可见 Namespace
+    ListAllKeys,      // 列出该 Namespace 下所有键
+    Read(String),     // 读取 KV 数据，支持通配符如 `metadata_*`
+    Write(String),    // 写入 KV 数据，遇到同名 Key 会覆盖
+    Delete(String),   // 删除 KV 数据
 }
 
 // Terminal 权限枚举
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Terminal {
-    // 在 Agent Uuid 下拥有该权限，表明可以通过该 Token 连接到该 Agent 的 Terminal
-    // Global Scope 下可以连接到所有的 Agent
-    // 注意：此处只是连接，而不是创建或主动让 Agent 连接
-    Connect,
+    Connect, // 在 Agent Uuid 下拥有该权限，表明可以通过该 Token 连接到该 Agent 的 Terminal
+             // Global Scope 下可以连接到所有的 Agent
+             // 注意：此处只是连接，而不是创建或主动让 Agent 连接
 }
 
 // NodeGet 权限枚举
@@ -207,59 +176,49 @@ pub enum Terminal {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeGet {
-    // 列出所有 Agent Uuid
-    ListAllAgentUuid,
-    // 查看 JS Runtime 池信息
-    GetRtPool,
+    ListAllAgentUuid, // 列出所有 Agent Uuid
+    GetRtPool,        // 查看 JS Runtime 池信息
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JsWorker {
-    ListALlJsWorker,
-    Create,
-    Read,
-    Write, // update
-    Delete,
-    RunDefinedJsWorker,
-    RunRawJsWorker,
+    ListALlJsWorker,    // 列出当前 Token 在权限范围内且数据库真实存在的脚本
+    Create,              // 创建 JsWorker
+    Read,                // 读取 JsWorker
+    Write,               // 更新 JsWorker
+    Delete,              // 删除 JsWorker
+    RunDefinedJsWorker,  // 运行已定义的 JsWorker
+    RunRawJsWorker,      // 运行原始 JsWorker
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JsResult {
-    Read(String),
-    Delete(String),
+    Read(String),   // 读取权限，支持后缀 * 通配
+    Delete(String), // 删除权限，支持后缀 * 通配
 }
-
 ```
 
 若存在于 Limit 的 permissions 中，即为拥有该权限
 
-### Monitoring 删除权限
+### 注意事项
 
-- `StaticMonitoring::Delete`：允许调用 `agent_delete_static`
-- `DynamicMonitoring::Delete`：允许调用 `agent_delete_dynamic`
-
-两者均需配合目标 Agent 的 Scope（`AgentUuid`）使用，或在 `Global` Scope 下全局生效。
-
-### JsWorker / JsResult 权限
-
-`JsWorker` 与 `JsResult` 都使用 `Scope::JsWorker(String)` 进行范围约束。
+`JsWorker` 与 `JsResult` 都使用 `Scope::JsWorker(String)` 进行范围约束:
 
 - `Scope::JsWorker("demo_worker")`：仅作用于 `demo_worker`
 - `Scope::JsWorker("demo_*")`：作用于所有以 `demo_` 开头的脚本
 
-`JsResult` 的 `Read/Delete(String)` 也支持同样的后缀 `*` 通配。
+`JsResult` 的 `Read/Delete(String)` 也支持同样的后缀 `*` 通配
 
-`JsWorker::ListALlJsWorker` 的语义是“列出当前 Token 在权限范围内且数据库真实存在的脚本”。
+Monitoring 删除权限:
 
-### NodeGet::GetRtPool
+- `StaticMonitoring::Delete`：允许调用 `agent_delete_static`
+- `DynamicMonitoring::Delete`：允许调用 `agent_delete_dynamic`
 
-若需要调用 `js-worker_get_rt_pool`，应授予：
+两者均需配合目标 Agent 的 Scope（`AgentUuid`）使用，或在 `Global` Scope 下全局生效
 
-- `Permission::NodeGet(NodeGet::GetRtPool)`
-- 建议配合 `Scope::Global`
+若需要调用 `js-worker_get_rt_pool`，应授予 `Permission::NodeGet(NodeGet::GetRtPool)`，建议配合 `Scope::Global`
 
 ## Demo
 
@@ -279,42 +238,42 @@ pub enum JsResult {
   ],
   "permissions": [
     {
-      "dynamic_monitoring": "write"
+      "dynamic_monitoring": "write" // 上报动态监控数据
     },
     {
-      "static_monitoring": "write"
+      "static_monitoring": "write" // 上报静态监控数据
     },
     {
-      "task": "listen"
+      "task": "listen" // 监听 Server 下发 Task
     },
     {
       "task": {
-        "write": "ping"
+        "write": "ping" // 上报 ping 任务
       }
     },
     {
       "task": {
-        "write": "tcp_ping"
+        "write": "tcp_ping" // 上报 tcp_ping 任务
       }
     },
     {
       "task": {
-        "write": "http_ping"
+        "write": "http_ping" // 上报 http_ping 任务
       }
     },
     {
       "task": {
-        "write": "web_shell"
+        "write": "web_shell" // 上报 web_shell 任务
       }
     },
     {
       "task": {
-        "write": "execute"
+        "write": "execute" // 上报 execute 任务
       }
     },
     {
       "task": {
-        "write": "ip"
+        "write": "ip" // 上报 ip 任务
       }
     }
   ]
@@ -343,22 +302,22 @@ Task、上报目前所有 Task 任务类型 的权限
   "permissions": [
     {
       "dynamic_monitoring": {
-        "read": "cpu"
+        "read": "cpu" // 读取动态 CPU 数据
       }
     },
     {
       "dynamic_monitoring": {
-        "read": "system"
+        "read": "system" // 读取动态 System 数据
       }
     },
     {
       "static_monitoring": {
-        "read": "cpu"
+        "read": "cpu" // 读取静态 CPU 数据
       }
     },
     {
       "static_monitoring": {
-        "read": "system"
+        "read": "system" // 读取静态 System 数据
       }
     }
   ]
@@ -377,18 +336,18 @@ Task、上报目前所有 Task 任务类型 的权限
 {
   "scopes": [
     {
-      "global": null
+      "global": null // 全局作用域
     }
   ],
   "permissions": [
     {
-      "crontab": "read"
+      "crontab": "read" // 读取 Crontab
     },
     {
-      "crontab": "write"
+      "crontab": "write" // 创建 Crontab
     },
     {
-      "crontab": "delete"
+      "crontab": "delete" // 删除 Crontab
     }
   ]
 }
@@ -412,10 +371,10 @@ Task、上报目前所有 Task 任务类型 的权限
   ],
   "permissions": [
     {
-      "crontab": "read"
+      "crontab": "read" // 读取 Crontab
     },
     {
-      "crontab": "write"
+      "crontab": "write" // 创建 Crontab
     }
   ]
 }
@@ -434,36 +393,36 @@ Task、上报目前所有 Task 任务类型 的权限
 {
   "scopes": [
     {
-      "js_worker": "demo_*"
+      "js_worker": "demo_*" // 匹配所有 demo_ 前缀的脚本
     }
   ],
   "permissions": [
     {
-      "js_worker": "list_a_ll_js_worker"
+      "js_worker": "list_a_ll_js_worker" // 列出匹配的 JsWorker
     },
     {
-      "js_worker": "create"
+      "js_worker": "create" // 创建 JsWorker
     },
     {
-      "js_worker": "read"
+      "js_worker": "read" // 读取 JsWorker
     },
     {
-      "js_worker": "write"
+      "js_worker": "write" // 更新 JsWorker
     },
     {
-      "js_worker": "delete"
+      "js_worker": "delete" // 删除 JsWorker
     },
     {
-      "js_worker": "run_defined_js_worker"
+      "js_worker": "run_defined_js_worker" // 运行已定义的 JsWorker
     },
     {
       "js_result": {
-        "read": "demo_*"
+        "read": "demo_*" // 读取 demo_ 前缀脚本的执行结果
       }
     },
     {
       "js_result": {
-        "delete": "demo_*"
+        "delete": "demo_*" // 删除 demo_ 前缀脚本的执行结果
       }
     }
   ]

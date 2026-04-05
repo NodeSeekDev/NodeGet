@@ -2,7 +2,7 @@
 
 注入入口：`server/src/js_runtime/mod.rs` 的 `init_js_runtime_globals`。
 
-## 我们自己实现的注入
+## 自定义注入
 
 - `globalThis.nodeget(rawJsonString)`
 - `globalThis.inlineCall(js_worker_name, params, timeout_sec?)`

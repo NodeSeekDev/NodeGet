@@ -4,18 +4,28 @@
 
 可用于前端配置存储，节点 Metadata 信息存储等
 
+## 方法列表
+
+| 方法名 | 描述 |
+|-------|------|
+| [kv_set_value](./crud.md#set-key-value) | 写入键值对 |
+| [kv_get_value](./crud.md#get-key-value) | 读取单个键值 |
+| [kv_get_multi_value](./crud.md#get-multi-key-value) | 批量读取键值 |
+| [kv_delete_key](./crud.md#delete-key-value) | 删除键值对 |
+| [kv_get_all_keys](./crud.md#list-all-keys) | 列出所有键名 |
+| [kv_create_namespace](./crud.md#create-namespace) | 创建命名空间 |
+| [kv_list_all_namespace](./crud.md#list-all-namespace) | 列出所有命名空间 |
+
+特殊说明请参考 [special.md](./special.md)。
+
 ## 基本结构体
 
 在数据库中每一行的基本结构体如下:
 
 ```rust
-// 每个 KVStore 代表一个命名空间，包含一个 HashMap 存储键值对
-/// 其中 key 是字符串，value 是任意 JSON 值
 pub struct KVStore {
-    // 命名空间名称，作为唯一标识符
-    namespace: String,
-    // 存储键值对的 HashMap
-    kv: HashMap<String, serde_json::Value>,
+    namespace: String,                    // 命名空间名称，作为唯一标识符
+    kv: HashMap<String, serde_json::Value>, // 存储键值对的 HashMap
 }
 ```
 
@@ -29,18 +39,13 @@ Kv 的权限结构与普通的 Token 权限略有不同:
 pub enum Scope {
     Global,
     AgentUuid(uuid::Uuid),
-
-    // KvNamespace 作用域，通过名称指定
-    // 不建议与写在同一个 Limit 里面，一个 Token 可对应多个 Limit
-    KvNamespace(String),
+    KvNamespace(String), // KvNamespace 作用域，通过名称指定
 }
 ```
 
 ```rust
 pub enum Permission {
-    // 其他
-
-    // Kv 权限
+    // 其他权限...
     Kv(Kv),
 }
 ```
@@ -49,9 +54,9 @@ pub enum Permission {
 pub enum Kv {
     ListAllNamespace,
     ListAllKeys,
-    Read(String),
-    Write(String),
-    Delete(String),
+    Read(String),   // 支持通配符 *
+    Write(String),  // 支持通配符 *
+    Delete(String), // 支持通配符 *
 }
 ```
 
@@ -63,8 +68,7 @@ pub enum Kv {
 
 `ListAllKeys` 可以列出在这一 KvNamespace Scope 下的所有键 (但是不一定可以读取键对应的值)
 
-`Read` / `Write` / `Delete` 的 String，可以拥有通配符，比如 `metadata_*`，表达可以操作 这一 KvNamespace Scope 下的所有以
-`metadata_` 开头的键
+`Read` / `Write` / `Delete` 的 String，可以拥有通配符，比如 `metadata_*`，表达可以操作这一 KvNamespace Scope 下的所有以 `metadata_` 开头的键
 
 `kv_get_multi_value` 支持批量读取，并支持在请求 key 中直接使用后缀通配符（如 `metadata_*`）
 
@@ -74,31 +78,30 @@ pub enum Kv {
 {
   "scopes": [
     {
-      "kv_namespace": "kv_test"
+      "kv_namespace": "kv_test" // 指定 KvNamespace 作用域
     }
   ],
   "permissions": [
     {
-      "kv": "list_all_keys"
+      "kv": "list_all_keys" // 列出所有键
     },
     {
       "kv": {
-        "read": "metadata_*"
+        "read": "metadata_*" // 读取 metadata_ 开头的键
       }
     },
     {
       "kv": {
-        "write": "metadata_*"
+        "write": "metadata_*" // 写入 metadata_ 开头的键
       }
     },
     {
       "kv": {
-        "delete": "metadata_*"
+        "delete": "metadata_*" // 删除 metadata_ 开头的键
       }
     }
   ]
 }
 ```
 
-该权限表示，在 `kv_test` Namespace 的 Kv 下，可以列出所有的 Keys，并 读写删除 以 `metadata_` 开头的键
-
+该权限表示，在 `kv_test` Namespace 的 Kv 下，可以列出所有的 Keys，并读写删除以 `metadata_` 开头的键

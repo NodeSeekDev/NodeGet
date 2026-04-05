@@ -45,7 +45,7 @@ export default {
 const peerIp = request.headers.get("NG-Connecting-IP");
 ```
 
-## 示例
+## 完整示例
 
 脚本：
 

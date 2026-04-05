@@ -12,27 +12,26 @@ Crontab 触发 => 执行任务 => 记录执行结果 => 存储到数据库
 
 调用者可以通过 JsonRpc API 查询和删除这些执行结果记录
 
+## 方法列表
+
+| 方法名 | 描述 |
+|-------|------|
+| [crontab-result_query](./crud.md#query-crontabresult) | 查询执行结果记录 |
+| [crontab-result_delete](./crud.md#delete-crontabresult) | 删除执行结果记录 |
+
 ## 数据结构
 
 CrontabResult 结构如下:
 
 ```json
 {
-  "id": 1,
-  // 记录 ID
-  "cron_id": 5,
-  // 关联的 Crontab ID
-  "cron_name": "cleanup_database",
-  // Crontab 名称
-  "run_time": 1769341269012,
-  // 执行时间（毫秒时间戳）
-  "special_id": null,
-  // 如果是下发 Agent Task 的 Cron，这里为 task_id
-  // 如果是触发 JsWorker 的 Cron，这里为 js_result_id
-  "success": true,
-  // 是否执行成功
-  "message": "Cleaned 100 records"
-  // 执行结果消息
+  "id": 1, // 记录 ID
+  "cron_id": 5, // 关联的 Crontab ID
+  "cron_name": "cleanup_database", // Crontab 名称
+  "run_time": 1769341269012, // 执行时间（毫秒时间戳）
+  "special_id": null, // 如果是下发 Agent Task 的 Cron，这里为 task_id；如果是触发 JsWorker 的 Cron，这里为 js_result_id
+  "success": true, // 是否执行成功
+  "message": "Cleaned 100 records" // 执行结果消息
 }
 ```
 
@@ -58,42 +57,56 @@ pub enum CrontabResultQueryCondition {
 }
 ```
 
-### 解析示例
+下面是一些解析的示例:
 
 ```json
-// 按 ID 查询
 {
-  "id": 1
+    "id": 1
 }
 
-// 按 cron_name 查询
 {
-  "cron_name": "cleanup_database"
+    "cron_name": "cleanup_database"
 }
 
-// 按时间范围查询
 {
-  "run_time_from_to": [
-    1700000000000,
-    1800000000000
-  ]
+    "run_time_from_to": [1700000000000, 1800000000000]
 }
 
-// 仅查询成功的记录
 {
-  "is_success": null
+    "run_time_from": 1700000000000
 }
 
-// 限制返回数量
 {
-  "limit": 100
+    "is_success": null
 }
 
-// 获取最后一条记录
 {
-  "last": null
+    "limit": 100 // 依照 run_time 最新的 100 条
 }
+
+"last" // 对就是一个 `last`，无其他东西
 ```
+
+#### 注意事项
+
+`run_time_from_to` 字段可看作是 `run_time_from` 与 `run_time_to` 的简略写法，下面的两种表达方式是等价的:
+
+```json
+{
+    "run_time_from_to": [1700000000000, 1800000000000]
+}
+
+[
+    {
+        "run_time_from": 1700000000000
+    },
+    {
+        "run_time_to": 1800000000000
+    }
+]
+```
+
+`limit` 为 1 与 `last` 等价，在数据库层面限制查询结果，按照时间倒序排列
 
 多个条件并存时，为 `AND`，即只查询满足所有条件的数据
 
@@ -111,17 +124,17 @@ CrontabResult 的查询和删除权限仅在 `Global` Scope 下有效
   "permissions": [
     {
       "crontab_result": {
-        "read": "cleanup_database"
+        "read": "cleanup_database" // 允许读取指定 cron_name 的结果记录
       }
     },
     {
       "crontab_result": {
-        "read": "backup_*"
+        "read": "backup_*" // 支持通配符
       }
     },
     {
       "crontab_result": {
-        "delete": "cleanup_database"
+        "delete": "cleanup_database" // 允许删除指定 cron_name 的结果记录
       }
     }
   ]

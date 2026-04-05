@@ -4,18 +4,23 @@
 
 ## 方法列表
 
-| 方法名                                           | 描述                               |
-|-----------------------------------------------|----------------------------------|
-| [create](./create.md)                         | 创建脚本并预编译为字节码                     |
-| [read](./read.md)                             | 读取脚本详情                           |
-| [update](./update.md)                         | 更新脚本并重新预编译                       |
-| [delete](./delete.md)                         | 删除脚本                             |
-| [run](./run.md)                               | 异步运行已注册脚本，立即返回 `js_result` 记录 ID |
-| [route](./route.md)                           | HTTP 路由绑定与 `onRoute` 处理说明        |
-| [list_all_js_worker](./list_all_js_worker.md) | 列出当前 Token 可见且存在的脚本名             |
-| [get_rt_pool](./get_rt_pool.md)               | 查看 JS Runtime 池状态                |
-| [script](./script.md)                         | JS 脚本编写规范与示例                     |
-| [injected](./injected.md)                     | JS Runtime 外部注入函数/对象清单           |
+| 方法名 | 描述 |
+|---|---|
+| [create](./crud.md#create-jsworker) | 创建脚本并预编译为字节码 |
+| [read](./crud.md#read-jsworker) | 读取脚本详情 |
+| [update](./crud.md#update-jsworker) | 更新脚本并重新预编译 |
+| [delete](./crud.md#delete-jsworker) | 删除脚本 |
+| [run](./crud.md#run-jsworker) | 异步运行已注册脚本，立即返回 `js_result` 记录 ID |
+| [list_all_js_worker](./crud.md#list-all-jsworker) | 列出当前 Token 可见且存在的脚本名 |
+| [get_rt_pool](./crud.md#get-runtime-pool) | 查看 JS Runtime 池状态 |
+
+## 参考文档
+
+| 文档 | 描述 |
+|---|---|
+| [script](./script.md) | JS 脚本编写规范与示例 |
+| [injected](./injected.md) | JS Runtime 外部注入函数/对象清单 |
+| [route](./route.md) | HTTP 路由绑定与 `onRoute` 处理说明 |
 
 ## 运行模型
 

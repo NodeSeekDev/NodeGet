@@ -2,6 +2,16 @@
 
 Task 是本项目的重要功能之一，也可以称为 `任务` 等
 
+## 方法列表
+
+| 方法名 | 描述 |
+|-------|------|
+| [task_create_task](./crud.md#create-task) | 创建并下发任务给 Agent |
+| [task_query_task](./crud.md#query-task) | 查询任务执行记录 |
+| [task_delete_task](./crud.md#delete-task) | 删除任务执行记录 |
+
+Agent 端实现请参考 [agent.md](./agent.md)。
+
 ## 基本流程
 
 Agent 可以接收来自 Server 的 Task (任务)，并可以为 Server 配置简单的权限
@@ -60,57 +70,58 @@ pub struct HttpRequestTask {
 
 ```json
 {
-  "ping": "1.1.1.1"
+  "ping": "1.1.1.1" // 目标地址，可能为域名
 }
 
 {
-  "tcp_ping": "1.1.1.1:80"
+  "tcp_ping": "1.1.1.1:80" // 目标地址:端口
 }
 
 {
-  "http_ping": "https://1.1.1.1/"
+  "http_ping": "https://1.1.1.1/" // 完整 URL
 }
 
 {
-  "http_request": {
-    "url": "https://example.com",
-    "method": "POST",
-    "headers": {
+  "http_request": { // 通用 HTTP 请求
+    "url": "https://example.com", // 完整 URL
+    "method": "POST", // HTTP 方法
+    "headers": { // 请求头
       "content-type": "application/json"
     },
-    "body": "{\"hello\":\"world\"}",
-    "ip": "ipv4 auto"
+    "body": "{\"hello\":\"world\"}", // 与 body_base64 互斥
+    "ip": "ipv4 auto" // 指定出口 IP，可选
   }
 }
 
 {
-  "web_shell": {
-    "url": "wss://example.com/auto_gen",
-    "terminal_id": "4c8d1cba-244e-4baf-9b65-c881f86ca60a"
+  "web_shell": { // WebShell 任务
+    "url": "wss://example.com/auto_gen", // WebSocket URL
+    "terminal_id": "4c8d1cba-244e-4baf-9b65-c881f86ca60a" // 随机 UUID
   }
 }
 
 {
-  "execute": {
-    "cmd": "ls",
-    "args": [
+  "execute": { // 结构化命令执行
+    "cmd": "ls", // 命令名，不能为空字符串
+    "args": [ // 参数列表
       "-1",
       "tmp"
     ]
   }
 }
 
-"read_config"
+"read_config" // 读取本地 config.toml
 
 {
-  "edit_config": "log_level = \"info\"\\nagent_uuid = \"auto_gen\""
+  "edit_config": "log_level = \"info\"\\nagent_uuid = \"auto_gen\"" // 完整 TOML 字符串
 }
 
 "ip" // 对就是一个 `ip`，无其他东西
 ```
 
-`execute` 不再提供字符串拼接 shell 的直接接口。  
-如果你确实需要 shell 语法，请显式调用 shell 程序并传参数，例如：
+### 注意事项
+
+`execute` 不再提供字符串拼接 shell 的直接接口。如果你确实需要 shell 语法，请显式调用 shell 程序并传参数，例如：
 
 ```json
 {
@@ -124,7 +135,9 @@ pub struct HttpRequestTask {
 }
 ```
 
-`http_request` 中 `body` 与 `body_base64` 互斥，最多只能出现一个字段。
+`execute.cmd` 不能为空字符串
+
+`http_request` 中 `body` 与 `body_base64` 互斥，最多只能出现一个字段
 
 ## 任务回报
 
@@ -160,43 +173,46 @@ pub struct HttpRequestTaskResult {
 
 ```json
 {
-  "ping": 114.51
+  "ping": 114.51 // 延迟，单位 ms
 }
 
 {
-  "execute": "WE LOVE OPEN-SOURCE"
-  // 在执行复杂命令时还有其他的部分，不过都包含于一个 String 内
+  "execute": "WE LOVE OPEN-SOURCE" // 命令输出，包含于一个 String 内
 }
 
 {
-  "http_request": {
-    "status": 200,
-    "headers": [
+  "http_request": { // HTTP 请求结果
+    "status": 200, // HTTP 状态码
+    "headers": [ // 数组格式，允许重复 key
       {
         "content-type": "application/json"
       }
     ],
-    "body": "{\"hello\":\"world\"}"
+    "body": "{\"hello\":\"world\"}" // 与 body_base64 互斥
   }
 }
 
 {
-  "read_config": "log_level = \"info\"\\nagent_uuid = \"auto_gen\""
+  "read_config": "log_level = \"info\"\\nagent_uuid = \"auto_gen\"" // config.toml 原文
 }
 
 {
-  "edit_config": true
+  "edit_config": true // 是否成功写入
 }
 
 {
-  "ip": [
+  "ip": [ // V4 V6 IP
     "1.1.1.1",
     "2606:4700:4700::1111"
   ]
 }
 ```
 
-若响应体不是 UTF-8 文本，则会返回 `body_base64`，并且不会返回 `body`。
+### 注意事项
+
+若响应体不是 UTF-8 文本，则会返回 `body_base64`，并且不会返回 `body`
+
+在同一个 Task 中，`TaskEventResult` 的 enum 变体需要与 `TaskEventType` 匹配
 
 ## 查询条件
 
@@ -225,6 +241,65 @@ pub enum TaskQueryCondition {
 }
 ```
 
-解析方案与 Monitoring 的 `QueryCondition` 类似，不做示例
+下面是一些解析的示例:
+
+```json
+{
+    "task_id": 42 // 按数据库 ID 查询
+}
+
+{
+    "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd" // 按 Agent UUID 查询
+}
+
+{
+    "timestamp_from_to": [1769344168646, 1769344169646] // 时间范围
+}
+
+{
+    "timestamp_from": 1769344168646 // 起始时间
+}
+
+{
+    "limit": 1000 // 依照 timestamp 最新的 1000 条
+}
+
+"is_success" // 仅查找成功的任务
+
+"is_failure" // 仅查找失败的任务
+
+"is_running" // 仅查找运行中的任务
+
+{
+    "type": "ping" // 按任务类型查询
+}
+
+{
+    "cron_source": "daily_check" // 按 cron 名称查询
+}
+
+"last" // 对就是一个 `last`，无其他东西
+```
+
+### 注意事项
+
+`timestamp_from_to` 字段可看作是 `timestamp_from` 与 `timestamp_to` 的简略写法，下面的两种表达方式是等价的:
+
+```json
+{
+    "timestamp_from_to": [1769344168646, 1769344169646]
+}
+
+[
+    {
+        "timestamp_from": 1769344168646
+    },
+    {
+        "timestamp_to": 1769344169646
+    }
+]
+```
+
+`limit` 为 1 与 `last` 等价，在数据库层面限制查询结果，按照时间倒序排列
 
 多个条件并存时，为 `AND`，即只查询满足所有条件的数据

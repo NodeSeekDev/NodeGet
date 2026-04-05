@@ -1,0 +1,326 @@
+# NodeGet CRUD
+
+## Hello
+
+测试服务是否正常运行，返回固定字符串。
+
+### 方法
+
+调用方法名为 `nodeget-server_hello`，无需任何参数。
+
+### 权限要求
+
+该方法不需要鉴权，可直接调用。
+
+### 返回值
+
+返回固定字符串 `"NodeGet Server Is Running!"`，可用于判断服务端是否在线。
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "nodeget-server_hello",
+  "params": [], // 无参数
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": "NodeGet Server Is Running!",
+  "id": 1
+}
+```
+
+## Version
+
+获取服务端的版本、构建、编译器等详细信息。
+
+### 方法
+
+调用方法名为 `nodeget-server_version`，无需任何参数。
+
+### 权限要求
+
+该方法不需要鉴权，可直接调用。
+
+### 返回值
+
+返回 `NodeGetVersion` 结构体，包含完整的编译时信息，所有字段均为字符串类型，详细说明参考 [NodeGet 总览](./index.md)。
+
+```json
+{
+  "binary_type": "Server",                    // 二进制类型
+  "build_time": "2026-02-08T10:44:02.848471700Z", // 构建时间
+  "cargo_target_triple": "x86_64-pc-windows-msvc", // 编译目标
+  "cargo_version": "0.0.1",                   // Cargo 版本号
+  "git_branch": "main",                       // Git 分支
+  "git_commit_date": "2026-02-08T07:25:09.000000000Z", // 提交日期
+  "git_commit_message": "Feat: ...",           // 提交信息
+  "git_commit_sha": "73d9589",                // 提交 SHA
+  "rustc_channel": "nightly",                 // Rust 编译器通道
+  "rustc_commit_date": "2025-12-30",          // Rust 编译器提交日期
+  "rustc_commit_hash": "0e8999942552691afc20495af6227eca8ab0af05", // Rust 编译器提交 Hash
+  "rustc_llvm_version": "21.1",               // LLVM 版本
+  "rustc_version": "1.94.0-nightly"           // Rust 版本
+}
+```
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "nodeget-server_version",
+  "params": [], // 无参数
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "binary_type": "Server",
+    "build_time": "2026-02-08T10:44:02.848471700Z",
+    "cargo_target_triple": "x86_64-pc-windows-msvc",
+    "cargo_version": "0.0.1",
+    "git_branch": "main",
+    "git_commit_date": "2026-02-08T07:25:09.000000000Z",
+    "git_commit_message": "Feat: ...",
+    "git_commit_sha": "73d9589",
+    "rustc_channel": "nightly",
+    "rustc_commit_date": "2025-12-30",
+    "rustc_commit_hash": "0e8999942552691afc20495af6227eca8ab0af05",
+    "rustc_llvm_version": "21.1",
+    "rustc_version": "1.94.0-nightly"
+  },
+  "id": 1
+}
+```
+
+## UUID
+
+获取当前 Server 的 UUID。
+
+### 方法
+
+调用方法名为 `nodeget-server_uuid`，无需任何参数。
+
+### 权限要求
+
+该方法不需要鉴权，可直接调用。
+
+### 返回值
+
+返回当前服务端的 UUID 字符串，该 UUID 在配置文件中通过 `server_uuid` 字段设定。
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "nodeget-server_uuid",
+  "params": [], // 无参数
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": "e8583352-39e8-5a5b-b66c-e450689088fd", // Server UUID
+  "id": 1
+}
+```
+
+## List All Agent UUID
+
+获取 Server 中所有 Agent 的 UUID 列表。
+
+### 方法
+
+调用方法名为 `nodeget-server_list_all_agent_uuid`，需要提供以下参数：
+
+```json
+{
+  "token": "demo_token" // Token 字符串
+}
+```
+
+### 权限要求
+
+- Permission: `NodeGet::ListAllAgentUuid`
+- Scope 行为:
+    - `Global` Scope 下拥有该权限: 返回系统内所有 Agent UUID
+    - `AgentUuid(xxx)` Scope 下拥有该权限: 可参与返回 `xxx`
+    - 最终返回结果会再过滤为"当前 token 在该 `AgentUuid` 下至少有一种可操作权限（任一非 `NodeGet::ListAllAgentUuid` 权限）"的 UUID
+
+### 返回值
+
+返回包含 `uuids` 字段的对象，其值为 `Vec<Uuid>` 数组。
+
+该方法会从以下三个表中获取所有不同的 Agent UUID:
+
+1. `static_monitoring` - 静态监控数据表
+2. `dynamic_monitoring` - 动态监控数据表
+3. `task` - 任务数据表
+
+返回的 UUID 列表是去重后按字母顺序排序的。
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "nodeget-server_list_all_agent_uuid",
+  "params": {
+    "token": "demo_token"
+  },
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "uuids": [
+      "e8583352-39e8-5a5b-b66c-e450689088fd",
+      "a1b2c3d4-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+    ]
+  },
+  "id": 1
+}
+```
+
+## Read Config
+
+读取当前 Server 使用的配置文件原文（`config.toml` 文本）。
+
+### 方法
+
+调用方法名为 `nodeget-server_read_config`，需要提供以下参数：
+
+```json
+{
+  "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET" // SuperToken 字符串
+}
+```
+
+### 权限要求
+
+该方法仅允许 **SuperToken** 调用。
+
+`token` 支持以下格式之一:
+
+- `token_key:token_secret`
+- `username|password`
+
+### 返回值
+
+返回配置文件在磁盘上的原始文本内容，为 String 类型。
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "nodeget-server_read_config",
+  "params": {
+    "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET"
+  },
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": "log_level = \"info\"\\nws_listener = \"0.0.0.0:6000\"\\n...", // 配置文件原始文本
+  "id": 1
+}
+```
+
+## Edit Config
+
+写入新的 Server 配置文本，并触发服务端配置热重载。
+
+### 方法
+
+调用方法名为 `nodeget-server_edit_config`，需要提供以下参数：
+
+```json
+{
+  "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET", // SuperToken 字符串
+  "config_string": "log_level = \"info\"\\n..."   // 完整的 TOML 配置文本
+}
+```
+
+### 权限要求
+
+该方法仅允许 **SuperToken** 调用。
+
+`token` 支持以下格式之一:
+
+- `token_key:token_secret`
+- `username|password`
+
+### 返回值
+
+返回 `bool` 类型，`true` 表示配置写入成功并已触发热重载。
+
+行为说明：
+
+- 服务端会先校验 `config_string` 是否是可解析的 Server TOML 配置
+- 校验通过后写入配置文件
+- 写入成功后触发配置重载流程
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "nodeget-server_edit_config",
+  "params": {
+    "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET",
+    "config_string": "log_level = \"info\"\\nserver_uuid = \"auto_gen\"\\nws_listener = \"0.0.0.0:6000\"\\njsonrpc_max_connections = 100\\n\\n[database]\\ndatabase_url = \"sqlite://data/server.db?mode=rwc\""
+  },
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": true, // 写入成功
+  "id": 1
+}
+```

@@ -1,3 +1,7 @@
+---
+outline: deep
+---
+
 # 错误处理 (Error Handling)
 
 NodeGet 项目的 API 使用统一的错误处理机制，确保所有 RPC 调用都能提供一致的错误响应格式。
