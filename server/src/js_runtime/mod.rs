@@ -36,7 +36,8 @@ pub(crate) fn init_js_runtime_globals(ctx: &Ctx<'_>) -> Result<(), Error> {
     ctx.eval::<(), _>(
         r#"
         globalThis.nodeget = async (json) => {
-            const raw = await globalThis.__nodeget_rpc_raw(json);
+            const input = typeof json === 'string' ? json : JSON.stringify(json);
+            const raw = await globalThis.__nodeget_rpc_raw(input);
             return JSON.parse(raw);
         };
         globalThis.__nodeget_inline_call = async (name, paramsJson, timeoutSec, caller) => {
