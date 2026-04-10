@@ -25,12 +25,26 @@ pub(crate) fn init_js_runtime_globals(ctx: &Ctx<'_>) -> Result<(), Error> {
     llrt_util::init(ctx)?;
     llrt_timers::init(ctx)?;
     let global = ctx.globals();
-    global.set("nodeget", Func::from(Async(nodeget::js_nodeget)))?;
+    // Register raw Rust functions under internal names (return JSON strings)
+    global.set("__nodeget_rpc_raw", Func::from(Async(nodeget::js_nodeget)))?;
     global.set(
         "__nodeget_inline_call_raw",
         Func::from(Async(inline_call::js_inline_call)),
     )?;
     global.set("uuid", Func::from(|| Uuid::new_v4().to_string()))?;
+    // Wrap raw functions to return parsed JS objects instead of JSON strings
+    ctx.eval::<(), _>(
+        r#"
+        globalThis.nodeget = async (json) => {
+            const raw = await globalThis.__nodeget_rpc_raw(json);
+            return JSON.parse(raw);
+        };
+        globalThis.__nodeget_inline_call = async (name, paramsJson, timeoutSec, caller) => {
+            const raw = await globalThis.__nodeget_inline_call_raw(name, paramsJson, timeoutSec, caller);
+            return JSON.parse(raw);
+        };
+        "#,
+    )?;
     Ok(())
 }
 
@@ -249,17 +263,12 @@ pub fn js_runner(
                             paramsJson = "null";
                         }
 
-                        const raw = await globalThis.__nodeget_inline_call_raw(
+                        return await globalThis.__nodeget_inline_call(
                             workerName,
                             paramsJson,
                             timeoutValue,
                             globalThis.__nodeget_current_script_name ?? null
                         );
-                        try {
-                            return JSON.parse(raw);
-                        } catch (e) {
-                            throw new Error(`inlineCall returned invalid JSON: ${e}`);
-                        }
                     };
                     globalThis.inlineCall = inlineCall;
                     const runtimeCtx = {
@@ -473,17 +482,12 @@ pub fn js_runner_source_mode(
                             paramsJson = "null";
                         }
 
-                        const raw = await globalThis.__nodeget_inline_call_raw(
+                        return await globalThis.__nodeget_inline_call(
                             workerName,
                             paramsJson,
                             timeoutValue,
                             globalThis.__nodeget_current_script_name ?? null
                         );
-                        try {
-                            return JSON.parse(raw);
-                        } catch (e) {
-                            throw new Error(`inlineCall returned invalid JSON: ${e}`);
-                        }
                     };
                     globalThis.inlineCall = inlineCall;
                     const runtimeCtx = {

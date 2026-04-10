@@ -495,17 +495,12 @@ async fn execute_on_worker(
                         paramsJson = "null";
                     }
 
-                    const raw = await globalThis.__nodeget_inline_call_raw(
+                    return await globalThis.__nodeget_inline_call(
                         workerName,
                         paramsJson,
                         timeoutValue,
                         globalThis.__nodeget_current_script_name ?? null
                     );
-                    try {
-                        return JSON.parse(raw);
-                    } catch (e) {
-                        throw new Error(`inlineCall returned invalid JSON: ${e}`);
-                    }
                 };
                 globalThis.inlineCall = inlineCall;
                 const runtimeCtx = {
