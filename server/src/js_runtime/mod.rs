@@ -49,7 +49,7 @@ pub(crate) fn init_js_runtime_globals(ctx: &Ctx<'_>) -> Result<(), Error> {
         "__nodeget_inline_call_raw",
         Func::from(Async(inline_call::js_inline_call)),
     )?;
-    global.set("randomUuid", Func::from(|| Uuid::new_v4().to_string()))?;
+    global.set("randomUUID", Func::from(|| Uuid::new_v4().to_string()))?;
     // Wrap raw functions to return parsed JS objects instead of JSON strings
     ctx.eval::<(), _>(
         r#"
