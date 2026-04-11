@@ -22,8 +22,39 @@ pub struct ServerConfig {
     // Unix Socket 路径（仅非 Windows 平台，默认 /var/lib/nodeget.sock）
     pub unix_socket_path: Option<String>,
 
+    // 日志配置（可选，不填则使用默认值）
+    pub logging: Option<LoggingConfig>,
+
     // 数据库配置
     pub database: DatabaseConfig,
+}
+
+/// 日志配置
+///
+/// `log_filter` / `json_log_filter` 的语法与 `RUST_LOG` 环境变量一致，
+/// 例如 `"info,rpc=debug,db=warn"`。
+///
+/// 虚拟 target `db` 会自动展开为
+/// `sea_orm=<level>,sea_orm_migration=<level>,sqlx=<level>`。
+///
+/// 如果设置了 `RUST_LOG` 环境变量，它会覆盖 `log_filter`。
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LoggingConfig {
+    /// 控制台日志过滤器，语法同 RUST_LOG，默认 "info"
+    pub log_filter: Option<String>,
+
+    /// JSON 日志输出文件路径（可选，不设置则不输出 JSON 日志）
+    pub json_log_file: Option<String>,
+
+    /// JSON 日志过滤器，语法同 RUST_LOG（可选，默认与 log_filter 相同）
+    pub json_log_filter: Option<String>,
+
+    /// 内存日志缓冲区容量（条数），默认 500
+    pub memory_log_capacity: Option<usize>,
+
+    /// 内存日志过滤器，语法同 RUST_LOG（可选，默认与 log_filter 相同）
+    /// 通过 nodeget-server_log RPC 方法可查询缓冲区内容
+    pub memory_log_filter: Option<String>,
 }
 
 // 数据库配置结构体，定义数据库连接参数

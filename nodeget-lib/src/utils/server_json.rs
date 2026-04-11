@@ -1,5 +1,5 @@
 use crate::error::{NodegetError, Result};
-use log::error;
+use tracing::error;
 use serde::Serialize;
 use serde_json::value::RawValue;
 use serde_json::{Map, Value};

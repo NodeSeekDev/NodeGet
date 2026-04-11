@@ -69,7 +69,7 @@ async fn main() {
         };
 
     // Log init
-    logging::init();
+    logging::init(config.logging.as_ref());
 
     info!(target: "server", config = ?config, "Starting nodeget-server");
 

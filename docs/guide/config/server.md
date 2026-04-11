@@ -1,20 +1,11 @@
 # Server 配置
 
 ```toml
-# 日志等级，可选 trace / debug / info / warn / error，默认 info
-# 如果你正在测试或遇到问题，请至少选择 debug
-log_level = "debug"
-
 # WebSocket 监听地址，同时也会监听 Http 服务
 ws_listener = "0.0.0.0:3000"
 
 # JSON-RPC 最大连接数，默认 100
 jsonrpc_max_connections = 100
-
-# JSON-RPC 单次请求耗时日志级别（call / batch / notification）
-# 可选 trace / debug / info / warn / error，默认 trace
-# 该项独立于 log_level，仅控制 RPC 耗时日志
-jsonrpc_timing_log_level = "trace"
 
 # 是否启用 Unix Socket（仅非 Windows 平台）
 # 启用后会额外监听 unix_socket_path 对应的 Axum 主路由
@@ -28,6 +19,31 @@ unix_socket_path = "/var/lib/nodeget.sock"
 # 如果不是 auto_gen，请自行确保 Uuid 唯一，否则可能导致数据混乱或 UB
 server_uuid = "auto_gen"
 
+# 日志配置（可选，整个 [logging] 段不填则使用默认值）
+[logging]
+
+# 控制台日志过滤器，语法同 RUST_LOG 环境变量，默认 "info"
+# 支持按模块指定级别，例如: "info,rpc=debug,db=warn"
+# 可用的 target: server, rpc, db, crontab, js_runtime, terminal
+# 其中 "db" 是虚拟 target，会自动展开为 sea_orm / sea_orm_migration / sqlx
+# 如果设置了 RUST_LOG 环境变量，它会覆盖此项
+log_filter = "info"
+
+# JSON 格式日志输出文件路径（可选，不设置则不输出 JSON 日志）
+# 适用于日志采集（如 ELK、Loki 等）
+json_log_file = "/var/log/nodeget/server.json"
+
+# JSON 日志过滤器，语法同 RUST_LOG（可选，默认与 log_filter 相同）
+# 可独立控制写入文件的日志级别，例如文件记录更详细的日志
+json_log_filter = "debug,rpc=trace,db=info"
+
+# 内存日志缓冲区容量（条数），默认 500
+# 通过 nodeget-server_log RPC 方法可查询缓冲区内容（需要 SuperToken）
+memory_log_capacity = 500
+
+# 内存日志过滤器，语法同 RUST_LOG（可选，默认与 log_filter 相同）
+memory_log_filter = "info"
+
 # 数据库配置
 [database]
 
@@ -37,11 +53,6 @@ server_uuid = "auto_gen"
 # sqlite 示例: sqlite://nodeget.db?mode=rwc
 # pgsql 示例: postgres://user:pass@host:5432/nodeget
 database_url = "postgres://user:pass@host:5432/nodeget"
-
-# SQLx 日志级别
-# 可选 trace / debug / info / warn / error，默认 info
-# 若此项低于 log_level，则不会打印 SQL 执行日志
-sqlx_log_level = "info"
 
 # 连接超时，单位毫秒，默认 3000
 connect_timeout_ms = 3000

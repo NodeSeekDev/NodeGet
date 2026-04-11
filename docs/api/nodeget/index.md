@@ -15,6 +15,7 @@ NodeGet 是本项目的基础服务接口模块，提供服务端状态查询、
 | [read_config](./crud.md#read-config)                 | 读取服务端配置文件原文        | SuperToken                  |
 | [edit_config](./crud.md#edit-config)                 | 写入并触发服务端配置热重载      | SuperToken                  |
 | [database_storage](./crud.md#database-storage)       | 查询数据库各表存储占用        | SuperToken                  |
+| [log](./crud.md#log)                                 | 查询内存日志缓冲区           | SuperToken                  |
 
 ## 版本信息结构体
 
@@ -101,11 +102,36 @@ NodeGet 是本项目的基础服务接口模块，提供服务端状态查询、
 - **PostgreSQL**: 使用 `pg_total_relation_size()` 获取各表总大小（含索引和 TOAST 数据）
 - **SQLite**: 使用 `dbstat` 虚拟表查询各表占用的页面总大小
 
+## 内存日志结构体
+
+调用 `nodeget-server_log` 返回一个 JSON 数组，每个元素的结构如下:
+
+```json
+{
+    "timestamp": "2026-04-11T12:00:00.000+08:00", // ISO 8601 时间戳（含时区）
+    "level": "INFO",                               // 日志级别: TRACE / DEBUG / INFO / WARN / ERROR
+    "target": "rpc",                               // 日志 target（数据库相关统一为 "db"）
+    "message": "request received",                 // 日志消息
+    "fields": {                                    // 结构化字段（可为空对象）
+        "token_key": "abc123",
+        "response_len": "42"
+    },
+    "spans": [                                     // span 上下文（可为空数组）
+        {
+            "name": "kv::get_value",
+            "fields": "namespace=test key=foo"
+        }
+    ]
+}
+```
+
+内存日志缓冲区为固定容量的环形缓冲区，满时自动淘汰最旧的条目。容量和过滤级别可在 `[logging]` 配置段中通过 `memory_log_capacity` 和 `memory_log_filter` 设置，详见 [Server 配置](../config/server.md)
+
 ## 注意事项
 
 `hello` / `version` / `uuid` 三个方法不需要任何鉴权，可直接调用
 
 `list_all_agent_uuid` 需要 Token 拥有 `NodeGet::ListAllAgentUuid` 权限，返回结果受 Scope 限制
 
-`read_config` / `edit_config` / `database_storage` 仅允许 **SuperToken** 调用，`token` 支持 `token_key:token_secret` 或 `username|password`
+`read_config` / `edit_config` / `database_storage` / `log` 仅允许 **SuperToken** 调用，`token` 支持 `token_key:token_secret` 或 `username|password`
 两种格式

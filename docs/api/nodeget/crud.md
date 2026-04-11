@@ -400,3 +400,96 @@
   "id": 1
 }
 ```
+
+## Log
+
+查询服务端内存日志缓冲区中的所有日志条目。
+
+### 方法
+
+调用方法名为 `nodeget-server_log`，需要提供以下参数：
+
+```json
+{
+  "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET" // SuperToken 字符串
+}
+```
+
+### 权限要求
+
+该方法仅允许 **SuperToken** 调用。
+
+`token` 支持以下格式之一:
+
+- `token_key:token_secret`
+- `username|password`
+
+### 返回值
+
+返回一个 JSON 数组，每个元素为一条日志记录，包含以下字段:
+
+- `timestamp`: ISO 8601 格式的时间戳（含时区）
+- `level`: 日志级别（`TRACE` / `DEBUG` / `INFO` / `WARN` / `ERROR`）
+- `target`: 日志 target（数据库相关日志统一重映射为 `"db"`）
+- `message`: 日志消息文本
+- `fields`: 结构化字段对象（无额外字段时为空对象 `{}`）
+- `spans`: span 上下文数组（无 span 时为空数组 `[]`）
+
+缓冲区为固定容量的环形缓冲区，满时自动淘汰最旧的条目。返回顺序为时间正序（最旧在前）。
+
+容量和过滤级别可在 `config.toml` 的 `[logging]` 段中通过 `memory_log_capacity` 和 `memory_log_filter` 配置。
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "nodeget-server_log",
+  "params": {
+    "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET"
+  },
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": [
+    {
+      "timestamp": "2026-04-11T12:00:00.000+08:00",
+      "level": "INFO",
+      "target": "server",
+      "message": "Starting nodeget-server",
+      "fields": {},
+      "spans": []
+    },
+    {
+      "timestamp": "2026-04-11T12:00:01.234+08:00",
+      "level": "INFO",
+      "target": "rpc",
+      "message": "request received",
+      "fields": {},
+      "spans": [
+        {
+          "name": "kv::get_value",
+          "fields": "token_key=demo namespace=test key=foo"
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-04-11T12:00:01.240+08:00",
+      "level": "DEBUG",
+      "target": "db",
+      "message": "SELECT \"kv\".\"key\", \"kv\".\"value\" FROM \"kv\" WHERE \"kv\".\"namespace\" = $1 AND \"kv\".\"key\" = $2",
+      "fields": {},
+      "spans": []
+    }
+  ],
+  "id": 1
+}
+```

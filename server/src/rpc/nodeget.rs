@@ -33,6 +33,9 @@ pub trait Rpc {
 
     #[method(name = "database_storage")]
     async fn database_storage(&self, token: String) -> RpcResult<Box<RawValue>>;
+
+    #[method(name = "log")]
+    async fn log(&self, token: String) -> RpcResult<Box<RawValue>>;
 }
 
 #[derive(Clone)]
@@ -121,6 +124,12 @@ impl RpcServer for NodegetServerRpcImpl {
         let (tk, un) = token_identity(&token);
         let span = tracing::info_span!(target: "rpc", "nodeget-server::database_storage", token_key = tk, username = un);
         async { rpc_exec!(database_storage::database_storage(token).await) }.instrument(span).await
+    }
+
+    async fn log(&self, token: String) -> RpcResult<Box<RawValue>> {
+        let (tk, un) = token_identity(&token);
+        let span = tracing::info_span!(target: "rpc", "nodeget-server::log", token_key = tk, username = un);
+        async { rpc_exec!(log_query::query_logs(token).await) }.instrument(span).await
     }
 }
 
@@ -590,5 +599,52 @@ mod database_storage {
         }
 
         Ok(result)
+    }
+}
+
+mod log_query {
+    use crate::logging;
+    use crate::token::super_token::check_super_token;
+    use jsonrpsee::core::RpcResult;
+    use nodeget_lib::error::NodegetError;
+    use nodeget_lib::permission::token_auth::TokenOrAuth;
+    use serde_json::value::RawValue;
+
+    pub async fn query_logs(token: String) -> RpcResult<Box<RawValue>> {
+        let process_logic = async {
+            let token_or_auth = TokenOrAuth::from_full_token(&token)
+                .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
+
+            let is_super = check_super_token(&token_or_auth)
+                .await
+                .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
+
+            if !is_super {
+                return Err(NodegetError::PermissionDenied(
+                    "Permission Denied: Super token required".to_owned(),
+                )
+                .into());
+            }
+
+            let logs = logging::get_memory_logs();
+
+            let json_str = serde_json::to_string(&logs)
+                .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
+
+            RawValue::from_string(json_str)
+                .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        };
+
+        match process_logic.await {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                let nodeget_err = nodeget_lib::error::anyhow_to_nodeget_error(&e);
+                Err(jsonrpsee::types::ErrorObject::owned(
+                    nodeget_err.error_code() as i32,
+                    format!("{nodeget_err}"),
+                    None::<()>,
+                ))
+            }
+        }
     }
 }

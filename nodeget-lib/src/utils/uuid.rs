@@ -1,5 +1,5 @@
 use crate::error::Result;
-use log::{error, warn};
+use tracing::{error, warn};
 use uuid::Uuid;
 
 /// 获取设备稳定 UUID，Windows / macOS / Linux 下的唯一 UUID 生成器，在同一系统下不变
