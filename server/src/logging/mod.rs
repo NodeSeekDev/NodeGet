@@ -16,16 +16,13 @@ use tracing_subscriber::{
 
 /// 初始化 tracing 日志系统
 ///
-/// 临时兼容方案：通过 tracing-log bridge 捕获所有 `log::` 宏调用，
-/// 统一由 tracing-subscriber 输出。后续大修时再将源码迁移到 tracing 宏。
-///
-/// 当前为调试阶段，所有级别硬编码为 trace。
 /// 数据库日志（SeaORM / SQLx）在输出中统一显示为 `target: "db"`。
+/// 在 `RUST_LOG` 中也可以直接使用 `db=<level>` 来控制数据库日志级别，
+/// 会自动展开为 `sea_orm=<level>,sea_orm_migration=<level>,sqlx=<level>`。
 pub fn init() {
-    // 构建 EnvFilter: 全局 trace
-    let filter_str = "trace";
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter_str));
+    let raw = std::env::var("RUST_LOG").unwrap_or_else(|_| "trace".to_string());
+    let expanded = expand_virtual_targets(&raw);
+    let env_filter = EnvFilter::new(&expanded);
 
     let console_layer = fmt::layer()
         .with_target(true)
@@ -37,6 +34,39 @@ pub fn init() {
         .with(env_filter)
         .with(console_layer)
         .init();
+}
+
+/// Expands virtual target aliases in an `EnvFilter`-compatible string.
+///
+/// Currently supported aliases:
+/// - `db=<level>` → `sea_orm=<level>,sea_orm_migration=<level>,sqlx=<level>`
+///
+/// Directives that are not aliases are passed through unchanged.
+fn expand_virtual_targets(filter: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    for directive in filter.split(',') {
+        let directive = directive.trim();
+        if directive.is_empty() {
+            continue;
+        }
+
+        // Check if this directive is `db=<level>` (or `db` with no level)
+        if let Some(level) = directive.strip_prefix("db=") {
+            parts.push(format!("sea_orm={level}"));
+            parts.push(format!("sea_orm_migration={level}"));
+            parts.push(format!("sqlx={level}"));
+        } else if directive == "db" {
+            // bare `db` without level → expand to bare targets (uses default)
+            parts.push("sea_orm".to_string());
+            parts.push("sea_orm_migration".to_string());
+            parts.push("sqlx".to_string());
+        } else {
+            parts.push(directive.to_string());
+        }
+    }
+
+    parts.join(",")
 }
 
 // ---------------------------------------------------------------------------
@@ -150,4 +180,4 @@ fn level_ansi(level: tracing::Level) -> (&'static str, &'static str) {
     }
 }
 
-// (no more helpers needed — levels are hardcoded to trace for debugging)
+// Virtual target `db` is expanded to real targets in `expand_virtual_targets()`.
