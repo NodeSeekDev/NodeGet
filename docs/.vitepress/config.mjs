@@ -20,6 +20,5 @@ export default defineConfig({
             lang: 'en',
             themeConfig: themeEnConfig
         }
-    },
-    themeConfig: themeZhConfig
+    }
 })
