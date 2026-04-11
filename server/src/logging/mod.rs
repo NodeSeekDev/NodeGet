@@ -22,6 +22,9 @@ use tracing_subscriber::{
 pub fn init() {
     let raw = std::env::var("RUST_LOG").unwrap_or_else(|_| "trace".to_string());
     let expanded = expand_virtual_targets(&raw);
+
+    eprintln!("[logging] RUST_LOG raw={raw:?} expanded={expanded:?}");
+
     let env_filter = EnvFilter::new(&expanded);
 
     let console_layer = fmt::layer()
@@ -137,10 +140,17 @@ where
         }
 
         // ── Target (with remapping) ─────────────────────────────────
-        let target = remap_target(event.metadata().target());
+        let raw_target = event.metadata().target();
+        let target = remap_target(raw_target);
         if writer.has_ansi_escapes() {
-            // dim style for target
-            write!(writer, "\x1b[2m{target}\x1b[0m: ")?;
+            if target != raw_target {
+                // DEBUG: show original target in parentheses
+                write!(writer, "\x1b[2m{target}({raw_target})\x1b[0m: ")?;
+            } else {
+                write!(writer, "\x1b[2m{target}\x1b[0m: ")?;
+            }
+        } else if target != raw_target {
+            write!(writer, "{target}({raw_target}): ")?;
         } else {
             write!(writer, "{target}: ")?;
         }
