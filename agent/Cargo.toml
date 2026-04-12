@@ -32,6 +32,7 @@ base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
 
 # ICMP Ping
 surge-ping = "0.8.4"
+socket2 = { version = "0.6.1", features = ["all"] }
 
 # Random Number Generation
 rand = { version = "0.10.0", default-features = false, features = ["std", "thread_rng"] }
@@ -45,9 +46,11 @@ sysinfo = { version = "0.37.2", default-features = false, features = ["multithre
 ## Nvidia GPU Support
 nvml-wrapper = "0.11.0"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-# Raw bindings to libc functions (for reading information)
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+# Raw bindings to libc functions
 libc = "0.2.175"
+
+[target.'cfg(target_os = "linux")'.dependencies]
 # Virtualization detection
 heim-virt = "0.1.0-alpha.1"
 
