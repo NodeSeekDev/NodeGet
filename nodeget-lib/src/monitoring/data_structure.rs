@@ -1,5 +1,7 @@
 // 若数据量字段中未注明单位，则以字节 (Bytes) 为单位
 
+use sha2::{Digest, Sha256};
+
 // 静态监控数据结构体，包含不会随时间变化的硬件信息
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct StaticMonitoringData {
@@ -7,6 +9,8 @@ pub struct StaticMonitoringData {
     pub uuid: String,
     // 时间戳（毫秒）
     pub time: u64,
+    // 数据内容的 SHA-256 哈希（前 16 字节原始二进制），用于去重
+    pub data_hash: Vec<u8>,
 
     // CPU 静态信息
     pub cpu: StaticCPUData,
@@ -14,6 +18,46 @@ pub struct StaticMonitoringData {
     pub system: StaticSystemData,
     // GPU 静态信息列表
     pub gpu: Vec<StaticGpuData>,
+}
+
+impl StaticMonitoringData {
+    /// 根据 cpu / system / gpu 三个字段的内容计算确定性 SHA-256 哈希。
+    ///
+    /// 内部将三个字段各自序列化为 `serde_json::Value`，再递归排序所有 object key，
+    /// 拼接为一个确定性字符串后取 SHA-256。
+    /// 同一组数据无论 JSON 序列化时 key 顺序如何，都会得到相同的哈希值。
+    pub fn compute_data_hash(
+        cpu: &StaticCPUData,
+        system: &StaticSystemData,
+        gpu: &[StaticGpuData],
+    ) -> Vec<u8> {
+        fn canonicalize(v: &serde_json::Value) -> serde_json::Value {
+            match v {
+                serde_json::Value::Object(map) => {
+                    let mut sorted: Vec<(&String, serde_json::Value)> =
+                        map.iter().map(|(k, v)| (k, canonicalize(v))).collect();
+                    sorted.sort_by(|a, b| a.0.cmp(b.0));
+                    serde_json::Value::Object(
+                        sorted.into_iter().map(|(k, v)| (k.clone(), v)).collect(),
+                    )
+                }
+                serde_json::Value::Array(arr) => {
+                    serde_json::Value::Array(arr.iter().map(canonicalize).collect())
+                }
+                other => other.clone(),
+            }
+        }
+
+        let cpu_val = canonicalize(&serde_json::to_value(cpu).unwrap());
+        let sys_val = canonicalize(&serde_json::to_value(system).unwrap());
+        let gpu_val = canonicalize(&serde_json::to_value(gpu).unwrap());
+
+        let canonical = format!("{}\n{}\n{}", cpu_val, sys_val, gpu_val);
+
+        let hash = Sha256::digest(canonical.as_bytes());
+        // 取前 16 字节 (128 bit) 足够去重
+        hash[..16].to_vec()
+    }
 }
 
 // 动态监控数据结构体，包含随时间变化的系统状态信息

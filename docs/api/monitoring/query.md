@@ -958,7 +958,7 @@ pub struct DynamicSummaryQuery {
   {
     "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
     "timestamp": 1769344168646,
-    "cpu_usage": 4.04,
+    "cpu_usage": 4.0,
     "used_memory": 27062329344,
     "total_memory": 68501925888
   }
@@ -998,7 +998,7 @@ pub struct DynamicSummaryQuery {
     {
       "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
       "timestamp": 1769344168646,
-      "cpu_usage": 4.04,
+      "cpu_usage": 4.0,
       "used_memory": 27062329344,
       "total_memory": 68501925888
     }
@@ -1145,7 +1145,7 @@ pub struct DynamicSummaryAvgQuery {
   {
     "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
     "timestamp": 1769344168646,
-    "cpu_usage": 4.04,
+    "cpu_usage": 4.0,
     "used_memory": 27062329344,
     "total_memory": 68501925888
   }
@@ -1181,7 +1181,7 @@ pub struct DynamicSummaryAvgQuery {
     {
       "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
       "timestamp": 1769344168646,
-      "cpu_usage": 4.04,
+      "cpu_usage": 4.0,
       "used_memory": 27062329344
     }
   ]

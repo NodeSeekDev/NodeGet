@@ -19,6 +19,7 @@ Server，调用者可按条件查询历史数据。
 pub struct StaticMonitoringData {
     pub uuid: String,               // Agent UUID
     pub time: u64,                  // 毫秒时间戳
+    pub data_hash: Vec<u8>,         // 数据内容 SHA-256 哈希（前 16 字节原始二进制），用于去重
     pub cpu: StaticCPUData,
     pub system: StaticSystemData,
     pub gpu: Vec<StaticGpuData>,
@@ -31,6 +32,7 @@ JSON 示例：
 {
   "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
   "time": 1769341269012,
+  "data_hash": [171, 205, 18, 52, 86, 120, 144, 171, 205, 239, 1, 35, 69, 103, 137, 171],
   "cpu": {
     "physical_cores": 16,
     "logical_cores": 32,
@@ -290,29 +292,29 @@ pub struct DynamicGpuData {
 pub struct DynamicMonitoringSummaryData {
     pub uuid: String,                       // Agent UUID
     pub time: u64,                          // 毫秒时间戳
-    pub cpu_usage: Option<f64>,             // CPU 总使用率 (0~100)
-    pub gpu_usage: Option<f64>,             // GPU 使用率 (0~100)
+    pub cpu_usage: Option<i16>,             // CPU 总使用率 × 10 (0~1000)，查询时自动 /10 还原
+    pub gpu_usage: Option<i16>,             // GPU 使用率 (0~100)，整数
     pub used_swap: Option<i64>,             // 已用 Swap (字节)
     pub total_swap: Option<i64>,            // 总 Swap (字节)
     pub used_memory: Option<i64>,           // 已用内存 (字节)
     pub total_memory: Option<i64>,          // 总内存 (字节)
     pub available_memory: Option<i64>,      // 可用内存 (字节)
-    pub load_one: Option<f64>,              // 1 分钟负载
-    pub load_five: Option<f64>,             // 5 分钟负载
-    pub load_fifteen: Option<f64>,          // 15 分钟负载
-    pub uptime: Option<i64>,               // 运行时间 (秒)
-    pub boot_time: Option<i64>,            // 启动时间 (秒时间戳)
-    pub process_count: Option<i64>,        // 进程数
-    pub total_space: Option<i64>,          // 磁盘总空间 (字节)
-    pub available_space: Option<i64>,      // 磁盘可用空间 (字节)
-    pub read_speed: Option<i64>,           // 磁盘读速度 (字节/秒)
-    pub write_speed: Option<i64>,          // 磁盘写速度 (字节/秒)
-    pub tcp_connections: Option<i64>,      // TCP 连接数
-    pub udp_connections: Option<i64>,      // UDP 连接数
-    pub total_received: Option<i64>,       // 网络总接收 (字节)
-    pub total_transmitted: Option<i64>,    // 网络总发送 (字节)
-    pub transmit_speed: Option<i64>,       // 网络发送速度 (字节/秒)
-    pub receive_speed: Option<i64>,        // 网络接收速度 (字节/秒)
+    pub load_one: Option<i16>,              // 1 分钟负载 × 10，查询时自动 /10 还原
+    pub load_five: Option<i16>,             // 5 分钟负载 × 10，查询时自动 /10 还原
+    pub load_fifteen: Option<i16>,          // 15 分钟负载 × 10，查询时自动 /10 还原
+    pub uptime: Option<i32>,                // 运行时间 (秒)
+    pub boot_time: Option<i64>,             // 启动时间 (秒时间戳)
+    pub process_count: Option<i32>,         // 进程数
+    pub total_space: Option<i64>,           // 磁盘总空间 (字节)
+    pub available_space: Option<i64>,       // 磁盘可用空间 (字节)
+    pub read_speed: Option<i64>,            // 磁盘读速度 (字节/秒)
+    pub write_speed: Option<i64>,           // 磁盘写速度 (字节/秒)
+    pub tcp_connections: Option<i32>,       // TCP 连接数
+    pub udp_connections: Option<i32>,       // UDP 连接数
+    pub total_received: Option<i64>,        // 网络总接收 (字节)
+    pub total_transmitted: Option<i64>,     // 网络总发送 (字节)
+    pub transmit_speed: Option<i64>,        // 网络发送速度 (字节/秒)
+    pub receive_speed: Option<i64>,         // 网络接收速度 (字节/秒)
 }
 ```
 
@@ -322,16 +324,16 @@ JSON 示例：
 {
   "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
   "time": 1769344168646,
-  "cpu_usage": 4.04,
-  "gpu_usage": 5.0,
+  "cpu_usage": 40,
+  "gpu_usage": 5,
   "used_swap": 0,
   "total_swap": 0,
   "used_memory": 27062329344,
   "total_memory": 68501925888,
   "available_memory": 41439596544,
-  "load_one": 0.0,
-  "load_five": 0.0,
-  "load_fifteen": 0.0,
+  "load_one": 0,
+  "load_five": 0,
+  "load_fifteen": 0,
   "uptime": 6970,
   "boot_time": 1769337198,
   "process_count": 313,
@@ -352,6 +354,7 @@ JSON 示例：
 
 - 所有字段均为扁平的基本类型（非嵌套 JSON），便于数据库直接索引和聚合
 - 除 `uuid` 和 `time` 外，所有字段均为可选，可按需上报
+- `cpu_usage`、`load_one`、`load_five`、`load_fifteen` 在存储时乘以 10 转为整数（`i16`），查询时自动除以 10 还原为浮点数，对调用者透明
 - 适合用于仪表盘展示、趋势分析等场景
 
 ### 注意事项

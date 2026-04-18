@@ -38,13 +38,19 @@ impl Monitor for StaticMonitoringData {
             .read()
             .expect("AGENT_CONFIG lock poisoned")
             .agent_uuid;
+
+        let cpu = system_data.0.clone();
+        let system = system_data.1.clone();
+        let gpu = gpu_data.0.clone();
+        let data_hash = Self::compute_data_hash(&cpu, &system, &gpu);
+
         Self {
             uuid: agent_uuid.to_string(),
             time: get_local_timestamp_ms().unwrap_or(0),
-
-            cpu: system_data.0.clone(),
-            system: system_data.1.clone(),
-            gpu: gpu_data.0.clone(),
+            data_hash,
+            cpu,
+            system,
+            gpu,
         }
     }
 }

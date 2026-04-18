@@ -16,6 +16,7 @@ pub struct Model {
     pub system_data: Json,
     #[sea_orm(column_type = "JsonBinary")]
     pub gpu_data: Json,
+    pub data_hash: Vec<u8>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

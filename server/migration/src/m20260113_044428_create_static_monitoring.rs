@@ -44,6 +44,11 @@ impl MigrationTrait for Migration {
                             .json_binary()
                             .not_null(),
                     )
+                    .col(
+                        ColumnDef::new(StaticMonitoringInDatabase::DataHash)
+                            .binary_len(16)
+                            .not_null(),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -55,6 +60,18 @@ impl MigrationTrait for Migration {
                     .table(StaticMonitoringInDatabase::Table)
                     .col(StaticMonitoringInDatabase::Uuid)
                     .col(StaticMonitoringInDatabase::Timestamp)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx-static-uuid-data-hash")
+                    .table(StaticMonitoringInDatabase::Table)
+                    .col(StaticMonitoringInDatabase::Uuid)
+                    .col(StaticMonitoringInDatabase::DataHash)
+                    .unique()
                     .to_owned(),
             )
             .await?;
@@ -98,4 +115,5 @@ enum StaticMonitoringInDatabase {
     CpuData,
     SystemData,
     GpuData,
+    DataHash,
 }

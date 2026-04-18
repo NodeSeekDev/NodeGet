@@ -27,6 +27,7 @@
       数据，可以理解为清理旧数据，保留新数据。该设置不受数据条数影响，仅以 Timestamp 为标准。若某一 Agent
       设置了该值，并在历史某一时刻不再上传数据，则不会影响其 `从 (最后一个 Timestamp - 该值) 至 最后一个 Timestamp` 的数据
     - `database_limit_dynamic_monitoring`: 同上，Dynamic Monitoring Data
+    - `database_limit_dynamic_monitoring_summary`: 同上，Dynamic Monitoring Summary Data
     - `database_limit_task`: 同上，Task 记录
 - `metadata_*`:
     - `metadata_name`: 前端展示 Agent 名字

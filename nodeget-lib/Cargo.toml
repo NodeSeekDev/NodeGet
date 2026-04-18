@@ -13,6 +13,7 @@ toml = { version = "0.9.11", default-features = false, features = ["std", "serde
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 url = { version = "2.5.8", default-features = false, features = ["std", "serde"] }
 rand = { version = "0.9.2", default-features = false, features = ["std"] }
+sha2 = "0.11.0-rc.3"
 thiserror = "2.0.18"
 anyhow = "1.0.100"
 palc = { version = "0.0.2", default-features = false, features = ["help"] }
