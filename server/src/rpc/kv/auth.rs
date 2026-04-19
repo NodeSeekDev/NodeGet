@@ -268,6 +268,38 @@ pub async fn check_kv_delete_permission(
     .into())
 }
 
+/// 检查是否有删除整个命名空间的权限
+///
+/// 需要对该命名空间拥有全局删除权限 (Kv::Delete("*"))
+pub async fn check_kv_delete_namespace_permission(
+    token: &str,
+    namespace: &str,
+) -> anyhow::Result<()> {
+    trace!(target: "kv", namespace = %namespace, "checking delete namespace permission");
+
+    let token_or_auth = TokenOrAuth::from_full_token(token)
+        .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
+
+    let scope = Scope::KvNamespace(namespace.to_owned());
+    let global_delete_perm = Permission::Kv(Kv::Delete("*".to_owned()));
+    let has_global_delete = check_token_limit(
+        &token_or_auth,
+        vec![scope],
+        vec![global_delete_perm],
+    )
+    .await?;
+
+    if has_global_delete {
+        return Ok(());
+    }
+
+    warn!(target: "kv", namespace = %namespace, "delete namespace permission denied");
+    Err(NodegetError::PermissionDenied(format!(
+        "No permission to delete namespace '{namespace}'"
+    ))
+    .into())
+}
+
 /// 检查是否有列出所有 keys 的权限
 ///
 /// # 参数

@@ -299,6 +299,60 @@
 }
 ```
 
+## Delete Namespace
+
+删除整个 Namespace，包括该 Namespace 下的所有键值对。
+
+### 方法
+
+调用方法名为 `kv_delete_namespace`，需要提供以下参数：
+
+```json
+{
+  "token": "demo_token",   // Token
+  "namespace": "kv_test"   // 要删除的命名空间
+}
+```
+
+### 权限要求
+
+- Permission: `Kv::Delete("*")` 需要对该 Namespace 拥有全局删除权限
+- Scope: `KvNamespace(namespace)` 或 `Global`
+
+### 返回值
+
+删除成功时返回 `{"success": true}`。
+
+若 Namespace 不存在，返回错误。
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "kv_delete_namespace",
+  "params": {
+    "token": "demo_token",   // Token
+    "namespace": "kv_test"   // 要删除的命名空间
+  },
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true
+  }
+}
+```
+
 ## List All Keys
 
 列出指定 Namespace 下的所有键名。
@@ -321,13 +375,14 @@
 
 ### 返回值
 
-返回一个字符串数组，每个元素是一个 Key 名称：
+返回一个字符串数组，每个元素是一个 Key 名称（包含内部占位符 `__nodeget_namespace_marker__`）：
 
 ```json
 [
-  "metadata_test",
+  "__nodeget_namespace_marker__",
+  "config_theme",
   "metadata_name",
-  "config_theme"
+  "metadata_test"
 ]
 ```
 
@@ -354,9 +409,10 @@
   "jsonrpc": "2.0",
   "id": 1,
   "result": [
-    "metadata_test",
+    "__nodeget_namespace_marker__",
+    "config_theme",
     "metadata_name",
-    "config_theme"
+    "metadata_test"
   ]
 }
 ```
@@ -364,6 +420,10 @@
 ## Create Namespace
 
 创建一个新的 Kv Namespace，该操作仅限 Super Token 使用。
+
+创建 Namespace 的本质是在 KV 表中写入一条 key 为 `__nodeget_namespace_marker__`、value 为 `null` 的占位记录。Server 通过该记录判断 Namespace 是否存在。
+
+该 key 是公开可见的：通过 `kv_get_all_keys` 和 `kv_get_value` 均可读取到。用户也可以通过 `kv_set_value` 修改其 value，或通过 `kv_delete_key` 删除它（删除后该 Namespace 将被视为不存在）。
 
 ### 方法
 

@@ -11,7 +11,7 @@ use tracing::{debug, error, warn};
 use crate::DB;
 use crate::entity::kv;
 
-const NAMESPACE_MARKER_KEY: &str = "__nodeget_namespace_marker__";
+pub const NAMESPACE_MARKER_KEY: &str = "__nodeget_namespace_marker__";
 
 /// 获取数据库连接
 fn get_db() -> Result<&'static DatabaseConnection> {
@@ -37,17 +37,6 @@ async fn ensure_namespace_exists(db: &DatabaseConnection, namespace: &str) -> Re
 
     warn!(target: "kv", namespace = %namespace, "Namespace not found");
     Err(NodegetError::DatabaseError(format!("Namespace '{namespace}' not found")).into())
-}
-
-fn ensure_not_reserved_key(key: &str) -> Result<()> {
-    if key == NAMESPACE_MARKER_KEY {
-        warn!(target: "kv", key = %key, "Attempt to use reserved key");
-        return Err(NodegetError::InvalidInput(
-            "Key is reserved for internal namespace marker".to_owned(),
-        )
-        .into());
-    }
-    Ok(())
 }
 
 /// 创建一个新的 KV 存储命名空间
@@ -119,7 +108,6 @@ pub async fn get_v_from_kv(namespace: String, key: String) -> Result<Option<Valu
 /// 成功时返回 ()，失败返回错误
 pub async fn set_v_to_kv(namespace: String, key: String, value: Value) -> Result<()> {
     let db = get_db()?;
-    ensure_not_reserved_key(&key)?;
     ensure_namespace_exists(db, &namespace).await?;
 
     let model = kv::Entity::find()
@@ -181,7 +169,6 @@ pub async fn get_or_create_kv(namespace: String) -> Result<KVStore> {
 /// 成功时返回 ()，失败返回错误
 pub async fn delete_key_from_kv(namespace: String, key: String) -> Result<()> {
     let db = get_db()?;
-    ensure_not_reserved_key(&key)?;
     ensure_namespace_exists(db, &namespace).await?;
 
     kv::Entity::delete_many()
@@ -228,7 +215,6 @@ pub async fn get_keys_from_kv(namespace: String) -> Result<Vec<String>> {
 
     let models = kv::Entity::find()
         .filter(kv::Column::Namespace.eq(&namespace))
-        .filter(kv::Column::Key.ne(NAMESPACE_MARKER_KEY))
         .order_by_asc(kv::Column::Key)
         .all(db)
         .await?;
@@ -251,7 +237,6 @@ pub async fn get_kv_store(namespace: String) -> Result<KVStore> {
 
     let models = kv::Entity::find()
         .filter(kv::Column::Namespace.eq(&namespace))
-        .filter(kv::Column::Key.ne(NAMESPACE_MARKER_KEY))
         .order_by_asc(kv::Column::Key)
         .all(db)
         .await?;

@@ -19,6 +19,10 @@
 
 在一个 Kv 中，非 Agent / Server 开发者不建议使用以下的键，其在 Agent / Server 内部有特殊用途，或为共同认定的功能键
 
+### 所有 Namespace 通用
+
+- `__nodeget_namespace_marker__`: Namespace 占位符。创建 Namespace（`kv_create`）时自动写入，value 为 `null`。Server 通过该 key 是否存在来判断 Namespace 是否已创建。该 key 公开可见，可通过 `kv_get_all_keys`、`kv_get_value` 读取，也可通过 `kv_set_value` 修改其 value。若通过 `kv_delete_key` 删除该 key 且 Namespace 下无其他 key，则该 Namespace 将被视为不存在。
+
 ### Agent Namespace
 
 - `database_limit_*`:

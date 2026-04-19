@@ -10,6 +10,7 @@ use tracing::Instrument;
 mod auth;
 mod create;
 mod delete_key;
+mod delete_namespace;
 mod get_all_keys;
 mod get_multi_value;
 mod get_value;
@@ -64,6 +65,13 @@ pub trait Rpc {
         token: String,
         namespace: String,
         key: String,
+    ) -> RpcResult<Box<RawValue>>;
+
+    #[method(name = "delete_namespace")]
+    async fn delete_namespace(
+        &self,
+        token: String,
+        namespace: String,
     ) -> RpcResult<Box<RawValue>>;
 
     #[method(name = "get_all_keys")]
@@ -135,6 +143,18 @@ impl RpcServer for KvRpcImpl {
         let (tk, un) = token_identity(&token);
         let span = tracing::info_span!(target: "kv", "kv::delete_key", token_key = tk, username = un, namespace = %namespace, key = %key);
         async { rpc_exec!(delete_key::delete_key(token, namespace, key).await) }
+            .instrument(span)
+            .await
+    }
+
+    async fn delete_namespace(
+        &self,
+        token: String,
+        namespace: String,
+    ) -> RpcResult<Box<RawValue>> {
+        let (tk, un) = token_identity(&token);
+        let span = tracing::info_span!(target: "kv", "kv::delete_namespace", token_key = tk, username = un, namespace = %namespace);
+        async { rpc_exec!(delete_namespace::delete_namespace(token, namespace).await) }
             .instrument(span)
             .await
     }
