@@ -11,6 +11,7 @@ use tracing::{debug, error, trace, warn};
 
 const DEFAULT_FLUSH_INTERVAL_MS: u64 = 500;
 const DEFAULT_MAX_BATCH_SIZE: usize = 1000;
+const DEFAULT_CHANNEL_CAPACITY: usize = 10000;
 
 // ── 全局单例 ────────────────────────────────────────────────────────
 
@@ -40,9 +41,9 @@ pub fn init(config: Option<&MonitoringBufferConfig>) {
 
     let flush_interval = Duration::from_millis(flush_interval_ms);
 
-    let (static_tx, static_rx) = mpsc::unbounded_channel();
-    let (dynamic_tx, dynamic_rx) = mpsc::unbounded_channel();
-    let (summary_tx, summary_rx) = mpsc::unbounded_channel();
+    let (static_tx, static_rx) = mpsc::channel(DEFAULT_CHANNEL_CAPACITY);
+    let (dynamic_tx, dynamic_rx) = mpsc::channel(DEFAULT_CHANNEL_CAPACITY);
+    let (summary_tx, summary_rx) = mpsc::channel(DEFAULT_CHANNEL_CAPACITY);
 
     let buffers = MonitoringBuffers {
         static_mon: BufferSender {
@@ -109,23 +110,21 @@ pub async fn flush_and_shutdown() {
 // ── BufferSender ────────────────────────────────────────────────────
 
 pub struct BufferSender<T> {
-    tx: Mutex<Option<mpsc::UnboundedSender<T>>>,
+    tx: Mutex<Option<mpsc::Sender<T>>>,
 }
 
 impl<T> BufferSender<T> {
-    /// 将一条 ActiveModel 送入缓冲区（非阻塞）
-    pub fn send(&self, item: T) -> Result<(), mpsc::error::SendError<T>> {
+    /// 将一条 ActiveModel 送入缓冲区（非阻塞，满则丢弃并告警）
+    pub fn send(&self, item: T) {
         let guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
-        match guard.as_ref() {
-            Some(tx) => {
-                trace!(target: "monitoring", "Buffer item queued");
-                tx.send(item)
+        if let Some(tx) = guard.as_ref() {
+            if let Err(_e) = tx.try_send(item) {
+                warn!(target: "monitoring", "Buffer channel full or closed, dropping item");
             }
-            None => Err(mpsc::error::SendError(item)),
         }
     }
 
-    /// 关闭 sender（drop 内部的 UnboundedSender）
+    /// 关闭 sender（drop 内部的 Sender）
     fn close(&self) {
         let mut guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
         debug!(target: "monitoring", "Closing buffer sender");
@@ -137,7 +136,7 @@ impl<T> BufferSender<T> {
 
 async fn flush_loop<E, A>(
     table_name: &'static str,
-    mut rx: mpsc::UnboundedReceiver<A>,
+    mut rx: mpsc::Receiver<A>,
     flush_interval: Duration,
     max_batch_size: usize,
 ) where
@@ -196,7 +195,7 @@ where
     E: EntityTrait,
     A: sea_orm::ActiveModelTrait<Entity = E> + Send + 'static,
 {
-    let batch: Vec<A> = buf.drain(..).collect();
+    let batch = std::mem::take(buf);
     let count = batch.len();
     if count == 0 {
         return;

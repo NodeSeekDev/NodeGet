@@ -1,16 +1,17 @@
 use crate::entity::static_monitoring;
-use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
+use crate::rpc::agent::delete_common::{
+    ResolvedCondition, extract_limit_and_last, resolve_conditions, scopes_from_conditions,
+};
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::monitoring::query::QueryCondition;
-use nodeget_lib::permission::data_structure::{Permission, Scope, StaticMonitoring};
+use nodeget_lib::permission::data_structure::{Permission, StaticMonitoring};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use sea_orm::{ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde_json::value::RawValue;
-use std::collections::HashSet;
 use tracing::{debug, error};
 
 pub async fn delete_static(
@@ -40,28 +41,8 @@ pub async fn delete_static(
         debug!(target: "monitoring", "delete_static: permission check passed");
 
         let db = AgentRpcImpl::get_db()?;
-        let uuid_cache = MonitoringUuidCache::global();
         let (limit_count, is_last) = extract_limit_and_last(&conditions);
-
-        // Pre-resolve UUID conditions to uuid_ids
-        let resolved_conditions: Vec<ResolvedCondition> = {
-            let mut resolved = Vec::with_capacity(conditions.len());
-            for cond in &conditions {
-                match cond {
-                    QueryCondition::Uuid(uuid) => {
-                        let uuid_id = uuid_cache.get_id(uuid).await.ok_or_else(|| {
-                            NodegetError::NotFound(format!("Agent UUID not found in monitoring registry: {uuid}"))
-                        })?;
-                        resolved.push(ResolvedCondition::UuidId(uuid_id));
-                    }
-                    QueryCondition::TimestampFromTo(s, e) => resolved.push(ResolvedCondition::TimestampFromTo(*s, *e)),
-                    QueryCondition::TimestampFrom(s) => resolved.push(ResolvedCondition::TimestampFrom(*s)),
-                    QueryCondition::TimestampTo(e) => resolved.push(ResolvedCondition::TimestampTo(*e)),
-                    QueryCondition::Limit(_) | QueryCondition::Last => {}
-                }
-            }
-            resolved
-        };
+        let resolved_conditions = resolve_conditions(&conditions).await?;
 
         debug!(target: "monitoring", ?limit_count, is_last, "delete_static: executing delete");
 
@@ -171,52 +152,4 @@ pub async fn delete_static(
             ))
         }
     }
-}
-
-fn scopes_from_conditions(conditions: &[QueryCondition]) -> Vec<Scope> {
-    let mut seen = HashSet::new();
-    let mut scopes = Vec::new();
-
-    for cond in conditions {
-        if let QueryCondition::Uuid(uuid) = cond
-            && seen.insert(*uuid)
-        {
-            scopes.push(Scope::AgentUuid(*uuid));
-        }
-    }
-
-    if scopes.is_empty() {
-        scopes.push(Scope::Global);
-    }
-
-    scopes
-}
-
-fn extract_limit_and_last(conditions: &[QueryCondition]) -> (Option<u64>, bool) {
-    let mut limit_count = None;
-    let mut is_last = false;
-
-    for cond in conditions {
-        match cond {
-            QueryCondition::Limit(n) => {
-                limit_count = Some(*n);
-            }
-            QueryCondition::Last => {
-                is_last = true;
-            }
-            QueryCondition::Uuid(_)
-            | QueryCondition::TimestampFromTo(_, _)
-            | QueryCondition::TimestampFrom(_)
-            | QueryCondition::TimestampTo(_) => {}
-        }
-    }
-
-    (limit_count, is_last)
-}
-
-enum ResolvedCondition {
-    UuidId(i16),
-    TimestampFromTo(i64, i64),
-    TimestampFrom(i64),
-    TimestampTo(i64),
 }

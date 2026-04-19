@@ -38,7 +38,7 @@ pub async fn list_all_tokens(token: String) -> RpcResult<Box<RawValue>> {
             .into_iter()
             .map(|model| -> anyhow::Result<Token> {
                 let token_limit =
-                    parse_token_limit_with_compat(model.token_limit).map_err(|e| {
+                    parse_token_limit_with_compat(model.token_limit.clone()).map_err(|e| {
                         NodegetError::SerializationError(format!(
                             "Failed to parse token_limit for token '{}': {e}",
                             model.token_key
@@ -47,11 +47,11 @@ pub async fn list_all_tokens(token: String) -> RpcResult<Box<RawValue>> {
 
                 Ok(Token {
                     version: model.version,
-                    token_key: model.token_key,
+                    token_key: model.token_key.clone(),
                     timestamp_from: model.time_stamp_from,
                     timestamp_to: model.time_stamp_to,
                     token_limit,
-                    username: model.username,
+                    username: model.username.clone(),
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;

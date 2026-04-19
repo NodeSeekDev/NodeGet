@@ -104,7 +104,11 @@ fn netlink_inet_diag_only_count(request: &[u8]) -> io::Result<u64> {
 
     // Prepare read buffer
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    let page_size = if page_size > 0 { page_size as usize } else { 4096 };
+    let page_size = if page_size > 0 {
+        page_size as usize
+    } else {
+        4096
+    };
     let mut buf: Vec<u8> = vec![0u8; page_size];
 
     let mut total_count: u64 = 0;

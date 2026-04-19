@@ -81,8 +81,7 @@ pub async fn report_dynamic_summary(
 
         crate::monitoring_buffer::get()
             .dynamic_summary
-            .send(in_data)
-            .map_err(|_| NodegetError::DatabaseError("Buffer closed".to_owned()))?;
+            .send(in_data);
 
         debug!(target: "monitoring", agent_uuid = %data.uuid, "Dynamic summary data buffered successfully");
 

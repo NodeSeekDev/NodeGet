@@ -22,9 +22,7 @@ static GLOBAL_ICMP_V6_CLIENT: OnceCell<Client> = OnceCell::const_new();
 async fn get_v4_client() -> &'static Client {
     GLOBAL_ICMP_V4_CLIENT
         .get_or_init(|| async {
-            let config = Config::builder()
-                .kind(ICMP::V4)
-                .build();
+            let config = Config::builder().kind(ICMP::V4).build();
             Client::new(&config).unwrap()
         })
         .await
@@ -33,9 +31,7 @@ async fn get_v4_client() -> &'static Client {
 async fn get_v6_client() -> &'static Client {
     GLOBAL_ICMP_V6_CLIENT
         .get_or_init(|| async {
-            let config = Config::builder()
-                .kind(ICMP::V6)
-                .build();
+            let config = Config::builder().kind(ICMP::V6).build();
             Client::new(&config).unwrap()
         })
         .await
@@ -58,9 +54,7 @@ async fn ping_ip(target: std::net::IpAddr) -> std::result::Result<std::time::Dur
     let mut pinger = client.pinger(target, PingIdentifier(random())).await;
     pinger.timeout(PING_TIMEOUT);
 
-    let (_, duration) = pinger
-        .ping(PingSequence(random()), &ICMP_PAYLOAD)
-        .await?;
+    let (_, duration) = pinger.ping(PingSequence(random()), &ICMP_PAYLOAD).await?;
 
     Ok(duration)
 }

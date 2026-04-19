@@ -59,16 +59,16 @@ pub async fn get_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<Token> {
         }
     };
 
-    let token_limit = parse_token_limit_with_compat(token_model.token_limit)?;
+    let token_limit = parse_token_limit_with_compat(token_model.token_limit.clone())?;
     debug!(target: "auth", token_key = %token_model.token_key, limits_count = token_limit.len(), "token authenticated successfully");
 
     Ok(Token {
         version: token_model.version,
-        token_key: token_model.token_key,
+        token_key: token_model.token_key.clone(),
         timestamp_from: token_model.time_stamp_from,
         timestamp_to: token_model.time_stamp_to,
         token_limit,
-        username: token_model.username,
+        username: token_model.username.clone(),
     })
 }
 
@@ -85,16 +85,16 @@ pub async fn get_token_by_key_or_username(identifier: &str) -> anyhow::Result<To
         })?
     };
 
-    let token_limit = parse_token_limit_with_compat(token_model.token_limit)?;
+    let token_limit = parse_token_limit_with_compat(token_model.token_limit.clone())?;
     debug!(target: "auth", identifier = %identifier, token_key = %token_model.token_key, "token resolved successfully");
 
     Ok(Token {
         version: token_model.version,
-        token_key: token_model.token_key,
+        token_key: token_model.token_key.clone(),
         timestamp_from: token_model.time_stamp_from,
         timestamp_to: token_model.time_stamp_to,
         token_limit,
-        username: token_model.username,
+        username: token_model.username.clone(),
     })
 }
 

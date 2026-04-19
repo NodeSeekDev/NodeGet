@@ -3,16 +3,16 @@ use crate::entity::token;
 use nodeget_lib::error::NodegetError;
 use sea_orm::EntityTrait;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 
 struct TokenCacheInner {
-    /// token_key -> Model
-    by_key: HashMap<String, token::Model>,
+    /// token_key -> Model (Arc-wrapped to avoid deep clones on every lookup)
+    by_key: HashMap<String, Arc<token::Model>>,
     /// username -> Model (only tokens that have a username)
-    by_username: HashMap<String, token::Model>,
+    by_username: HashMap<String, Arc<token::Model>>,
     /// super token (id=1), cached separately for fast access
-    super_token: Option<token::Model>,
+    super_token: Option<Arc<token::Model>>,
 }
 
 pub struct TokenCache {
@@ -39,12 +39,13 @@ impl TokenCache {
         let mut super_token = None;
 
         for model in all_tokens {
-            if model.id == 1 {
-                super_token = Some(model.clone());
+            let arc = Arc::new(model);
+            if arc.id == 1 {
+                super_token = Some(Arc::clone(&arc));
             }
-            by_key.insert(model.token_key.clone(), model.clone());
-            if let Some(ref uname) = model.username {
-                by_username.insert(uname.clone(), model);
+            by_key.insert(arc.token_key.clone(), Arc::clone(&arc));
+            if let Some(ref uname) = arc.username {
+                by_username.insert(uname.clone(), arc);
             }
         }
 
@@ -101,12 +102,13 @@ impl TokenCache {
         let mut super_token = None;
 
         for model in all_tokens {
-            if model.id == 1 {
-                super_token = Some(model.clone());
+            let arc = Arc::new(model);
+            if arc.id == 1 {
+                super_token = Some(Arc::clone(&arc));
             }
-            by_key.insert(model.token_key.clone(), model.clone());
-            if let Some(ref uname) = model.username {
-                by_username.insert(uname.clone(), model);
+            by_key.insert(arc.token_key.clone(), Arc::clone(&arc));
+            if let Some(ref uname) = arc.username {
+                by_username.insert(uname.clone(), arc);
             }
         }
 
@@ -120,26 +122,26 @@ impl TokenCache {
     }
 
     /// Find a token model by token_key.
-    pub async fn find_by_key(&self, key: &str) -> Option<token::Model> {
+    pub async fn find_by_key(&self, key: &str) -> Option<Arc<token::Model>> {
         let guard = self.inner.read().await;
-        guard.by_key.get(key).cloned()
+        guard.by_key.get(key).map(Arc::clone)
     }
 
     /// Find a token model by username.
-    pub async fn find_by_username(&self, username: &str) -> Option<token::Model> {
+    pub async fn find_by_username(&self, username: &str) -> Option<Arc<token::Model>> {
         let guard = self.inner.read().await;
-        guard.by_username.get(username).cloned()
+        guard.by_username.get(username).map(Arc::clone)
     }
 
     /// Get the super token model (id=1).
-    pub async fn get_super_token(&self) -> Option<token::Model> {
+    pub async fn get_super_token(&self) -> Option<Arc<token::Model>> {
         let guard = self.inner.read().await;
-        guard.super_token.clone()
+        guard.super_token.as_ref().map(Arc::clone)
     }
 
     /// Get all token models (for list_all_tokens).
-    pub async fn get_all(&self) -> Vec<token::Model> {
+    pub async fn get_all(&self) -> Vec<Arc<token::Model>> {
         let guard = self.inner.read().await;
-        guard.by_key.values().cloned().collect()
+        guard.by_key.values().map(Arc::clone).collect()
     }
 }

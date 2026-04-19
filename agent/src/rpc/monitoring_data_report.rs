@@ -101,10 +101,7 @@ pub async fn handle_dynamic_monitoring_data_report() {
                     &server.name,
                     Message::Text(Utf8Bytes::from(wrap_json_into_rpc_with_id_1(
                         "agent_report_dynamic_summary",
-                        vec![
-                            serde_json::to_value(server.token).unwrap(),
-                            summary_value,
-                        ],
+                        vec![serde_json::to_value(server.token).unwrap(), summary_value],
                     ))),
                 )
                 .await
@@ -128,10 +125,7 @@ pub async fn handle_dynamic_monitoring_data_report() {
                         &server.name,
                         Message::Text(Utf8Bytes::from(wrap_json_into_rpc_with_id_1(
                             "agent_report_dynamic",
-                            vec![
-                                serde_json::to_value(server.token).unwrap(),
-                                dynamic_value,
-                            ],
+                            vec![serde_json::to_value(server.token).unwrap(), dynamic_value],
                         ))),
                     )
                     .await

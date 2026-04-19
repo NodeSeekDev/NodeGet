@@ -1,6 +1,7 @@
 use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
+use crate::rpc::agent::generate_avg_error_id;
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::error::NodegetError;
@@ -12,14 +13,7 @@ use sea_orm::{DatabaseBackend, DatabaseConnection, FromQueryResult, Statement};
 use serde_json::Value;
 use serde_json::value::RawValue;
 use std::fmt::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, error, warn};
-
-// 生成唯一错误ID用于内部追踪
-static ERROR_COUNTER: AtomicU64 = AtomicU64::new(0);
-fn generate_error_id() -> u64 {
-    ERROR_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
 
 #[derive(Debug, FromQueryResult)]
 struct JsonAggRow {
@@ -166,7 +160,7 @@ async fn query_static_avg_postgres(
         .await
         .map_err(|e| {
             // 内部记录详细错误，向客户端返回通用错误
-            let error_id = generate_error_id();
+            let error_id = generate_avg_error_id();
             tracing::error!(target: "monitoring", error_id = error_id, error = %e, "Failed to query static avg in postgres");
             NodegetError::DatabaseError(format!("Database error occurred. Reference: {error_id}"))
         })?;

@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::kv::KVStore;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set,
 };
 use serde_json::Value;
 use tracing::{debug, error, warn};
@@ -20,11 +20,11 @@ fn get_db() -> Result<&'static DatabaseConnection> {
 
 /// 检查命名空间是否存在
 async fn namespace_exists(db: &DatabaseConnection, namespace: &str) -> Result<bool> {
-    let exists = kv::Entity::find()
+    let count = kv::Entity::find()
         .filter(kv::Column::Namespace.eq(namespace))
-        .one(db)
-        .await?
-        .is_some();
+        .count(db)
+        .await?;
+    let exists = count > 0;
     debug!(target: "kv", namespace = %namespace, exists, "namespace_exists check");
     Ok(exists)
 }

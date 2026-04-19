@@ -165,7 +165,9 @@ async fn connection_manager(
                     continue;
                 }
                 None => {
-                    error!("[{name}] Failed to parse server UUID response, triggering reconnect...");
+                    error!(
+                        "[{name}] Failed to parse server UUID response, triggering reconnect..."
+                    );
                     continue;
                 }
             }

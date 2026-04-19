@@ -151,8 +151,8 @@ pub async fn check_super_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<bo
             Ok(is_super)
         }
         TokenOrAuth::Auth(username, password) => {
-            let is_super = Some(username.clone()) == super_record.username
-                && Some(hash_string(password)) == super_record.password_hash;
+            let is_super = super_record.username.as_deref() == Some(username.as_str())
+                && super_record.password_hash.as_deref() == Some(hash_string(password).as_str());
             debug!(target: "token", is_super, "Super token check completed (basic auth)");
             Ok(is_super)
         }

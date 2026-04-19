@@ -11,12 +11,14 @@ use nodeget_lib::monitoring::query::{
     StaticDataQuery, StaticDataQueryField,
 };
 use serde_json::value::RawValue;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::Instrument;
 use uuid::Uuid;
 
 mod delete_dynamic;
 mod delete_dynamic_summary;
 mod delete_static;
+mod delete_common;
 mod query_dynamic;
 mod query_dynamic_avg;
 mod query_dynamic_multi_last;
@@ -29,6 +31,12 @@ mod query_static_multi_last;
 mod report_dynamic;
 mod report_dynamic_summary;
 mod report_static;
+
+/// Shared error counter for avg query error tracking
+static AVG_ERROR_COUNTER: AtomicU64 = AtomicU64::new(0);
+pub(crate) fn generate_avg_error_id() -> u64 {
+    AVG_ERROR_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
 
 #[rpc(server, namespace = "agent")]
 pub trait Rpc {

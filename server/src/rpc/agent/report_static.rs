@@ -82,8 +82,7 @@ pub async fn report_static(
 
         crate::monitoring_buffer::get()
             .static_mon
-            .send(in_data)
-            .map_err(|_| NodegetError::DatabaseError("Buffer closed".to_owned()))?;
+            .send(in_data);
 
         debug!(target: "monitoring", agent_uuid = %static_monitoring_data.uuid, "Static data buffered successfully");
 

@@ -29,7 +29,7 @@ pub struct TerminalState {
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct TerminalSessionKey {
-    pub agent_uuid: String,
+    pub agent_uuid: Uuid,
     pub terminal_id: Uuid,
 }
 
@@ -156,8 +156,16 @@ async fn handle_agent(
         }
     }
 
+    let parsed_uuid = match Uuid::parse_str(&agent_uuid) {
+        Ok(u) => u,
+        Err(_) => {
+            reject_with_error(socket, 108, "Invalid Agent UUID format").await;
+            return;
+        }
+    };
+
     let session_key = TerminalSessionKey {
-        agent_uuid: agent_uuid.clone(),
+        agent_uuid: parsed_uuid,
         terminal_id,
     };
 
@@ -276,8 +284,15 @@ async fn handle_user(
 
     // 获取会话槽位
     let (tx_to_agent, rx_from_agent) = {
+        let parsed_uuid = match Uuid::parse_str(&agent_uuid) {
+            Ok(u) => u,
+            Err(_) => {
+                warn!(target: "terminal", agent_uuid = %agent_uuid, "User connection rejected: invalid UUID format");
+                return;
+            }
+        };
         let session_key = TerminalSessionKey {
-            agent_uuid: agent_uuid.clone(),
+            agent_uuid: parsed_uuid,
             terminal_id,
         };
         let mut sessions = state.sessions.write().await;
