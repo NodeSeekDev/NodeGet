@@ -19,7 +19,6 @@ dependencies = [
  "version_check",
 ]
 
-
 [[package]]
 name = "ahash"
 version = "0.8.12"
@@ -2205,7 +2204,7 @@ dependencies = [
  "llrt_exceptions",
  "llrt_timers",
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
 ]
 
 [[package]]
@@ -2215,7 +2214,7 @@ source = "git+https://github.com/awslabs/llrt.git#b914ec2a60ee455b54ea68d717f918
 dependencies = [
  "llrt_hooking",
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "tracing",
 ]
 
@@ -2227,7 +2226,7 @@ dependencies = [
  "itoa",
  "llrt_encoding",
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "ryu",
 ]
 
@@ -2256,7 +2255,7 @@ source = "git+https://github.com/awslabs/llrt.git#b914ec2a60ee455b54ea68d717f918
 dependencies = [
  "llrt_build",
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "tokio",
  "tracing",
 ]
@@ -2292,7 +2291,7 @@ version = "0.8.1-beta"
 source = "git+https://github.com/awslabs/llrt.git#b914ec2a60ee455b54ea68d717f91820624ec455"
 dependencies = [
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "tracing",
 ]
 
@@ -2302,7 +2301,7 @@ version = "0.8.1-beta"
 source = "git+https://github.com/awslabs/llrt.git#b914ec2a60ee455b54ea68d717f91820624ec455"
 dependencies = [
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
 ]
 
 [[package]]
@@ -2330,7 +2329,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite 0.2.17",
  "rand 0.10.1",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "tokio",
  "tracing",
 ]
@@ -2342,7 +2341,7 @@ source = "git+https://github.com/awslabs/llrt.git#b914ec2a60ee455b54ea68d717f918
 dependencies = [
  "llrt_utils",
  "once_cell",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
 ]
 
 [[package]]
@@ -2359,7 +2358,7 @@ dependencies = [
  "llrt_tls",
  "llrt_utils",
  "once_cell",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "rustls",
 ]
 
@@ -2371,7 +2370,7 @@ dependencies = [
  "itoa",
  "llrt_build",
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "ryu",
  "simd-json",
 ]
@@ -2387,7 +2386,7 @@ dependencies = [
  "llrt_json",
  "llrt_numbers",
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "ryu",
 ]
 
@@ -2398,7 +2397,7 @@ source = "git+https://github.com/awslabs/llrt.git#b914ec2a60ee455b54ea68d717f918
 dependencies = [
  "itoa",
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "ryu",
 ]
 
@@ -2409,7 +2408,7 @@ source = "git+https://github.com/awslabs/llrt.git#b914ec2a60ee455b54ea68d717f918
 dependencies = [
  "llrt_abort",
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
 ]
 
 [[package]]
@@ -2421,7 +2420,7 @@ dependencies = [
  "llrt_hooking",
  "llrt_utils",
  "once_cell",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "tokio",
 ]
 
@@ -2442,7 +2441,7 @@ version = "0.8.1-beta"
 source = "git+https://github.com/awslabs/llrt.git#b914ec2a60ee455b54ea68d717f91820624ec455"
 dependencies = [
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "url",
 ]
 
@@ -2455,7 +2454,7 @@ dependencies = [
  "llrt_encoding",
  "llrt_logging",
  "llrt_utils",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
 ]
 
 [[package]]
@@ -2465,7 +2464,7 @@ source = "git+https://github.com/awslabs/llrt.git#b914ec2a60ee455b54ea68d717f918
 dependencies = [
  "libc",
  "llrt_build",
- "rquickjs 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs",
  "tokio",
  "tracing",
  "windows-sys 0.61.2",
@@ -2781,7 +2780,7 @@ dependencies = [
  "llrt_util",
  "migration",
  "nodeget-lib",
- "rquickjs 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rquickjs",
  "sea-orm",
  "serde",
  "serde_json",
@@ -3739,49 +3738,29 @@ checksum = "afab94fb28594581f62d981211a9a4d53cc8130bbcbbb89a0440d9b8e81a7746"
 [[package]]
 name = "rquickjs"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c50dc6d6c587c339edb4769cf705867497a2baf0eca8b4645fa6ecd22f02c77a"
-dependencies = [
- "rquickjs-core 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "rquickjs"
-version = "0.11.0"
-source = "git+https://github.com/DelSkayn/rquickjs#aa311a38d6aa0812ce6a659c67dae2244672e490"
+source = "git+https://github.com/delskayn/rquickjs.git#5dcebf0e1e4f242de4b98208c328bf69eb4ac1e6"
 dependencies = [
  "either",
- "rquickjs-core 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs-core",
  "rquickjs-macro",
 ]
 
 [[package]]
 name = "rquickjs-core"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8bf7840285c321c3ab20e752a9afb95548c75cd7f4632a0627cea3507e310c1"
-dependencies = [
- "async-lock",
- "hashbrown 0.16.1",
- "rquickjs-sys 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "rquickjs-core"
-version = "0.11.0"
-source = "git+https://github.com/DelSkayn/rquickjs#aa311a38d6aa0812ce6a659c67dae2244672e490"
+source = "git+https://github.com/delskayn/rquickjs.git#5dcebf0e1e4f242de4b98208c328bf69eb4ac1e6"
 dependencies = [
  "async-lock",
  "either",
  "hashbrown 0.17.0",
  "relative-path",
- "rquickjs-sys 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs-sys",
 ]
 
 [[package]]
 name = "rquickjs-macro"
 version = "0.11.0"
-source = "git+https://github.com/DelSkayn/rquickjs#aa311a38d6aa0812ce6a659c67dae2244672e490"
+source = "git+https://github.com/delskayn/rquickjs.git#5dcebf0e1e4f242de4b98208c328bf69eb4ac1e6"
 dependencies = [
  "convert_case",
  "fnv",
@@ -3790,23 +3769,14 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "rquickjs-core 0.11.0 (git+https://github.com/DelSkayn/rquickjs)",
+ "rquickjs-core",
  "syn 2.0.117",
 ]
 
 [[package]]
 name = "rquickjs-sys"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27344601ef27460e82d6a4e1ecb9e7e99f518122095f3c51296da8e9be2b9d83"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "rquickjs-sys"
-version = "0.11.0"
-source = "git+https://github.com/DelSkayn/rquickjs#aa311a38d6aa0812ce6a659c67dae2244672e490"
+source = "git+https://github.com/delskayn/rquickjs.git#5dcebf0e1e4f242de4b98208c328bf69eb4ac1e6"
 dependencies = [
  "cc",
 ]

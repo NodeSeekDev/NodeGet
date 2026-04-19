@@ -43,7 +43,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "chrono", "tracing-log"] }
 
 # JS Runtime
-rquickjs = { version = "0.11.0", default-features = false, features = ["futures"] }
+rquickjs = {version = "0.11", git = "https://github.com/delskayn/rquickjs.git", default-features = false, features = ["futures"] }
 llrt_fetch = { git = "https://github.com/awslabs/llrt.git", default-features = false, features = ["http1", "compression-rust", "webpki-roots", "tls-ring"] }
 llrt_buffer = { git = "https://github.com/awslabs/llrt.git", default-features = false }
 llrt_timers = { git = "https://github.com/awslabs/llrt.git", default-features = false }
