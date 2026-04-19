@@ -1,4 +1,5 @@
 use crate::entity::dynamic_monitoring_summary;
+use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
 use crate::token::get::check_token_limit;
@@ -17,6 +18,7 @@ use sea_orm::{
 };
 use sea_orm::prelude::Expr;
 use serde_json::value::RawValue;
+use serde_json::Value;
 use tracing::{debug, error};
 
 pub async fn query_dynamic_summary(
@@ -63,9 +65,11 @@ pub async fn query_dynamic_summary(
 
         let db = AgentRpcImpl::get_db()?;
 
+        let uuid_cache = MonitoringUuidCache::global();
+
         let query = dynamic_monitoring_summary::Entity::find()
             .select_only()
-            .column(dynamic_monitoring_summary::Column::Uuid)
+            .column(dynamic_monitoring_summary::Column::UuidId)
             .column(dynamic_monitoring_summary::Column::Timestamp);
 
         let query = if query_data.fields.is_empty() {
@@ -103,12 +107,25 @@ pub async fn query_dynamic_summary(
         let mut limit_count = None;
         let mut is_last = false;
 
+        // Pre-resolve UUID conditions to uuid_id via cache
+        let mut uuid_ids: Vec<i16> = Vec::new();
+        for cond in &query_data.condition {
+            if let QueryCondition::Uuid(uuid) = cond {
+                let uuid_id = uuid_cache.get_id(uuid).await.ok_or_else(|| {
+                    anyhow::anyhow!(NodegetError::NotFound(format!("Unknown agent UUID: {uuid}")))
+                })?;
+                uuid_ids.push(uuid_id);
+            }
+        }
+        let mut uuid_id_iter = uuid_ids.into_iter();
+
         let query = query_data
             .condition
             .into_iter()
             .fold(query, |q, cond| match cond {
-                QueryCondition::Uuid(uuid) => {
-                    q.filter(dynamic_monitoring_summary::Column::Uuid.eq(uuid.to_string()))
+                QueryCondition::Uuid(_) => {
+                    let uuid_id = uuid_id_iter.next().unwrap();
+                    q.filter(dynamic_monitoring_summary::Column::UuidId.eq(uuid_id))
                 }
                 QueryCondition::TimestampFromTo(start, end) => q.filter(
                     dynamic_monitoring_summary::Column::Timestamp
@@ -143,7 +160,7 @@ pub async fn query_dynamic_summary(
             query.order_by(dynamic_monitoring_summary::Column::Timestamp, Order::Asc)
         };
 
-        execute_query(db, query.into_json(), limit_count.unwrap_or(5000)).await
+        execute_query(db, query.into_json(), limit_count.unwrap_or(5000), uuid_cache).await
     };
 
     match process_logic.await {
@@ -230,6 +247,7 @@ async fn execute_query(
     db: &sea_orm::DatabaseConnection,
     query: Selector<SelectModel<serde_json::Value>>,
     capacity_hint: u64,
+    uuid_cache: &MonitoringUuidCache,
 ) -> anyhow::Result<Box<RawValue>> {
     debug!(target: "monitoring", "Starting dynamic summary query DB stream");
     let mut stream = query.stream(db).await.map_err(|e| {
@@ -246,8 +264,20 @@ async fn execute_query(
 
     while let Some(item_res) = stream.next().await {
         match item_res {
-            Ok(v) => {
+            Ok(mut v) => {
                 result_count += 1;
+
+                // Translate uuid_id (i16) → uuid (string) for API compatibility
+                if let Value::Object(ref mut map) = v {
+                    if let Some(Value::Number(n)) = map.remove("uuid_id") {
+                        if let Some(id) = n.as_i64() {
+                            if let Some(uuid) = uuid_cache.get_uuid(id as i16).await {
+                                map.insert("uuid".to_string(), Value::String(uuid.to_string()));
+                            }
+                        }
+                    }
+                }
+
                 if first {
                     first = false;
                 } else {

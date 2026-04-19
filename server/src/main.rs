@@ -30,6 +30,7 @@ pub mod js_runtime;
 mod kv;
 mod logging;
 pub(crate) mod monitoring_buffer;
+pub(crate) mod monitoring_uuid_cache;
 mod rpc_timing;
 mod subcommands;
 mod token;

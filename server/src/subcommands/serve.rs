@@ -26,6 +26,11 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
         .expect("Failed to initialize token cache");
     debug!(target: "server", "Token cache initialized");
 
+    crate::monitoring_uuid_cache::MonitoringUuidCache::init()
+        .await
+        .expect("Failed to initialize monitoring UUID cache");
+    debug!(target: "server", "Monitoring UUID cache initialized");
+
     let _ = nodeget_lib::utils::uuid::compare_uuid(config.server_uuid);
     debug!(target: "server", uuid = %config.server_uuid, "Server UUID compared");
 

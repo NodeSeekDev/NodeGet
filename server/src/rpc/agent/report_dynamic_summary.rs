@@ -43,9 +43,14 @@ pub async fn report_dynamic_summary(
         }
         debug!(target: "monitoring", agent_uuid = %agent_uuid, "report_dynamic_summary: permission check passed");
 
+        let uuid_id = crate::monitoring_uuid_cache::MonitoringUuidCache::global()
+            .get_or_insert(agent_uuid)
+            .await
+            .map_err(|e| NodegetError::DatabaseError(format!("UUID cache error: {e}")))?;
+
         let in_data = dynamic_monitoring_summary::ActiveModel {
             id: ActiveValue::default(),
-            uuid: Set(agent_uuid.to_string()),
+            uuid_id: Set(uuid_id),
             timestamp: Set(data.time.cast_signed()),
             cpu_usage: Set(data.cpu_usage),
             gpu_usage: Set(data.gpu_usage),

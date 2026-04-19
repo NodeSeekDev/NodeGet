@@ -1,4 +1,5 @@
 use crate::entity::dynamic_monitoring_summary;
+use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
 use crate::token::get::check_token_limit;
@@ -43,36 +44,57 @@ pub async fn delete_dynamic_summary(
         debug!(target: "monitoring", "delete_dynamic_summary: permission check passed");
 
         let db = AgentRpcImpl::get_db()?;
+        let uuid_cache = MonitoringUuidCache::global();
         let (limit_count, is_last) = extract_limit_and_last(&conditions);
+
+        // Pre-resolve UUID conditions to uuid_ids
+        let resolved_conditions: Vec<ResolvedCondition> = {
+            let mut resolved = Vec::with_capacity(conditions.len());
+            for cond in &conditions {
+                match cond {
+                    QueryCondition::Uuid(uuid) => {
+                        let uuid_id = uuid_cache.get_id(uuid).await.ok_or_else(|| {
+                            NodegetError::NotFound(format!("Agent UUID not found in monitoring registry: {uuid}"))
+                        })?;
+                        resolved.push(ResolvedCondition::UuidId(uuid_id));
+                    }
+                    QueryCondition::TimestampFromTo(s, e) => resolved.push(ResolvedCondition::TimestampFromTo(*s, *e)),
+                    QueryCondition::TimestampFrom(s) => resolved.push(ResolvedCondition::TimestampFrom(*s)),
+                    QueryCondition::TimestampTo(e) => resolved.push(ResolvedCondition::TimestampTo(*e)),
+                    QueryCondition::Limit(_) | QueryCondition::Last => {}
+                }
+            }
+            resolved
+        };
+
         debug!(target: "monitoring", ?limit_count, is_last, "delete_dynamic_summary: executing delete");
 
         let rows_affected = if is_last || limit_count.is_some() {
             let mut query = dynamic_monitoring_summary::Entity::find();
-            for cond in &conditions {
+            for cond in &resolved_conditions {
                 match cond {
-                    QueryCondition::Uuid(uuid) => {
+                    ResolvedCondition::UuidId(uuid_id) => {
                         query = query.filter(
-                            dynamic_monitoring_summary::Column::Uuid.eq(uuid.to_string()),
+                            dynamic_monitoring_summary::Column::UuidId.eq(*uuid_id),
                         );
                     }
-                    QueryCondition::TimestampFromTo(start, end) => {
+                    ResolvedCondition::TimestampFromTo(start, end) => {
                         query = query.filter(
                             dynamic_monitoring_summary::Column::Timestamp
                                 .gte(*start)
                                 .and(dynamic_monitoring_summary::Column::Timestamp.lte(*end)),
                         );
                     }
-                    QueryCondition::TimestampFrom(start) => {
+                    ResolvedCondition::TimestampFrom(start) => {
                         query = query.filter(
                             dynamic_monitoring_summary::Column::Timestamp.gte(*start),
                         );
                     }
-                    QueryCondition::TimestampTo(end) => {
+                    ResolvedCondition::TimestampTo(end) => {
                         query = query.filter(
                             dynamic_monitoring_summary::Column::Timestamp.lte(*end),
                         );
                     }
-                    QueryCondition::Limit(_) | QueryCondition::Last => {}
                 }
             }
 
@@ -107,31 +129,30 @@ pub async fn delete_dynamic_summary(
             }
         } else {
             let mut query = dynamic_monitoring_summary::Entity::delete_many();
-            for cond in &conditions {
+            for cond in &resolved_conditions {
                 match cond {
-                    QueryCondition::Uuid(uuid) => {
+                    ResolvedCondition::UuidId(uuid_id) => {
                         query = query.filter(
-                            dynamic_monitoring_summary::Column::Uuid.eq(uuid.to_string()),
+                            dynamic_monitoring_summary::Column::UuidId.eq(*uuid_id),
                         );
                     }
-                    QueryCondition::TimestampFromTo(start, end) => {
+                    ResolvedCondition::TimestampFromTo(start, end) => {
                         query = query.filter(
                             dynamic_monitoring_summary::Column::Timestamp
                                 .gte(*start)
                                 .and(dynamic_monitoring_summary::Column::Timestamp.lte(*end)),
                         );
                     }
-                    QueryCondition::TimestampFrom(start) => {
+                    ResolvedCondition::TimestampFrom(start) => {
                         query = query.filter(
                             dynamic_monitoring_summary::Column::Timestamp.gte(*start),
                         );
                     }
-                    QueryCondition::TimestampTo(end) => {
+                    ResolvedCondition::TimestampTo(end) => {
                         query = query.filter(
                             dynamic_monitoring_summary::Column::Timestamp.lte(*end),
                         );
                     }
-                    QueryCondition::Limit(_) | QueryCondition::Last => {}
                 }
             }
             query
@@ -204,4 +225,11 @@ fn extract_limit_and_last(conditions: &[QueryCondition]) -> (Option<u64>, bool) 
     }
 
     (limit_count, is_last)
+}
+
+enum ResolvedCondition {
+    UuidId(i16),
+    TimestampFromTo(i64, i64),
+    TimestampFrom(i64),
+    TimestampTo(i64),
 }

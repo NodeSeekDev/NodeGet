@@ -1,5 +1,6 @@
 use super::CleanupResult;
 use super::config::CleanupConfig;
+use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use anyhow::Result;
 use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, QuerySelect, Statement, prelude::*};
 use tracing::{debug, trace};
@@ -123,9 +124,16 @@ async fn cleanup_static_monitoring(
     limit_millis: i64,
 ) -> Result<u64> {
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning static monitoring (postgres)");
+    let uuid = Uuid::parse_str(agent_uuid)?;
+    let uuid_cache = MonitoringUuidCache::global();
+    let uuid_id = match uuid_cache.get_id(&uuid).await {
+        Some(id) => id,
+        None => return Ok(0), // UUID not in monitoring_uuid table, nothing to clean
+    };
+
     // 首先查询该 agent 的最大 timestamp
     let max_timestamp: Option<i64> = static_monitoring::Entity::find()
-        .filter(static_monitoring::Column::Uuid.eq(Uuid::parse_str(agent_uuid)?))
+        .filter(static_monitoring::Column::UuidId.eq(uuid_id))
         .select_only()
         .column_as(static_monitoring::Column::Timestamp.max(), "max_ts")
         .into_tuple()
@@ -142,7 +150,7 @@ async fn cleanup_static_monitoring(
 
     // 使用 SeaORM 执行删除
     let result = static_monitoring::Entity::delete_many()
-        .filter(static_monitoring::Column::Uuid.eq(Uuid::parse_str(agent_uuid)?))
+        .filter(static_monitoring::Column::UuidId.eq(uuid_id))
         .filter(static_monitoring::Column::Timestamp.lt(cutoff_timestamp))
         .exec(db)
         .await?;
@@ -157,9 +165,16 @@ async fn cleanup_dynamic_monitoring(
     limit_millis: i64,
 ) -> Result<u64> {
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning dynamic monitoring (postgres)");
+    let uuid = Uuid::parse_str(agent_uuid)?;
+    let uuid_cache = MonitoringUuidCache::global();
+    let uuid_id = match uuid_cache.get_id(&uuid).await {
+        Some(id) => id,
+        None => return Ok(0),
+    };
+
     // 首先查询该 agent 的最大 timestamp
     let max_timestamp: Option<i64> = dynamic_monitoring::Entity::find()
-        .filter(dynamic_monitoring::Column::Uuid.eq(Uuid::parse_str(agent_uuid)?))
+        .filter(dynamic_monitoring::Column::UuidId.eq(uuid_id))
         .select_only()
         .column_as(dynamic_monitoring::Column::Timestamp.max(), "max_ts")
         .into_tuple()
@@ -174,7 +189,7 @@ async fn cleanup_dynamic_monitoring(
     let cutoff_timestamp = max_ts - limit_millis;
 
     let result = dynamic_monitoring::Entity::delete_many()
-        .filter(dynamic_monitoring::Column::Uuid.eq(Uuid::parse_str(agent_uuid)?))
+        .filter(dynamic_monitoring::Column::UuidId.eq(uuid_id))
         .filter(dynamic_monitoring::Column::Timestamp.lt(cutoff_timestamp))
         .exec(db)
         .await?;
@@ -189,9 +204,16 @@ async fn cleanup_dynamic_monitoring_summary(
     limit_millis: i64,
 ) -> Result<u64> {
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning dynamic monitoring summary (postgres)");
-    // 首先查询该 agent 的最大 timestamp (uuid 是 String 类型)
+    let uuid = Uuid::parse_str(agent_uuid)?;
+    let uuid_cache = MonitoringUuidCache::global();
+    let uuid_id = match uuid_cache.get_id(&uuid).await {
+        Some(id) => id,
+        None => return Ok(0),
+    };
+
+    // 首先查询该 agent 的最大 timestamp (uuid_id is smallint)
     let max_timestamp: Option<i64> = dynamic_monitoring_summary::Entity::find()
-        .filter(dynamic_monitoring_summary::Column::Uuid.eq(agent_uuid))
+        .filter(dynamic_monitoring_summary::Column::UuidId.eq(uuid_id))
         .select_only()
         .column_as(
             dynamic_monitoring_summary::Column::Timestamp.max(),
@@ -209,7 +231,7 @@ async fn cleanup_dynamic_monitoring_summary(
     let cutoff_timestamp = max_ts - limit_millis;
 
     let result = dynamic_monitoring_summary::Entity::delete_many()
-        .filter(dynamic_monitoring_summary::Column::Uuid.eq(agent_uuid))
+        .filter(dynamic_monitoring_summary::Column::UuidId.eq(uuid_id))
         .filter(dynamic_monitoring_summary::Column::Timestamp.lt(cutoff_timestamp))
         .exec(db)
         .await?;

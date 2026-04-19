@@ -4,6 +4,7 @@ use super::utils::{get_limit_millis, is_valid_uuid};
 use crate::entity::{
     crontab_result, dynamic_monitoring, dynamic_monitoring_summary, kv, static_monitoring, task,
 };
+use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use anyhow::Result;
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
@@ -121,10 +122,15 @@ async fn cleanup_static_monitoring_generic(
 ) -> Result<u64> {
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning static monitoring (generic)");
     let uuid = Uuid::parse_str(agent_uuid)?;
+    let uuid_cache = MonitoringUuidCache::global();
+    let uuid_id = match uuid_cache.get_id(&uuid).await {
+        Some(id) => id,
+        None => return Ok(0),
+    };
 
     // 获取该 agent 的最大 timestamp
     let max_timestamp: Option<i64> = static_monitoring::Entity::find()
-        .filter(static_monitoring::Column::Uuid.eq(uuid))
+        .filter(static_monitoring::Column::UuidId.eq(uuid_id))
         .select_only()
         .column(static_monitoring::Column::Timestamp)
         .order_by_desc(static_monitoring::Column::Timestamp)
@@ -141,7 +147,7 @@ async fn cleanup_static_monitoring_generic(
 
     // 删除旧数据
     let deleted = static_monitoring::Entity::delete_many()
-        .filter(static_monitoring::Column::Uuid.eq(uuid))
+        .filter(static_monitoring::Column::UuidId.eq(uuid_id))
         .filter(static_monitoring::Column::Timestamp.lt(min_timestamp))
         .exec(db)
         .await?;
@@ -160,10 +166,15 @@ async fn cleanup_dynamic_monitoring_generic(
 ) -> Result<u64> {
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning dynamic monitoring (generic)");
     let uuid = Uuid::parse_str(agent_uuid)?;
+    let uuid_cache = MonitoringUuidCache::global();
+    let uuid_id = match uuid_cache.get_id(&uuid).await {
+        Some(id) => id,
+        None => return Ok(0),
+    };
 
     // 获取该 agent 的最大 timestamp
     let max_timestamp: Option<i64> = dynamic_monitoring::Entity::find()
-        .filter(dynamic_monitoring::Column::Uuid.eq(uuid))
+        .filter(dynamic_monitoring::Column::UuidId.eq(uuid_id))
         .select_only()
         .column(dynamic_monitoring::Column::Timestamp)
         .order_by_desc(dynamic_monitoring::Column::Timestamp)
@@ -180,7 +191,7 @@ async fn cleanup_dynamic_monitoring_generic(
 
     // 删除旧数据
     let deleted = dynamic_monitoring::Entity::delete_many()
-        .filter(dynamic_monitoring::Column::Uuid.eq(uuid))
+        .filter(dynamic_monitoring::Column::UuidId.eq(uuid_id))
         .filter(dynamic_monitoring::Column::Timestamp.lt(min_timestamp))
         .exec(db)
         .await?;
@@ -198,10 +209,16 @@ async fn cleanup_dynamic_monitoring_summary_generic(
     limit_millis: i64,
 ) -> Result<u64> {
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning dynamic monitoring summary (generic)");
+    let uuid = Uuid::parse_str(agent_uuid)?;
+    let uuid_cache = MonitoringUuidCache::global();
+    let uuid_id = match uuid_cache.get_id(&uuid).await {
+        Some(id) => id,
+        None => return Ok(0),
+    };
 
     // 获取该 agent 的最大 timestamp
     let max_timestamp: Option<i64> = dynamic_monitoring_summary::Entity::find()
-        .filter(dynamic_monitoring_summary::Column::Uuid.eq(agent_uuid))
+        .filter(dynamic_monitoring_summary::Column::UuidId.eq(uuid_id))
         .select_only()
         .column(dynamic_monitoring_summary::Column::Timestamp)
         .order_by_desc(dynamic_monitoring_summary::Column::Timestamp)
@@ -218,7 +235,7 @@ async fn cleanup_dynamic_monitoring_summary_generic(
 
     // 删除旧数据
     let deleted = dynamic_monitoring_summary::Entity::delete_many()
-        .filter(dynamic_monitoring_summary::Column::Uuid.eq(agent_uuid))
+        .filter(dynamic_monitoring_summary::Column::UuidId.eq(uuid_id))
         .filter(dynamic_monitoring_summary::Column::Timestamp.lt(min_timestamp))
         .exec(db)
         .await?;

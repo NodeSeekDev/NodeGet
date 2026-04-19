@@ -7,7 +7,7 @@ pub struct Migration;
 enum DynamicMonitoringSummary {
     Table,
     Id,
-    Uuid,
+    UuidId,
     Timestamp,
     CpuUsage,
     GpuUsage,
@@ -43,7 +43,7 @@ impl MigrationTrait for Migration {
                     .table(DynamicMonitoringSummary::Table)
                     .if_not_exists()
                     .col(big_integer(DynamicMonitoringSummary::Id).auto_increment().primary_key())
-                    .col(string(DynamicMonitoringSummary::Uuid))
+                    .col(small_integer(DynamicMonitoringSummary::UuidId))
                     .col(big_integer(DynamicMonitoringSummary::Timestamp))
                     .col(small_integer_null(DynamicMonitoringSummary::CpuUsage))
                     .col(small_integer_null(DynamicMonitoringSummary::GpuUsage))
@@ -77,7 +77,7 @@ impl MigrationTrait for Migration {
                 Index::create()
                     .name("idx_dynamic_monitoring_summary_uuid_timestamp")
                     .table(DynamicMonitoringSummary::Table)
-                    .col(DynamicMonitoringSummary::Uuid)
+                    .col(DynamicMonitoringSummary::UuidId)
                     .col(DynamicMonitoringSummary::Timestamp)
                     .to_owned(),
             )

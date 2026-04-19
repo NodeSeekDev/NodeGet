@@ -41,10 +41,15 @@ pub async fn report_static(
         }
         debug!(target: "monitoring", agent_uuid = %agent_uuid, "report_static: permission check passed");
 
+        let uuid_id = crate::monitoring_uuid_cache::MonitoringUuidCache::global()
+            .get_or_insert(agent_uuid)
+            .await
+            .map_err(|e| NodegetError::DatabaseError(format!("UUID cache error: {e}")))?;
+
         // 检查该 uuid + data_hash 是否已存在，若存在则跳过写入
         let db = <AgentRpcImpl as crate::rpc::RpcHelper>::get_db()?;
         let exists = static_monitoring::Entity::find()
-            .filter(static_monitoring::Column::Uuid.eq(agent_uuid))
+            .filter(static_monitoring::Column::UuidId.eq(uuid_id))
             .filter(static_monitoring::Column::DataHash.eq(static_monitoring_data.data_hash.as_slice()))
             .one(db)
             .await
@@ -62,7 +67,7 @@ pub async fn report_static(
         let data_hash = static_monitoring_data.data_hash;
         let in_data = static_monitoring::ActiveModel {
             id: ActiveValue::default(),
-            uuid: Set(agent_uuid),
+            uuid_id: Set(uuid_id),
             timestamp: Set(static_monitoring_data.time.cast_signed()),
             cpu_data: AgentRpcImpl::try_set_json(static_monitoring_data.cpu)
                 .map_err(|e| NodegetError::SerializationError(format!("cpu_data: {e}")))?,

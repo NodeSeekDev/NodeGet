@@ -1,4 +1,5 @@
 use crate::entity::static_monitoring;
+use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
 use crate::token::get::check_token_limit;
@@ -14,6 +15,7 @@ use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, ExprTrait, Order, QueryFilter, QueryOrder,
     QuerySelect, SelectModel, Selector,
 };
+use serde_json::Value;
 use serde_json::value::RawValue;
 use tracing::{debug, error};
 
@@ -74,10 +76,11 @@ pub async fn query_static(
         debug!(target: "monitoring", conditions_count = static_data_query.condition.len(), fields_count = static_data_query.fields.len(), "Static query permission check passed");
 
         let db = AgentRpcImpl::get_db()?;
+        let uuid_cache = MonitoringUuidCache::global();
 
         let query = static_monitoring::Entity::find()
             .select_only()
-            .column(static_monitoring::Column::Uuid)
+            .column(static_monitoring::Column::UuidId)
             .column(static_monitoring::Column::Timestamp);
 
         let query = static_data_query
@@ -92,11 +95,26 @@ pub async fn query_static(
         let mut limit_count = None;
         let mut is_last = false;
 
+        // Pre-resolve UUID conditions to uuid_id via cache
+        let mut uuid_ids: Vec<i16> = Vec::new();
+        for cond in &static_data_query.condition {
+            if let QueryCondition::Uuid(uuid) = cond {
+                let uuid_id = uuid_cache.get_id(uuid).await.ok_or_else(|| {
+                    anyhow::anyhow!(NodegetError::NotFound(format!("Unknown agent UUID: {uuid}")))
+                })?;
+                uuid_ids.push(uuid_id);
+            }
+        }
+        let mut uuid_id_iter = uuid_ids.into_iter();
+
         let query = static_data_query
             .condition
             .into_iter()
             .fold(query, |q, cond| match cond {
-                QueryCondition::Uuid(uuid) => q.filter(static_monitoring::Column::Uuid.eq(uuid)),
+                QueryCondition::Uuid(_) => {
+                    let uuid_id = uuid_id_iter.next().unwrap();
+                    q.filter(static_monitoring::Column::UuidId.eq(uuid_id))
+                }
                 QueryCondition::TimestampFromTo(start, end) => q.filter(
                     static_monitoring::Column::Timestamp
                         .gte(start)
@@ -141,6 +159,7 @@ pub async fn query_static(
             query.into_json(),
             &field_mappings,
             limit_count.unwrap_or(100),
+            uuid_cache,
         )
         .await
     };
@@ -170,6 +189,7 @@ async fn execute_query(
     query: Selector<SelectModel<serde_json::Value>>,
     field_mappings: &[(&str, &str)],
     capacity_hint: u64,
+    uuid_cache: &MonitoringUuidCache,
 ) -> anyhow::Result<Box<RawValue>> {
     debug!(target: "monitoring", "Starting static query DB stream");
     let mut stream = query.stream(db).await.map_err(|e| {
@@ -189,6 +209,14 @@ async fn execute_query(
             Ok(mut v) => {
                 result_count += 1;
                 if let Some(obj) = v.as_object_mut() {
+                    // Translate uuid_id (i16) → uuid (string) for API compatibility
+                    if let Some(Value::Number(n)) = obj.remove("uuid_id") {
+                        if let Some(id) = n.as_i64() {
+                            if let Some(uuid) = uuid_cache.get_uuid(id as i16).await {
+                                obj.insert("uuid".to_string(), Value::String(uuid.to_string()));
+                            }
+                        }
+                    }
                     for (old_key, new_key) in field_mappings {
                         rename_and_fix_json(obj, old_key, new_key);
                     }

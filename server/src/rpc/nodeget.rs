@@ -307,6 +307,7 @@ mod config_ops {
         debug!(target: "server", "reading server config");
         let process_logic = async {
             ensure_super_token(&token).await?;
+            debug!(target: "server", "Super token verified for read_config");
 
             let config_path = SERVER_CONFIG_PATH.get().ok_or_else(|| {
                 NodegetError::Other("Server config path not initialized".to_owned())
@@ -314,10 +315,12 @@ mod config_ops {
 
             // 验证路径安全性，防止路径遍历
             validate_config_path(config_path)?;
+            debug!(target: "server", path = %config_path, "Config path validated for read");
 
             let file = tokio::fs::read_to_string(config_path)
                 .await
                 .map_err(|e| NodegetError::Other(format!("Failed to read config file: {e}")))?;
+            debug!(target: "server", bytes = file.len(), "Config file read successfully");
 
             Ok(file)
         };
@@ -339,9 +342,11 @@ mod config_ops {
         debug!(target: "server", config_len = config_string.len(), "editing server config");
         let process_logic = async {
             ensure_super_token(&token).await?;
+            debug!(target: "server", "Super token verified for edit_config");
 
             let _parsed: ServerConfig = toml::from_str(&config_string)
                 .map_err(|e| NodegetError::ParseError(format!("Config parse error: {e}")))?;
+            debug!(target: "server", "Config string parsed successfully");
 
             let config_path = SERVER_CONFIG_PATH.get().ok_or_else(|| {
                 NodegetError::Other("Server config path not initialized".to_owned())
@@ -349,6 +354,7 @@ mod config_ops {
 
             // 验证路径安全性，防止路径遍历
             validate_config_path(config_path)?;
+            debug!(target: "server", path = %config_path, "Config path validated");
 
             // 使用临时文件+原子重命名，确保写入完整性
             let temp_path = format!("{config_path}.tmp");
@@ -357,6 +363,7 @@ mod config_ops {
                 .map_err(|e| {
                     NodegetError::Other(format!("Failed to write temp config file: {e}"))
                 })?;
+            debug!(target: "server", temp_path = %temp_path, "Temp config file written");
 
             tokio::fs::rename(&temp_path, config_path)
                 .await
@@ -365,9 +372,11 @@ mod config_ops {
                     let _ = tokio::fs::remove_file(&temp_path);
                     NodegetError::Other(format!("Failed to rename config file: {e}"))
                 })?;
+            debug!(target: "server", "Config file renamed from temp to target");
 
             if let Some(notify) = RELOAD_NOTIFY.get() {
                 notify.notify_one();
+                debug!(target: "server", "Config reload notification sent");
             }
 
             Ok(true)
@@ -434,6 +443,7 @@ mod list_all_agent_uuid {
             };
 
             let response = ListAllAgentUuidResponse { uuids };
+            debug!(target: "server", uuid_count = response.uuids.len(), "list_all_agent_uuid completed");
             let json_str = serde_json::to_string(&response)
                 .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
 
@@ -465,6 +475,7 @@ mod list_all_agent_uuid {
             .await
             .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
         if is_super_token {
+            trace!(target: "server", "Super token detected, granting All agent UUID access");
             return Ok(AgentUuidListPermission::All);
         }
 
@@ -525,6 +536,7 @@ mod list_all_agent_uuid {
         }
 
         if has_global_list_permission {
+            trace!(target: "server", "Global ListAllAgentUuid permission found, granting All access");
             return Ok(AgentUuidListPermission::All);
         }
 
@@ -540,22 +552,18 @@ mod list_all_agent_uuid {
             .filter(|uuid| operable_scoped_uuids.contains(uuid))
             .collect();
 
+        trace!(target: "server", allowed_count = allowed_scoped_uuids.len(), "Scoped agent UUID permission resolved");
         Ok(AgentUuidListPermission::Scoped(allowed_scoped_uuids))
     }
 
     async fn fetch_all_agent_uuids(db: &sea_orm::DatabaseConnection) -> anyhow::Result<Vec<Uuid>> {
-        debug!(target: "server", "fetching all agent uuids from db");
-        // 使用 UNION 合并三个表的查询，数据库层面去重，效率最高
-        // UNION 自动去重，UNION ALL 不去重
-        let sql = r"
-            SELECT uuid FROM static_monitoring
-            UNION
-            SELECT uuid FROM dynamic_monitoring
-            UNION
-            SELECT uuid FROM task
-            ORDER BY uuid
-        ";
+        debug!(target: "server", "fetching all agent uuids");
+        // Get UUIDs from monitoring_uuid cache (covers static/dynamic/summary)
+        let uuid_cache = crate::monitoring_uuid_cache::MonitoringUuidCache::global();
+        let mut uuid_set: std::collections::BTreeSet<Uuid> = uuid_cache.get_all_uuids().await.into_iter().collect();
 
+        // Also include UUIDs from task table (not covered by monitoring_uuid)
+        let sql = r"SELECT uuid FROM task";
         let db_backend = db.get_database_backend();
         let statement = Statement::from_string(db_backend, sql.to_string());
 
@@ -564,7 +572,12 @@ mod list_all_agent_uuid {
             .await
             .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
-        let uuids: Vec<Uuid> = rows.into_iter().map(|row| row.uuid).collect();
+        for row in rows {
+            uuid_set.insert(row.uuid);
+        }
+
+        let uuids: Vec<Uuid> = uuid_set.into_iter().collect();
+        debug!(target: "server", uuid_count = uuids.len(), "Fetched all agent UUIDs");
 
         Ok(uuids)
     }
@@ -584,8 +597,10 @@ mod database_storage {
 
     /// 需要查询的表名列表（排除 `seaql_migrations`）
     const TABLE_NAMES: &[&str] = &[
+        "monitoring_uuid",
         "static_monitoring",
         "dynamic_monitoring",
+        "dynamic_monitoring_summary",
         "task",
         "token",
         "kv",
@@ -626,6 +641,7 @@ mod database_storage {
                 )
                 .into());
             }
+            debug!(target: "server", "Super token verified for database_storage");
 
             let db = NodegetServerRpcImpl::get_db()?;
             let tables = match db.get_database_backend() {
@@ -641,6 +657,7 @@ mod database_storage {
 
             let total: i64 = tables.values().sum();
             let response = DatabaseStorageResponse { tables, total };
+            debug!(target: "server", total_bytes = total, "Database storage query completed");
 
             let json_str = serde_json::to_string(&response)
                 .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
@@ -692,6 +709,7 @@ mod database_storage {
         for row in rows {
             result.insert(row.table_name, row.table_size);
         }
+        debug!(target: "server", table_count = result.len(), "Postgres table sizes queried");
 
         Ok(result)
     }
@@ -723,6 +741,7 @@ mod database_storage {
             let size = row.map_or(0, |r| r.table_size);
             result.insert(table_name.to_string(), size);
         }
+        debug!(target: "server", table_count = result.len(), "SQLite table sizes queried");
 
         Ok(result)
     }
@@ -753,8 +772,10 @@ mod log_query {
                 )
                 .into());
             }
+            debug!(target: "server", "Super token verified for log query");
 
             let logs = logging::get_memory_logs();
+            debug!(target: "server", log_count = logs.len(), "In-memory logs fetched");
 
             let json_str = serde_json::to_string(&logs)
                 .map_err(|e| NodegetError::SerializationError(e.to_string()))?;

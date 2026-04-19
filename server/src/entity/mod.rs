@@ -9,6 +9,7 @@ pub mod dynamic_monitoring_summary;
 pub mod js_result;
 pub mod js_worker;
 pub mod kv;
+pub mod monitoring_uuid;
 pub mod static_monitoring;
 pub mod task;
 pub mod token;

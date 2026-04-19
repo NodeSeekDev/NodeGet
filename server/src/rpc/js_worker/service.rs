@@ -75,12 +75,19 @@ pub async fn enqueue_defined_js_worker_run(
             .await;
 
         let finish_time = get_local_timestamp_ms_i64().unwrap_or(start_time);
+        let duration_ms = finish_time - start_time;
         let (result_json, mut error_message): (Option<Value>, Option<String>) = match run_outcome {
-            Ok(value) => (Some(value), None),
-            Err(e) => (
-                None,
-                Some(format!("JavaScript runtime execution failed: {e}")),
-            ),
+            Ok(value) => {
+                debug!(target: "js_worker", js_result_id = js_result_id, worker = %worker_name, duration_ms = duration_ms, "JS execution completed successfully");
+                (Some(value), None)
+            }
+            Err(e) => {
+                error!(target: "js_worker", js_result_id = js_result_id, worker = %worker_name, duration_ms = duration_ms, error = %e, "JS execution failed");
+                (
+                    None,
+                    Some(format!("JavaScript runtime execution failed: {e}")),
+                )
+            }
         };
 
         if result_json.is_none() && error_message.is_none() {
@@ -203,13 +210,20 @@ pub async fn run_inline_call_and_record_result(
     };
 
     let finish_time = get_local_timestamp_ms_i64().unwrap_or(start_time);
+    let duration_ms = finish_time - start_time;
     let (result_json, mut error_message, return_value): (
         Option<Value>,
         Option<String>,
         anyhow::Result<Value>,
     ) = match run_outcome {
-        Ok(value) => (Some(value.clone()), None, Ok(value)),
-        Err(e) => (None, Some(e.to_string()), Err(e)),
+        Ok(value) => {
+            debug!(target: "js_worker", js_result_id = js_result_id, worker = %worker_name, duration_ms = duration_ms, "Inline call execution completed successfully");
+            (Some(value.clone()), None, Ok(value))
+        }
+        Err(e) => {
+            error!(target: "js_worker", js_result_id = js_result_id, worker = %worker_name, duration_ms = duration_ms, error = %e, "Inline call execution failed");
+            (None, Some(e.to_string()), Err(e))
+        }
     };
 
     if result_json.is_none() && error_message.is_none() {
@@ -296,12 +310,16 @@ pub async fn enqueue_source_js_worker_run(
         };
 
         let finish_time = get_local_timestamp_ms_i64().unwrap_or(start_time);
-        let (result_json, mut error_message): (Option<Value>, Option<String>) = match run_outcome {
-            Ok(value) => (Some(value), None),
-            Err(e) => (
-                None,
-                Some(format!("JavaScript runtime execution failed: {e}")),
-            ),
+        let duration_ms = finish_time - start_time;
+        let (result_json, mut error_message): (Option<Value>, Option<String>) = match &run_outcome {
+            Ok(value) => {
+                debug!(target: "js_worker", js_result_id, worker = %worker_name_in_spawn, duration_ms, "Source mode JS execution completed successfully");
+                (Some(value.clone()), None)
+            }
+            Err(e) => {
+                error!(target: "js_worker", js_result_id, worker = %worker_name_in_spawn, duration_ms, error = %e, "Source mode JS execution failed");
+                (None, Some(format!("JavaScript runtime execution failed: {e}")))
+            }
         };
 
         if result_json.is_none() && error_message.is_none() {

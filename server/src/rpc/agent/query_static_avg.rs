@@ -1,3 +1,4 @@
+use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
 use crate::token::get::check_token_limit;
@@ -69,13 +70,18 @@ pub async fn query_static_avg(
 
         debug!(target: "monitoring", uuid = %static_data_avg_query.uuid, "Static avg query permission check passed");
 
+        let uuid_cache = MonitoringUuidCache::global();
+        let uuid_id = uuid_cache.get_id(&static_data_avg_query.uuid).await.ok_or_else(|| {
+            NodegetError::NotFound(format!("Agent UUID {} not found in monitoring_uuid table", static_data_avg_query.uuid))
+        })?;
+
         let db = AgentRpcImpl::get_db()?;
         ensure_postgres_backend(db).map_err(|e| {
             error!(target: "monitoring", error = %e, "Static avg query requires PostgreSQL backend");
             e
         })?;
-        debug!(target: "monitoring", uuid = %static_data_avg_query.uuid, "Executing static avg SQL query");
-        query_static_avg_postgres(db, &static_data_avg_query).await
+        debug!(target: "monitoring", uuid = %static_data_avg_query.uuid, uuid_id, "Executing static avg SQL query");
+        query_static_avg_postgres(db, &static_data_avg_query, uuid_id).await
     };
 
     match process_logic.await {
@@ -137,6 +143,7 @@ fn ensure_postgres_backend(db: &DatabaseConnection) -> anyhow::Result<()> {
 async fn query_static_avg_postgres(
     db: &DatabaseConnection,
     query: &StaticDataAvgQuery,
+    uuid_id: i16,
 ) -> anyhow::Result<Box<RawValue>> {
     let sql = build_postgres_static_avg_sql(&query.fields);
     tracing::trace!(target: "monitoring", fields_count = query.fields.len(), "Static avg SQL generated");
@@ -150,6 +157,7 @@ async fn query_static_avg_postgres(
             i64::try_from(query.points)
                 .map_err(|_| NodegetError::InvalidInput("points is too large".to_owned()))?
                 .into(),
+            (uuid_id as i32).into(),
         ],
     );
 
@@ -208,7 +216,7 @@ WITH filtered AS MATERIALIZED (
         MIN(timestamp) OVER () AS min_ts,
         MAX(timestamp) OVER () AS max_ts
     FROM static_monitoring
-    WHERE uuid = CAST($1 AS uuid)
+    WHERE uuid_id = $5::smallint
       AND ($2::bigint IS NULL OR timestamp >= $2)
       AND ($3::bigint IS NULL OR timestamp <= $3)
 ),

@@ -184,7 +184,9 @@ impl RpcServer for TaskRpcImpl {
         .await;
 
         match is_allowed_result {
-            Ok(true) => {}
+            Ok(true) => {
+                tracing::debug!(target: "task", "register_task permission check passed");
+            }
             Ok(false) => {
                 tracing::error!(target: "task", "permission denied, rejecting subscription");
                 subscription_sink

@@ -1,4 +1,5 @@
 use crate::entity::dynamic_monitoring;
+use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
 use crate::token::get::check_token_limit;
@@ -81,14 +82,25 @@ pub async fn dynamic_data_multi_last_query(
         debug!(target: "monitoring", uuids_count = deduped_uuids.len(), fields_count = fields.len(), "Dynamic multi-last query permission check passed");
 
         let db = AgentRpcImpl::get_db()?;
-        let statement = build_union_last_statement(&deduped_uuids, &fields, db)?;
+        let uuid_cache = MonitoringUuidCache::global();
+
+        // Resolve UUIDs to uuid_ids
+        let mut uuid_id_pairs: Vec<(Uuid, i16)> = Vec::with_capacity(deduped_uuids.len());
+        for uuid in &deduped_uuids {
+            let uuid_id = uuid_cache.get_id(uuid).await.ok_or_else(|| {
+                NodegetError::NotFound(format!("Agent UUID not found in monitoring registry: {uuid}"))
+            })?;
+            uuid_id_pairs.push((*uuid, uuid_id));
+        }
+
+        let statement = build_union_last_statement(&uuid_id_pairs, &fields, db)?;
 
         let field_mappings: Vec<(&str, &str)> = fields
             .iter()
             .map(|field| (field.column_name(), field.json_key()))
             .collect();
 
-        execute_statement_query(db, statement, &field_mappings, deduped_uuids.len()).await
+        execute_statement_query(db, statement, &field_mappings, deduped_uuids.len(), &uuid_cache).await
     };
 
     match process_logic.await {
@@ -125,18 +137,18 @@ fn dedupe_uuids(uuids: Vec<Uuid>) -> Vec<Uuid> {
 }
 
 fn build_union_last_statement(
-    uuids: &[Uuid],
+    uuid_id_pairs: &[(Uuid, i16)],
     fields: &[DynamicDataQueryField],
     db: &DatabaseConnection,
 ) -> anyhow::Result<Statement> {
-    let mut uuid_iter = uuids.iter().copied();
-    let first_uuid = uuid_iter
+    let mut pair_iter = uuid_id_pairs.iter();
+    let first_pair = pair_iter
         .next()
         .ok_or_else(|| NodegetError::InvalidInput("The uuids list cannot be empty".to_owned()))?;
 
-    let mut union_query = build_single_last_select(first_uuid, fields);
-    for uuid in uuid_iter {
-        union_query.union(UnionType::All, build_single_last_select(uuid, fields));
+    let mut union_query = build_single_last_select(first_pair.1, fields);
+    for pair in pair_iter {
+        union_query.union(UnionType::All, build_single_last_select(pair.1, fields));
     }
 
     Ok(StatementBuilder::build(
@@ -145,10 +157,10 @@ fn build_union_last_statement(
     ))
 }
 
-fn build_single_last_select(uuid: Uuid, fields: &[DynamicDataQueryField]) -> SelectStatement {
+fn build_single_last_select(uuid_id: i16, fields: &[DynamicDataQueryField]) -> SelectStatement {
     let inner_query = dynamic_monitoring::Entity::find()
         .select_only()
-        .column(dynamic_monitoring::Column::Uuid)
+        .column(dynamic_monitoring::Column::UuidId)
         .column(dynamic_monitoring::Column::Timestamp);
 
     let inner_query = fields.iter().fold(inner_query, |query, field| match field {
@@ -162,7 +174,7 @@ fn build_single_last_select(uuid: Uuid, fields: &[DynamicDataQueryField]) -> Sel
     });
 
     let inner_query = inner_query
-        .filter(dynamic_monitoring::Column::Uuid.eq(uuid))
+        .filter(dynamic_monitoring::Column::UuidId.eq(uuid_id))
         .order_by(dynamic_monitoring::Column::Timestamp, Order::Desc)
         .limit(1)
         .into_query();
@@ -170,7 +182,7 @@ fn build_single_last_select(uuid: Uuid, fields: &[DynamicDataQueryField]) -> Sel
     let alias = Alias::new("last_row");
     let mut wrapped = Query::select();
     wrapped
-        .column((alias.clone(), Alias::new("uuid")))
+        .column((alias.clone(), Alias::new("uuid_id")))
         .column((alias.clone(), Alias::new("timestamp")))
         .from_subquery(inner_query, alias.clone());
 
@@ -208,6 +220,7 @@ async fn execute_statement_query(
     statement: Statement,
     field_mappings: &[(&str, &str)],
     capacity_hint: usize,
+    uuid_cache: &MonitoringUuidCache,
 ) -> anyhow::Result<Box<RawValue>> {
     debug!(target: "monitoring", "Starting dynamic multi-last query DB stream");
     let mut stream = serde_json::Value::find_by_statement(statement)
@@ -230,6 +243,14 @@ async fn execute_statement_query(
             Ok(mut value) => {
                 result_count += 1;
                 if let Some(obj) = value.as_object_mut() {
+                    // Translate uuid_id → uuid string
+                    if let Some(uuid_id_val) = obj.remove("uuid_id") {
+                        if let Some(uuid_id) = uuid_id_val.as_i64() {
+                            if let Some(uuid) = uuid_cache.get_uuid(uuid_id as i16).await {
+                                obj.insert("uuid".to_owned(), serde_json::Value::String(uuid.to_string()));
+                            }
+                        }
+                    }
                     for (old_key, new_key) in field_mappings {
                         rename_and_fix_json(obj, old_key, new_key);
                     }

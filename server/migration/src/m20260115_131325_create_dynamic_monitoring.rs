@@ -20,8 +20,8 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(
-                        ColumnDef::new(DynamicMonitoringInDatabase::Uuid)
-                            .uuid()
+                        ColumnDef::new(DynamicMonitoringInDatabase::UuidId)
+                            .small_integer()
                             .not_null(),
                     )
                     .col(
@@ -73,7 +73,7 @@ impl MigrationTrait for Migration {
                 Index::create()
                     .name("idx-dynamic-uuid-timestamp")
                     .table(DynamicMonitoringInDatabase::Table)
-                    .col(DynamicMonitoringInDatabase::Uuid)
+                    .col(DynamicMonitoringInDatabase::UuidId)
                     .col(DynamicMonitoringInDatabase::Timestamp)
                     .to_owned(),
             )
@@ -116,7 +116,7 @@ enum DynamicMonitoringInDatabase {
     #[sea_orm(iden = "dynamic_monitoring")]
     Table,
     Id,
-    Uuid,
+    UuidId,
     Timestamp,
 
     CpuData,

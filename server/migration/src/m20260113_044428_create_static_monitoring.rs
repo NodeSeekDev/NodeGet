@@ -20,8 +20,8 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(
-                        ColumnDef::new(StaticMonitoringInDatabase::Uuid)
-                            .uuid()
+                        ColumnDef::new(StaticMonitoringInDatabase::UuidId)
+                            .small_integer()
                             .not_null(),
                     )
                     .col(
@@ -58,7 +58,7 @@ impl MigrationTrait for Migration {
                 Index::create()
                     .name("idx-static-uuid-timestamp")
                     .table(StaticMonitoringInDatabase::Table)
-                    .col(StaticMonitoringInDatabase::Uuid)
+                    .col(StaticMonitoringInDatabase::UuidId)
                     .col(StaticMonitoringInDatabase::Timestamp)
                     .to_owned(),
             )
@@ -69,7 +69,7 @@ impl MigrationTrait for Migration {
                 Index::create()
                     .name("idx-static-uuid-data-hash")
                     .table(StaticMonitoringInDatabase::Table)
-                    .col(StaticMonitoringInDatabase::Uuid)
+                    .col(StaticMonitoringInDatabase::UuidId)
                     .col(StaticMonitoringInDatabase::DataHash)
                     .unique()
                     .to_owned(),
@@ -109,7 +109,7 @@ enum StaticMonitoringInDatabase {
     #[sea_orm(iden = "static_monitoring")]
     Table,
     Id,
-    Uuid,
+    UuidId,
     Timestamp,
 
     CpuData,

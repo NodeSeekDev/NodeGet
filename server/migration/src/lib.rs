@@ -6,6 +6,7 @@ pub struct Migrator;
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
+            Box::new(m20260113_000000_create_monitoring_uuid::Migration),
             Box::new(m20260113_044428_create_static_monitoring::Migration),
             Box::new(m20260115_131325_create_dynamic_monitoring::Migration),
             Box::new(m20260118_030100_create_task::Migration),
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
         ]
     }
 }
+mod m20260113_000000_create_monitoring_uuid;
 mod m20260113_044428_create_static_monitoring;
 mod m20260115_131325_create_dynamic_monitoring;
 mod m20260118_030100_create_task;
