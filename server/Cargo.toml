@@ -51,5 +51,9 @@ llrt_url = { git = "https://github.com/awslabs/llrt.git", default-features = fal
 llrt_stream_web = { git = "https://github.com/awslabs/llrt.git", default-features = false }
 llrt_util = { git = "https://github.com/awslabs/llrt.git", default-features = false }
 
+[target.'cfg(target_arch = "arm")'.dependencies]
+rquickjs = { version = "0.11", git = "https://github.com/delskayn/rquickjs.git", default-features = false, features = ["futures", "bindgen"] }
+
 [features]
 default = []
+
