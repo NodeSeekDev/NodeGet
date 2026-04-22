@@ -1,6 +1,6 @@
 # 配置文件
 
-Nodeget 均使用 Toml 作为配置文件格式，请事先了解 Toml 语法规范: <https://toml.io/cn/>
+Nodeget 的主控和被控均使用 Toml 作为配置文件格式，请事先了解 Toml 语法规范: <https://toml.io/cn/>
 
 `nodeget-server` 使用子命令启动：
 
@@ -17,5 +17,6 @@ nodeget-server roll-super-token -c ./config.toml
 
 `-c/--config` 为必填参数；若配置文件无法读取将会 Panic 退出。
 
+## 详细的配置参考
 - [Agent](./agent.md)
 - [Server](./server.md)

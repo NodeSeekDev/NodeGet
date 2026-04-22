@@ -1,5 +1,7 @@
 # Agent 配置
 
+官方脚本安装的 nodeget-agent 的配置路径位于  /etc/nodeget-agent.conf
+
 ```toml
 # 日志等级，可选 trace / debug / info / warn / error，默认 info
 # 如果你正在测试或遇到问题，请至少选择 debug
@@ -54,7 +56,7 @@ server_uuid = "00000000-0000-0000-0000-000000000000"
 token = "test_server1_token"
 
 # Server 的 Websocket 地址，必须携带协议头
-ws_url = "ws://127.0.0.1:3000/"
+ws_url = "ws://127.0.0.1:2211/"
 
 # 是否允许执行任务
 allow_task = true

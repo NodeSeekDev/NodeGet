@@ -1,8 +1,10 @@
 # Server 配置
 
+官方脚本安装的 nodeget-server 的配置路径位于  /etc/nodeget-server.conf
+
 ```toml
 # WebSocket 监听地址，同时也会监听 Http 服务
-ws_listener = "0.0.0.0:3000"
+ws_listener = "0.0.0.0:2211"
 
 # JSON-RPC 最大连接数，默认 100
 jsonrpc_max_connections = 100
