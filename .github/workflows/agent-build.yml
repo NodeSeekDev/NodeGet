@@ -131,7 +131,7 @@ jobs:
 
       - name: Build binary
         working-directory: ./agent
-        run: cargo clean && cross build --target ${{ matrix.platform.target }} --profile minimal --jobs 32 --locked
+        run: cargo clean && cross build --target ${{ matrix.platform.target }} --profile minimal --jobs 32
         env:
           CROSS_NO_WARNINGS: 0
 
@@ -174,6 +174,39 @@ jobs:
           body: "Automated dev build from `${{ github.sha }}`"
           files: artifacts/*
 
+  release-main:
+    name: Release Main
+    needs: [agent-release, agent-windows, agent-macos]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from nodeget-lib
+        id: version
+        run: |
+          VERSION=$(grep '^version' nodeget-lib/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agent-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "NodeGet ${{ steps.version.outputs.tag }}"
+          make_latest: true
+          files: artifacts/*
+
   agent-windows:
     name: Build - ${{ matrix.platform.release_for }}
     strategy:
@@ -202,7 +235,7 @@ jobs:
 
       - name: Build binary
         working-directory: ./agent
-        run: cargo build --target ${{ matrix.platform.target }} --profile minimal --locked
+        run: cargo build --target ${{ matrix.platform.target }} --profile minimal
 
       - name: Rename binary
         run: copy target\${{ matrix.platform.target }}\minimal\nodeget-agent.exe target\${{ matrix.platform.target }}\minimal\${{ matrix.platform.binary_name }}
@@ -220,10 +253,6 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - release_for: macos_x86_64
-            target: x86_64-apple-darwin
-            binary_name: nodeget-agent-macos-x86_64
-            runner: macos-13
           - release_for: macos_aarch64
             target: aarch64-apple-darwin
             binary_name: nodeget-agent-macos-aarch64
@@ -241,7 +270,7 @@ jobs:
 
       - name: Build binary
         working-directory: ./agent
-        run: cargo build --target ${{ matrix.platform.target }} --profile minimal --locked
+        run: cargo build --target ${{ matrix.platform.target }} --profile minimal
 
       - name: Rename binary
         run: cp target/${{ matrix.platform.target }}/minimal/nodeget-agent target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}

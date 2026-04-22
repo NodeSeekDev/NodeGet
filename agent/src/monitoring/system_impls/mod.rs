@@ -10,6 +10,56 @@ use sysinfo::System;
 use tokio::sync::{Mutex, MutexGuard, OnceCell};
 use virtualization_detect::detect_virtualization;
 
+/// 获取精确的 OS 版本号
+///
+/// 优先使用 sysinfo 的 `os_version()`（读取 `/etc/os-release` 的 `VERSION_ID`），
+/// 但某些发行版（如 Debian）的 `VERSION_ID` 只有主版本号（如 "11"），
+/// 需要 fallback 到发行版专属文件获取小版本号（如 "11.1"）。
+fn get_precise_os_version() -> String {
+    let version = System::os_version().unwrap_or_default();
+
+    #[cfg(target_os = "linux")]
+    {
+        let distro = System::distribution_id();
+        // Debian: /etc/debian_version 包含精确版本号（如 "11.1"）
+        if distro == "debian" {
+            if let Ok(v) = std::fs::read_to_string("/etc/debian_version") {
+                let v = v.trim();
+                if !v.is_empty() {
+                    return v.to_string();
+                }
+            }
+        }
+        // Alpine: /etc/alpine-release 包含精确版本号（如 "3.18.4"）
+        if distro == "alpine" {
+            if let Ok(v) = std::fs::read_to_string("/etc/alpine-release") {
+                let v = v.trim();
+                if !v.is_empty() {
+                    return v.to_string();
+                }
+            }
+        }
+        // RHEL/CentOS: /etc/redhat-release 包含 "... release X.Y ..."
+        if distro == "rhel" || distro == "centos" || distro == "rocky" || distro == "almalinux" {
+            if let Ok(content) = std::fs::read_to_string("/etc/redhat-release") {
+                // 格式: "CentOS Linux release 7.9.2009 (Core)"
+                if let Some(pos) = content.find("release ") {
+                    let after = &content[pos + 8..];
+                    let ver: String = after
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit() || *c == '.')
+                        .collect();
+                    if !ver.is_empty() {
+                        return ver;
+                    }
+                }
+            }
+        }
+    }
+
+    version
+}
+
 // 进程监控模块
 pub mod process;
 // 虚拟化检测模块
@@ -62,7 +112,7 @@ impl StaticDataFromSystem {
                 system_name: System::name().unwrap_or_default(),
                 system_kernel: System::kernel_version().unwrap_or_default(),
                 system_kernel_version: System::long_os_version().unwrap_or_default(),
-                system_os_version: System::os_version().unwrap_or_default(),
+                system_os_version: get_precise_os_version(),
                 system_os_long_version: System::long_os_version().unwrap_or_default(),
                 distribution_id: System::distribution_id(),
                 system_host_name: System::host_name().unwrap_or_default(),

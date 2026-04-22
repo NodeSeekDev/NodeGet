@@ -3619,6 +3619,7 @@ name = "rquickjs-sys"
 version = "0.11.0"
 source = "git+https://github.com/delskayn/rquickjs.git#5dcebf0e1e4f242de4b98208c328bf69eb4ac1e6"
 dependencies = [
+ "bindgen",
  "cc",
 ]
 
