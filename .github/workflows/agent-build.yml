@@ -220,10 +220,6 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - release_for: macos_x86_64
-            target: x86_64-apple-darwin
-            binary_name: nodeget-agent-macos-x86_64
-            runner: macos-13
           - release_for: macos_aarch64
             target: aarch64-apple-darwin
             binary_name: nodeget-agent-macos-aarch64
