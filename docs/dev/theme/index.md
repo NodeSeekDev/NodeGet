@@ -4,6 +4,8 @@
 
 建议将受限token直接写入到某个配置文件（如 config.json)
 
+可以在 dashbaord token管理处生成预设的 Visitor token
+
 参考配置
 
 ```json
@@ -18,10 +20,12 @@
     "site_tokens":[
         {
             "name":"master server node 1",
+            "websocket":"wss://HOST1",
             "token":"Your Token"
         },
         {
             "name":"master server node 2",
+            "websocket":"wss://HOST2",
             "token":"Your Token"
         }
     ]
