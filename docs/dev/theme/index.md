@@ -4,7 +4,7 @@
 
 建议将受限token直接写入到某个配置文件（如 config.json)
 
-可以在 dashbaord token管理处生成预设的 Visitor token
+可以在 dashboard token管理处生成预设的 Visitor token
 
 参考配置
 
