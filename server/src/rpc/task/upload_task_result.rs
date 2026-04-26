@@ -1,7 +1,7 @@
 use crate::entity::task;
 use crate::rpc::RpcHelper;
 use crate::rpc::task::TaskManager;
-use crate::token::get::{check_token_limit, get_token};
+use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{Permission, Scope, Task};
@@ -25,23 +25,12 @@ pub async fn upload_task_result(
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
         // 先进行权限预检，防止无权限调用者通过数据库查询差异探测任务存在性（时序攻击）
-        // 直接读取 token 的 limits，检查是否对当前 agent 有任何 Task::Write 权限
-        let token_data = get_token(&token_or_auth).await.map_err(|e| {
-            NodegetError::PermissionDenied(format!("Token validation failed: {e}"))
-        })?;
-
-        let has_any_task_write = token_data.token_limit.iter().any(|limit| {
-            let scope_covered = limit.scopes.iter().any(|s| {
-                matches!(s, Scope::Global)
-                    || matches!(s, Scope::AgentUuid(id) if *id == task_response.agent_uuid)
-            });
-            if !scope_covered {
-                return false;
-            }
-            limit.permissions.iter().any(|p| {
-                matches!(p, Permission::Task(Task::Write(_)))
-            })
-        });
+        let has_any_task_write = check_token_limit(
+            &token_or_auth,
+            vec![Scope::AgentUuid(task_response.agent_uuid)],
+            vec![Permission::Task(Task::Write("*".to_string()))],
+        )
+        .await?;
 
         if !has_any_task_write {
             return Err(NodegetError::PermissionDenied(

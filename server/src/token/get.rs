@@ -3,7 +3,7 @@ use crate::token::hash_string;
 use crate::token::super_token::check_super_token;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{
-    CrontabResult, JsResult, Kv, Limit, Permission, Scope, Token,
+    CrontabResult, JsResult, Kv, Limit, Permission, Scope, Task, Token,
 };
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::get_local_timestamp_ms_i64;
@@ -172,6 +172,22 @@ fn permission_matches(granted: &Permission, required: &Permission) -> bool {
             Permission::JsResult(JsResult::Delete(pattern)),
             Permission::JsResult(JsResult::Delete(worker_name)),
         ) => wildcard_matches_pattern(worker_name, pattern),
+        (
+            Permission::Task(Task::Create(pattern)),
+            Permission::Task(Task::Create(task_name)),
+        )
+        | (
+            Permission::Task(Task::Read(pattern)),
+            Permission::Task(Task::Read(task_name)),
+        )
+        | (
+            Permission::Task(Task::Write(pattern)),
+            Permission::Task(Task::Write(task_name)),
+        )
+        | (
+            Permission::Task(Task::Delete(pattern)),
+            Permission::Task(Task::Delete(task_name)),
+        ) => wildcard_matches_pattern(task_name, pattern),
         _ => false,
     }
 }
@@ -259,4 +275,93 @@ pub async fn check_token_limit(
 
     debug!(target: "auth", token_key = %token.token_key, "all permission checks passed");
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wildcard_matches_pattern_exact() {
+        assert!(wildcard_matches_pattern("tcp_ping", "tcp_ping"));
+        assert!(wildcard_matches_pattern("ping", "ping"));
+        assert!(!wildcard_matches_pattern("tcp_ping", "ping"));
+    }
+
+    #[test]
+    fn test_wildcard_matches_pattern_star() {
+        assert!(wildcard_matches_pattern("tcp_ping", "*"));
+        assert!(wildcard_matches_pattern("ping", "*"));
+        assert!(wildcard_matches_pattern("http_request", "*"));
+    }
+
+    #[test]
+    fn test_wildcard_matches_pattern_prefix() {
+        assert!(wildcard_matches_pattern("tcp_ping", "tcp*"));
+        assert!(wildcard_matches_pattern("tcp_ping", "tc*"));
+        assert!(!wildcard_matches_pattern("http_ping", "tcp*"));
+        assert!(!wildcard_matches_pattern("ping", "tcp*"));
+    }
+
+    #[test]
+    fn test_permission_matches_task_exact() {
+        assert!(permission_matches(
+            &Permission::Task(Task::Write("tcp_ping".to_string())),
+            &Permission::Task(Task::Write("tcp_ping".to_string())),
+        ));
+        assert!(!permission_matches(
+            &Permission::Task(Task::Write("tcp_ping".to_string())),
+            &Permission::Task(Task::Write("ping".to_string())),
+        ));
+    }
+
+    #[test]
+    fn test_permission_matches_task_star() {
+        assert!(permission_matches(
+            &Permission::Task(Task::Write("*".to_string())),
+            &Permission::Task(Task::Write("tcp_ping".to_string())),
+        ));
+        assert!(permission_matches(
+            &Permission::Task(Task::Create("*".to_string())),
+            &Permission::Task(Task::Create("ping".to_string())),
+        ));
+        assert!(permission_matches(
+            &Permission::Task(Task::Read("*".to_string())),
+            &Permission::Task(Task::Read("http_request".to_string())),
+        ));
+        assert!(permission_matches(
+            &Permission::Task(Task::Delete("*".to_string())),
+            &Permission::Task(Task::Delete("web_shell".to_string())),
+        ));
+    }
+
+    #[test]
+    fn test_permission_matches_task_prefix() {
+        assert!(permission_matches(
+            &Permission::Task(Task::Write("tcp*".to_string())),
+            &Permission::Task(Task::Write("tcp_ping".to_string())),
+        ));
+        assert!(!permission_matches(
+            &Permission::Task(Task::Write("tcp*".to_string())),
+            &Permission::Task(Task::Write("http_ping".to_string())),
+        ));
+        assert!(permission_matches(
+            &Permission::Task(Task::Create("http*".to_string())),
+            &Permission::Task(Task::Create("http_request".to_string())),
+        ));
+    }
+
+    #[test]
+    fn test_permission_matches_task_mismatched_variant() {
+        // Write("*") should NOT match Create("tcp_ping")
+        assert!(!permission_matches(
+            &Permission::Task(Task::Write("*".to_string())),
+            &Permission::Task(Task::Create("tcp_ping".to_string())),
+        ));
+        // Read("tcp*") should NOT match Write("tcp_ping")
+        assert!(!permission_matches(
+            &Permission::Task(Task::Read("tcp*".to_string())),
+            &Permission::Task(Task::Write("tcp_ping".to_string())),
+        ));
+    }
 }
