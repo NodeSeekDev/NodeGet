@@ -177,11 +177,12 @@
 
 返回包含 `uuids` 字段的对象，其值为 `Vec<Uuid>` 数组。
 
-该方法会从以下三个表中获取所有不同的 Agent UUID:
+该方法会从以下四个来源获取所有不同的 Agent UUID:
 
-1. `static_monitoring` - 静态监控数据表
-2. `dynamic_monitoring` - 动态监控数据表
-3. `task` - 任务数据表
+1. `static_monitoring` - 静态监控数据表（查询 `uuid_id` 后映射为 UUID）
+2. `dynamic_monitoring` - 动态监控数据表（查询 `uuid_id` 后映射为 UUID）
+3. `dynamic_monitoring_summary` - 动态监控摘要数据表（查询 `uuid_id` 后映射为 UUID）
+4. `task` - 任务数据表（直接查询 UUID）
 
 返回的 UUID 列表是去重后按字母顺序排序的。
 

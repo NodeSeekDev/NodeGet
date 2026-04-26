@@ -9,7 +9,7 @@ use nodeget_lib::permission::data_structure::{Permission, Scope, Task};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::task::query::{TaskDataQuery, TaskQueryCondition};
 use nodeget_lib::utils::server_json::{rename_key, try_parse_json_field};
-use sea_orm::sea_query::{Alias, BinOper, Expr};
+use sea_orm::sea_query::{Alias, BinOper, Expr, LikeExpr};
 use sea_orm::{
     ColumnTrait, DbBackend, EntityTrait, ExprTrait, Order, QueryFilter, QueryOrder, QuerySelect,
 };
@@ -40,6 +40,7 @@ pub async fn query(token: String, task_data_query: TaskDataQuery) -> RpcResult<B
             "read_config",
             "edit_config",
             "ip",
+            "version",
         ];
 
         let mut scopes = Vec::new();
@@ -143,10 +144,11 @@ pub async fn query(token: String, task_data_query: TaskDataQuery) -> RpcResult<B
                         // SQLite: 转义 LIKE 特殊字符防止注入
                         let escaped_key = escape_like_pattern(&type_key);
                         let pattern = format!("%\"{escaped_key}\":%");
+                        let like_expr = LikeExpr::new(pattern).escape('\\');
                         query = query.filter(
                             Expr::col(task::Column::TaskEventType)
                                 .cast_as(Alias::new("text"))
-                                .like(pattern),
+                                .like(like_expr),
                         );
                     }
                 }

@@ -46,6 +46,7 @@ fn is_task_allowed(server: &nodeget_lib::config::agent::Server, task_type: &Task
         TaskEventType::ReadConfig => server.allow_read_config.unwrap_or(false),
         TaskEventType::EditConfig(_) => server.allow_edit_config.unwrap_or(false),
         TaskEventType::Ip => server.allow_ip.unwrap_or(false),
+        TaskEventType::Version => server.allow_version.unwrap_or(false),
     }
 }
 
@@ -120,6 +121,11 @@ async fn execute_task(
         TaskEventType::Ip => {
             let ip_info = ip::ip().await;
             Ok(TaskEventResult::Ip(ip_info.ipv4, ip_info.ipv6))
+        }
+
+        TaskEventType::Version => {
+            let version = nodeget_lib::utils::version::NodeGetVersion::get();
+            Ok(TaskEventResult::Version(version))
         }
     }
 }

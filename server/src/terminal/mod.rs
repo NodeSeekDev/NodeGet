@@ -279,6 +279,13 @@ async fn handle_user(
     // 检查 Terminal Connect 权限
     if let Err(e) = check_terminal_connect_permission(&token, &agent_uuid).await {
         warn!(target: "terminal", error = %e, "User connection rejected");
+        let error_json = generate_error_message(
+            102,
+            "Permission Denied: Terminal connection permission denied",
+        );
+        let _ = socket
+            .send(Message::Text(Utf8Bytes::from(error_json.to_string())))
+            .await;
         return;
     }
 

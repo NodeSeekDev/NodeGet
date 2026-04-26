@@ -24,6 +24,21 @@ pub async fn upload_task_result(
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
+        // 先进行权限预检，防止无权限调用者通过数据库查询差异探测任务存在性（时序攻击）
+        let has_any_task_write = check_token_limit(
+            &token_or_auth,
+            vec![Scope::AgentUuid(task_response.agent_uuid)],
+            vec![Permission::Task(Task::Write("*".to_string()))],
+        )
+        .await?;
+
+        if !has_any_task_write {
+            return Err(NodegetError::PermissionDenied(
+                "Permission Denied: Missing Task Write permission for this Agent".to_owned(),
+            )
+            .into());
+        }
+
         let db = <super::TaskRpcImpl as RpcHelper>::get_db()?;
 
         // 只查询一次获取完整记录，避免 TOCTOU 竞态和不必要的数据库开销
@@ -56,6 +71,7 @@ pub async fn upload_task_result(
 
         let task_name = original_task_type.task_name();
 
+        // 精确权限检查：确认 token 对具体 task_name 有 Write 权限
         let is_allowed = check_token_limit(
             &token_or_auth,
             vec![Scope::AgentUuid(task_response.agent_uuid)],

@@ -6,6 +6,7 @@ use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::generate_random_string;
 use sea_orm::{EntityTrait, Set, TransactionTrait};
+use subtle::ConstantTimeEq;
 use tracing::debug;
 
 async fn insert_new_super_token(
@@ -146,15 +147,33 @@ pub async fn check_super_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<bo
 
     match token_or_auth {
         TokenOrAuth::Token(key, secret) => {
-            let is_super = key == &super_entry.model.token_key
-                && hash_string(secret) == super_entry.model.token_hash;
+            let key_match = key
+                .as_bytes()
+                .ct_eq(super_entry.model.token_key.as_bytes())
+                .into();
+            let hash_match = hash_string(secret)
+                .as_bytes()
+                .ct_eq(super_entry.model.token_hash.as_bytes())
+                .into();
+            let is_super = key_match && hash_match;
             debug!(target: "token", is_super, "Super token check completed (token auth)");
             Ok(is_super)
         }
         TokenOrAuth::Auth(username, password) => {
-            let is_super = super_entry.model.username.as_deref() == Some(username.as_str())
-                && super_entry.model.password_hash.as_deref()
-                    == Some(hash_string(password).as_str());
+            let username_match = super_entry
+                .model
+                .username
+                .as_deref()
+                .map(|u| u.as_bytes().ct_eq(username.as_bytes()).into())
+                .unwrap_or(false);
+            let password_hash = hash_string(password);
+            let hash_match = super_entry
+                .model
+                .password_hash
+                .as_deref()
+                .map(|h| h.as_bytes().ct_eq(password_hash.as_bytes()).into())
+                .unwrap_or(false);
+            let is_super = username_match && hash_match;
             debug!(target: "token", is_super, "Super token check completed (basic auth)");
             Ok(is_super)
         }

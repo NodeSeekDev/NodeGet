@@ -556,18 +556,59 @@ mod list_all_agent_uuid {
         Ok(AgentUuidListPermission::Scoped(allowed_scoped_uuids))
     }
 
+    #[derive(FromQueryResult)]
+    struct UuidIdRow {
+        uuid_id: i16,
+    }
+
     async fn fetch_all_agent_uuids(db: &sea_orm::DatabaseConnection) -> anyhow::Result<Vec<Uuid>> {
         debug!(target: "server", "fetching all agent uuids");
-        // Get UUIDs from monitoring_uuid cache (covers static/dynamic/summary)
-        let uuid_cache = crate::monitoring_uuid_cache::MonitoringUuidCache::global();
-        let mut uuid_set: std::collections::BTreeSet<Uuid> =
-            uuid_cache.get_all_uuids().await.into_iter().collect();
 
-        // Also include UUIDs from task table (not covered by monitoring_uuid)
-        let sql = r"SELECT uuid FROM task";
+        let mut uuid_id_set = std::collections::BTreeSet::<i16>::new();
         let db_backend = db.get_database_backend();
-        let statement = Statement::from_string(db_backend, sql.to_string());
 
+        // Fetch distinct uuid_ids from static_monitoring
+        let sql = "SELECT DISTINCT uuid_id FROM static_monitoring";
+        let rows = UuidIdRow::find_by_statement(Statement::from_string(db_backend, sql.to_string()))
+            .all(db)
+            .await
+            .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
+        for row in rows {
+            uuid_id_set.insert(row.uuid_id);
+        }
+
+        // Fetch distinct uuid_ids from dynamic_monitoring
+        let sql = "SELECT DISTINCT uuid_id FROM dynamic_monitoring";
+        let rows = UuidIdRow::find_by_statement(Statement::from_string(db_backend, sql.to_string()))
+            .all(db)
+            .await
+            .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
+        for row in rows {
+            uuid_id_set.insert(row.uuid_id);
+        }
+
+        // Fetch distinct uuid_ids from dynamic_monitoring_summary
+        let sql = "SELECT DISTINCT uuid_id FROM dynamic_monitoring_summary";
+        let rows = UuidIdRow::find_by_statement(Statement::from_string(db_backend, sql.to_string()))
+            .all(db)
+            .await
+            .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
+        for row in rows {
+            uuid_id_set.insert(row.uuid_id);
+        }
+
+        // Map uuid_id to Uuid via monitoring_uuid cache
+        let uuid_cache = crate::monitoring_uuid_cache::MonitoringUuidCache::global();
+        let mut uuid_set = std::collections::BTreeSet::<Uuid>::new();
+        for id in &uuid_id_set {
+            if let Some(uuid) = uuid_cache.get_uuid(*id).await {
+                uuid_set.insert(uuid);
+            }
+        }
+
+        // Also include UUIDs from task table (not covered by monitoring tables)
+        let sql = r"SELECT uuid FROM task";
+        let statement = Statement::from_string(db_backend, sql.to_string());
         let rows = UuidRow::find_by_statement(statement)
             .all(db)
             .await

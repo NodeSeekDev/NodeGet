@@ -72,6 +72,8 @@ pub struct Server {
 
     // 是否允许获取 IP 地址
     pub allow_ip: Option<bool>,
+    // 是否允许获取版本信息
+    pub allow_version: Option<bool>,
 }
 
 // IP 地址获取服务提供商枚举

@@ -81,6 +81,9 @@ pub enum TaskEventType {
 
     // IP 获取任务
     Ip,
+
+    // 获取 Agent 版本信息
+    Version,
 }
 
 impl TaskEventType {
@@ -97,6 +100,7 @@ impl TaskEventType {
             Self::EditConfig(_) => "edit_config",
             Self::ReadConfig => "read_config",
             Self::Ip => "ip",
+            Self::Version => "version",
         }
     }
 
@@ -136,6 +140,7 @@ impl TaskEventType {
             Self::ReadConfig => "allow_read_config",
             Self::EditConfig(_) => "allow_edit_config",
             Self::Ip => "allow_ip",
+            Self::Version => "allow_version",
         }
     }
 }
@@ -176,6 +181,9 @@ pub enum TaskEventResult {
 
     // IP 获取任务结果，返回 IPv4 和 IPv6 地址
     Ip(Option<Ipv4Addr>, Option<Ipv6Addr>), // V4 V6 IP
+
+    // 获取 Agent 版本信息结果
+    Version(crate::utils::version::NodeGetVersion),
 }
 
 impl TaskEventResult {
@@ -192,6 +200,7 @@ impl TaskEventResult {
             Self::ReadConfig(_) => "read_config",
             Self::EditConfig(_) => "edit_config",
             Self::Ip(_, _) => "ip",
+            Self::Version(_) => "version",
         }
     }
 

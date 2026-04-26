@@ -7,12 +7,17 @@ use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::{Permission, Scope, Task};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::task::query::TaskQueryCondition;
-use sea_orm::sea_query::{Alias, BinOper, Expr};
+use sea_orm::sea_query::{Alias, BinOper, Expr, LikeExpr};
 use sea_orm::{
     ColumnTrait, DbBackend, EntityTrait, ExprTrait, Order, QueryFilter, QueryOrder, QuerySelect,
 };
 use serde_json::value::RawValue;
 use tracing::{debug, error};
+
+/// 转义 SQL LIKE 特殊字符，防止注入攻击
+fn escape_like_pattern(pattern: &str) -> String {
+    pattern.replace('%', r"\%").replace('_', r"\_")
+}
 
 pub async fn delete(
     token: String,
@@ -33,6 +38,7 @@ pub async fn delete(
             "read_config",
             "edit_config",
             "ip",
+            "version",
         ];
 
         let mut scopes = Vec::new();
@@ -139,16 +145,18 @@ pub async fn delete(
                                 .binary(BinOper::Custom("?"), type_key),
                         );
                     } else {
-                        let pattern = format!("%\"{type_key}\":%");
+                        let escaped_key = escape_like_pattern(&type_key);
+                        let pattern = format!("%\"{escaped_key}\":%");
+                        let like_expr = LikeExpr::new(pattern).escape('\\');
                         select_query = select_query.filter(
                             Expr::col(task::Column::TaskEventType)
                                 .cast_as(Alias::new("text"))
-                                .like(pattern.clone()),
+                                .like(like_expr.clone()),
                         );
                         delete_query = delete_query.filter(
                             Expr::col(task::Column::TaskEventType)
                                 .cast_as(Alias::new("text"))
-                                .like(pattern),
+                                .like(like_expr),
                         );
                     }
                 }

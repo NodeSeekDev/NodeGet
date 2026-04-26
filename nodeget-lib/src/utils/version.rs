@@ -1,5 +1,5 @@
 // NodeGet 版本信息结构体，包含构建时的版本和环境信息
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct NodeGetVersion {
     // 二进制类型，"Server" 或 "Agent"
     pub binary_type: String, // "Server" / "Agent"
