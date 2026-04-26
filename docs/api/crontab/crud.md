@@ -108,6 +108,21 @@ Server 任务类型 — 触发已注册的 JsWorker 脚本:
 }
 ```
 
+也可以使用通配符一次性授权多种任务类型：
+
+```json
+{
+  "scopes": [
+    {"agent_uuid": "00000000-0000-0000-0000-000000000001"}
+  ],
+  "permissions": [
+    {"crontab": "write"},
+    {"task": {"create": "*"}},      // 授权创建所有任务类型
+    {"task": {"write": "tcp*"}}     // 授权写入所有 tcp 开头的任务
+  ]
+}
+```
+
 `server.js_worker` 权限示例：
 
 ```json

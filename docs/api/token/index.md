@@ -119,13 +119,17 @@ pub enum DynamicMonitoring {
 // 任务权限枚举
 // Type 字段名
 // 接受 ping / tcp_ping / http_ping / web_shell / execute / http_request / ip
+// 支持通配符 `*`：
+// - `"*"` 匹配所有任务类型
+// - `"tcp*"` 匹配以 tcp 开头的任务类型（如 tcp_ping）
+// - 仅支持后缀通配符，不支持 `*ping` 或 `t*p`
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Task {
-    Create(String), // 创建权限，指定任务类型
-    Read(String),   // 读取权限，指定任务类型
-    Write(String),  // 写入权限，指定任务类型
-    Delete(String), // 删除权限，指定任务类型
+    Create(String), // 创建权限，指定任务类型，支持通配符
+    Read(String),   // 读取权限，指定任务类型，支持通配符
+    Write(String),  // 写入权限，指定任务类型，支持通配符
+    Delete(String), // 删除权限，指定任务类型，支持通配符
     Listen,         // 监听权限
 }
 
