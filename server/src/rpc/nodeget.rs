@@ -564,35 +564,22 @@ mod list_all_agent_uuid {
     async fn fetch_all_agent_uuids(db: &sea_orm::DatabaseConnection) -> anyhow::Result<Vec<Uuid>> {
         debug!(target: "server", "fetching all agent uuids");
 
-        let mut uuid_id_set = std::collections::BTreeSet::<i16>::new();
         let db_backend = db.get_database_backend();
 
-        // Fetch distinct uuid_ids from static_monitoring
-        let sql = "SELECT DISTINCT uuid_id FROM static_monitoring";
+        // Use UNION to collect all uuid_ids from monitoring tables in a single query
+        let sql = r#"
+            SELECT uuid_id FROM static_monitoring
+            UNION
+            SELECT uuid_id FROM dynamic_monitoring
+            UNION
+            SELECT uuid_id FROM dynamic_monitoring_summary
+        "#;
         let rows = UuidIdRow::find_by_statement(Statement::from_string(db_backend, sql.to_string()))
             .all(db)
             .await
             .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
-        for row in rows {
-            uuid_id_set.insert(row.uuid_id);
-        }
 
-        // Fetch distinct uuid_ids from dynamic_monitoring
-        let sql = "SELECT DISTINCT uuid_id FROM dynamic_monitoring";
-        let rows = UuidIdRow::find_by_statement(Statement::from_string(db_backend, sql.to_string()))
-            .all(db)
-            .await
-            .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
-        for row in rows {
-            uuid_id_set.insert(row.uuid_id);
-        }
-
-        // Fetch distinct uuid_ids from dynamic_monitoring_summary
-        let sql = "SELECT DISTINCT uuid_id FROM dynamic_monitoring_summary";
-        let rows = UuidIdRow::find_by_statement(Statement::from_string(db_backend, sql.to_string()))
-            .all(db)
-            .await
-            .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
+        let mut uuid_id_set = std::collections::BTreeSet::<i16>::new();
         for row in rows {
             uuid_id_set.insert(row.uuid_id);
         }
