@@ -23,6 +23,7 @@ use std::str::FromStr;
 use std::sync::{OnceLock, RwLock};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
+use nodeget_lib::utils::version::NodeGetVersion;
 
 mod monitoring;
 mod rpc;
@@ -68,6 +69,15 @@ async fn main() -> anyhow::Result<()> {
     println!("Starting nodeget-agent");
 
     let args = AgentArgs::par();
+
+    {
+        if args.version == true {
+            let version = NodeGetVersion::get();
+            println!("{}", version.to_string());
+            return Ok(());
+        }
+    }
+
     AGENT_ARGS.set(args.clone()).unwrap();
 
     RELOAD_NOTIFY.get_or_init(Notify::new);

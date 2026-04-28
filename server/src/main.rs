@@ -9,6 +9,7 @@
 
 use nodeget_lib::args_parse::server::{ServerArgs, ServerCommand};
 use tracing::info;
+use nodeget_lib::utils::version::NodeGetVersion;
 
 // 数据库连接模块
 mod db_connection;
@@ -51,6 +52,15 @@ async fn main() {
     println!("Starting nodeget-server");
 
     let args = ServerArgs::par();
+
+    {
+        if args.command == ServerCommand::Version {
+            let version = NodeGetVersion::get();
+            println!("{}", version.to_string());
+            return;
+        }
+    }
+
     let config_path = args.config_path().to_owned();
     let _ = SERVER_CONFIG_PATH.set(config_path.clone());
     RELOAD_NOTIFY.get_or_init(tokio::sync::Notify::new);
@@ -120,6 +130,10 @@ async fn main() {
         }
         ServerCommand::GetUuid { .. } => {
             subcommands::get_uuid::run(&config);
+        }
+        ServerCommand::Version => {
+            let version = NodeGetVersion::get();
+            println!("{}", version.to_string());
         }
     }
 }

@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 // NodeGet 版本信息结构体，包含构建时的版本和环境信息
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct NodeGetVersion {
@@ -62,5 +64,26 @@ impl NodeGetVersion {
             rustc_commit_hash: env!("VERGEN_RUSTC_COMMIT_HASH").to_string(),
             rustc_llvm_version: env!("VERGEN_RUSTC_LLVM_VERSION").to_string(),
         }
+    }
+}
+
+impl Display for NodeGetVersion {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!(
+            "NodeGet {} Version: {}\nGit Branch: {}\nCommit SHA: {}\nCommit Date: {}\nCommit Message: {}\nBuild Time: {}\nTarget Triple: {}\nRustc Channel: {}\nRustc Version: {}\nRustc Commit Date: {}\nRustc Commit Hash: {}\nRustc LLVM Version: {}",
+            self.binary_type,
+            self.cargo_version,
+            self.git_branch,
+            self.git_commit_sha,
+            self.git_commit_date,
+            self.git_commit_message,
+            self.build_time,
+            self.cargo_target_triple,
+            self.rustc_channel,
+            self.rustc_version,
+            self.rustc_commit_date,
+            self.rustc_commit_hash,
+            self.rustc_llvm_version
+        ))
     }
 }

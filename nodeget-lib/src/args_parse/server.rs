@@ -11,7 +11,7 @@ pub struct ServerArgs {
     pub command: ServerCommand,
 }
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone, Eq, PartialEq)]
 pub enum ServerCommand {
     /// Start server normally.
     Serve {
@@ -33,6 +33,8 @@ pub enum ServerCommand {
         #[arg(long, short)]
         config: String,
     },
+    /// Get Version JSON
+    Version,
 }
 
 impl ServerArgs {
@@ -60,6 +62,7 @@ impl ServerArgs {
             | ServerCommand::Init { config }
             | ServerCommand::RollSuperToken { config }
             | ServerCommand::GetUuid { config } => config.as_str(),
+            ServerCommand::Version => "",
         }
     }
 }

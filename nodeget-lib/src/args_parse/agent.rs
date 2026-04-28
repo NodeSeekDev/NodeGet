@@ -7,8 +7,11 @@ use palc::Parser;
     after_long_help = "This Agent is open-sourced on Github, powered by powerful Rust. Love from NodeGet"
 )]
 pub struct AgentArgs {
-    #[arg(long, short)]
+    #[arg(long, short, default_value_t = "config.yaml".to_string())]
     pub config: String,
+
+    #[arg(long, short, default_value_t = false)]
+    pub version: bool,
 }
 
 impl AgentArgs {
