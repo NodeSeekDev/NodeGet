@@ -86,11 +86,6 @@ jobs:
             target: riscv64gc-unknown-linux-gnu
             binary_name: nodeget-agent-linux-riscv64gc-gnu
             no_upx: true
-          # loongarch64 (龙芯)
-          - release_for: linux_loongarch64_gnu
-            target: loongarch64-unknown-linux-gnu
-            binary_name: nodeget-agent-linux-loongarch64-gnu
-            no_upx: true
           # powerpc
           - release_for: linux_powerpc_gnu
             target: powerpc-unknown-linux-gnu
