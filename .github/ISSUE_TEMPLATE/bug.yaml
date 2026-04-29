@@ -1,0 +1,74 @@
+name: Bug 报告
+description: 提交一个 bug 报告
+title: "[Bug]: "
+labels: ["bug", "triage"]
+projects: ["octo-org/1", "octo-org/44"]
+assignees:
+  - octocat
+type: bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你对 NodeGet 后端项目的贡献！请依照下面的表格填写相关信息，以帮助我们更快地定位和修复问题。
+  - type: checkboxes
+    attributes:
+      label: 问题发生的地方
+      description: 请告诉我们，问题发生在哪一个部分中？Agent 或 Server（可多选）
+      options:
+        - label: Agent
+          required: false
+        - label: Server
+          required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: 运行在什么环境下？（CPU 架构、操作系统版本、是否为 Docker、使用数据库类型等）
+      placeholder: 务必详细描述你的环境，这将帮助我们更快地定位问题。如果你不知道，可以粘贴来自系统检测脚本的输出，以及配上脱敏后的 config.yaml 内容。
+      value: "CPU: x86_64, OS: Ubuntu 24.04 LTS"
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: Version
+      description: 你使用的 NodeGet 版本是什么？请提供来自 `nodeget-server version` 或 `nodeget-agent --version` 的输出。
+      placeholder: 务必详细描述你的环境，这将帮助我们更快地定位问题。
+      value: "NodeGet Server Version: 0.0.3
+Git Branch: dev
+Commit SHA: 84bcec578a9b29ce3f2c1b6ef4a43ca1579435f2
+Commit Date: 2026-04-29T20:39:06+08:00
+Commit Message: Fix: Remove deprecated ARM and PowerPC build configurations from agent-build.yml
+Build Time: 1777478545
+Target Triple: aarch64-apple-darwin
+Rustc Channel: nightly
+Rustc Version: 1.97.0-nightly
+Rustc Commit Date: 2026-04-23
+Rustc Commit Hash: 36ba2c7712052d731a7082d0eba5ed3d9d56c133
+Rustc LLVM Version: 22.1.2
+"
+    validations:
+      required: true
+  - type: textarea
+    id: request-body
+    attributes:
+      label: Request body
+      description: 如果你在使用 NodeGet Server API 时遇到了问题，请附上请求体
+      placeholder: {"jsonrpc":"2.0","method":"...","params":{},"id":1}
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: 请附上相关日志（脱敏后）。这可能包括 NodeGet Server 或 Agent 的日志输出。
+    validations:
+      required: false
+  - type: textarea
+    id: additional-info
+    attributes:
+      label: Additional Information
+      description: 任何其他你认为有助于我们理解和修复这个问题的信息，包括但不限于你的对照测试、截图等
+    validations:
+      required: false
