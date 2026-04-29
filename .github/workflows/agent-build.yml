@@ -57,13 +57,6 @@ jobs:
           - release_for: linux_arm_musleabihf
             target: arm-unknown-linux-musleabihf
             binary_name: nodeget-agent-linux-arm-musleabihf
-          # armv5te
-          - release_for: linux_armv5te_gnu
-            target: armv5te-unknown-linux-gnueabi
-            binary_name: nodeget-agent-linux-armv5te-gnueabi
-          - release_for: linux_armv5te_musl
-            target: armv5te-unknown-linux-musleabi
-            binary_name: nodeget-agent-linux-armv5te-musleabi
           # armv7
           - release_for: linux_armv7_gnueabi
             target: armv7-unknown-linux-gnueabi
@@ -87,10 +80,6 @@ jobs:
             binary_name: nodeget-agent-linux-riscv64gc-gnu
             no_upx: true
           # powerpc
-          - release_for: linux_powerpc_gnu
-            target: powerpc-unknown-linux-gnu
-            binary_name: nodeget-agent-linux-powerpc-gnu
-            no_upx: true
           - release_for: linux_powerpc64_gnu
             target: powerpc64-unknown-linux-gnu
             binary_name: nodeget-agent-linux-powerpc64-gnu
