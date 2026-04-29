@@ -65,7 +65,7 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
         .set_config(
             jsonrpsee::server::ServerConfig::builder()
                 .max_connections(config.jsonrpc_max_connections.unwrap_or(100))
-                .max_response_body_size(config.max_response_body_size.unwrap_or(10 * 1024 * 1024))
+                .max_response_body_size(config.max_response_body_size.unwrap_or(100 * 1024 * 1024))
                 .max_request_body_size(config.max_request_body_size.unwrap_or(10 * 1024 * 1024))
                 .build(),
         )

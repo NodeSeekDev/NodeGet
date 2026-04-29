@@ -7,8 +7,8 @@ jsonrpc_max_connections = 100
 # JSON-RPC 最大请求体大小，单位字节，默认 10485760（10MB）
 # max_request_body_size = 10485760
 
-# JSON-RPC 最大响应体大小，单位字节，默认 10485760（10MB）
-# max_response_body_size = 10485760
+# JSON-RPC 最大响应体大小，单位字节，默认 104857600（100MB）
+# max_response_body_size = 104857600
 
 # 是否启用 Unix Socket（仅非 Windows 平台）
 # 启用后会额外监听 unix_socket_path 对应的 Axum 主路由

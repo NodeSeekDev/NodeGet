@@ -34,7 +34,7 @@ pub struct ServerConfig {
     // JSON-RPC 最大请求体大小（字节），默认 10485760（10MB）
     pub max_request_body_size: Option<u32>,
 
-    // JSON-RPC 最大响应体大小（字节），默认 10485760（10MB）
+    // JSON-RPC 最大响应体大小（字节），默认 104857600（100MB）
     pub max_response_body_size: Option<u32>,
 }
 
