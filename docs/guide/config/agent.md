@@ -37,6 +37,12 @@ exec_max_character = 10000
 # IP 地址获取服务提供商，可选 ipinfo / Cloudflare，默认 ipinfo
 ip_provider = "ipinfo"
 
+# NTP 服务器地址，用于获取本地时间与 NTP 参考时间的偏差
+# Agent 仅在首次启动时查询该服务器，所有时间戳输出自动应用此偏移
+# 连接失败或超时时自动降级为本地时间（偏移为 0），不影响业务
+# 默认使用阿里云公共 NTP（time.pool.aliyun.com）
+ntp_server = "time.pool.aliyun.com"
+
 # 服务器列表
 # 可指定多个，以连接多个 Servers
 [[server]]

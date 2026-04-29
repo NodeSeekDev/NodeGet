@@ -12,7 +12,7 @@ use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::error_message::anyhow_error_to_raw;
 use sea_orm::sea_query::{Alias, Expr, Query, SelectStatement, UnionType};
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, ExprTrait, FromQueryResult, Order, QueryFilter,
+    ColumnTrait, DatabaseBackend, DatabaseConnection, EntityTrait, ExprTrait, FromQueryResult, Order, QueryFilter,
     QueryOrder, QuerySelect, QueryTrait, Statement, StatementBuilder,
 };
 use serde_json::value::RawValue;
@@ -146,19 +146,20 @@ fn build_union_last_statement(
     fields: &[DynamicSummaryQueryField],
     db: &DatabaseConnection,
 ) -> anyhow::Result<Statement> {
+    let backend = db.get_database_backend();
     let mut pair_iter = uuid_id_pairs.iter();
     let first_pair = pair_iter
         .next()
         .ok_or_else(|| NodegetError::InvalidInput("The uuids list cannot be empty".to_owned()))?;
 
-    let mut union_query = build_single_last_select(first_pair.1, fields);
+    let mut union_query = build_single_last_select(first_pair.1, fields, backend);
     for pair in pair_iter {
-        union_query.union(UnionType::All, build_single_last_select(pair.1, fields));
+        union_query.union(UnionType::All, build_single_last_select(pair.1, fields, backend));
     }
 
     Ok(StatementBuilder::build(
         &union_query,
-        &db.get_database_backend(),
+        &backend,
     ))
 }
 
@@ -169,7 +170,11 @@ fn is_scaled_column(name: &str) -> bool {
     SCALED_COLUMNS.contains(&name)
 }
 
-fn build_single_last_select(uuid_id: i16, fields: &[DynamicSummaryQueryField]) -> SelectStatement {
+fn build_single_last_select(
+    uuid_id: i16,
+    fields: &[DynamicSummaryQueryField],
+    backend: DatabaseBackend,
+) -> SelectStatement {
     let inner_query = dynamic_monitoring_summary::Entity::find()
         .select_only()
         .column(dynamic_monitoring_summary::Column::UuidId)
@@ -226,13 +231,23 @@ fn build_single_last_select(uuid_id: i16, fields: &[DynamicSummaryQueryField]) -
         fields.iter().map(|f| f.column_name()).collect()
     };
 
-    for col_name in col_names {
-        if is_scaled_column(col_name) {
-            wrapped.expr_as(
-                Expr::col((alias.clone(), Alias::new(col_name))).div(10.0),
-                Alias::new(col_name),
-            );
-        } else {
+    if backend == DatabaseBackend::Postgres {
+        // PostgreSQL handles expression aliases correctly in find_by_statement,
+        // so we can descale directly in SQL.
+        for col_name in col_names {
+            if is_scaled_column(col_name) {
+                wrapped.expr_as(
+                    Expr::col((alias.clone(), Alias::new(col_name))).div(10.0),
+                    Alias::new(col_name),
+                );
+            } else {
+                wrapped.column((alias.clone(), Alias::new(col_name)));
+            }
+        }
+    } else {
+        // SQLite (and MySQL): expression aliases in raw subquery-to-JSON mapping
+        // can drop columns, so we select raw values and descale in Rust code.
+        for col_name in col_names {
             wrapped.column((alias.clone(), Alias::new(col_name)));
         }
     }
@@ -246,6 +261,8 @@ async fn execute_statement_query(
     capacity_hint: usize,
     uuid_cache: &MonitoringUuidCache,
 ) -> anyhow::Result<Box<RawValue>> {
+    let needs_app_descaling = db.get_database_backend() != DatabaseBackend::Postgres;
+
     debug!(target: "monitoring", "Starting dynamic summary multi-last query DB stream");
     let mut stream = serde_json::Value::find_by_statement(statement)
         .stream(db)
@@ -277,6 +294,9 @@ async fn execute_statement_query(
                                 );
                             }
                         }
+                    }
+                    if needs_app_descaling {
+                        apply_descaling(obj);
                     }
                 }
                 if first {
@@ -315,4 +335,202 @@ async fn execute_statement_query(
     debug!(target: "monitoring", result_count = result_count, "Dynamic monitoring summary multi-last query completed");
 
     Ok(raw_value)
+}
+
+/// Apply /10.0 descaling to known scaled columns in the JSON object.
+/// This is done in application code rather than SQL to work around
+/// SQLite limitations with expression aliases in raw `find_by_statement` queries.
+fn apply_descaling(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    const SCALED_FIELDS: &[&str] = &["cpu_usage", "load_one", "load_five", "load_fifteen"];
+    for key in SCALED_FIELDS {
+        if let Some(val) = obj.get_mut(*key) {
+            match val {
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        if let Some(scaled) = serde_json::Number::from_f64(i as f64 / 10.0) {
+                            *val = serde_json::Value::Number(scaled);
+                        }
+                    } else if let Some(f) = n.as_f64() {
+                        if let Some(scaled) = serde_json::Number::from_f64(f / 10.0) {
+                            *val = serde_json::Value::Number(scaled);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{
+        ConnectionTrait, Database, DatabaseBackend, Schema, StatementBuilder,
+    };
+    use serde_json::Value;
+
+    #[tokio::test]
+    async fn test_multi_last_sqlite_scaled_fields_present() {
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("connect");
+
+        let schema = Schema::new(DatabaseBackend::Sqlite);
+        let stmt = schema
+            .create_table_from_entity(dynamic_monitoring_summary::Entity)
+            .if_not_exists()
+            .to_owned();
+        db.execute(&stmt).await.expect("create table");
+
+        let row = dynamic_monitoring_summary::ActiveModel {
+            id: sea_orm::ActiveValue::NotSet,
+            uuid_id: sea_orm::ActiveValue::Set(1i16),
+            timestamp: sea_orm::ActiveValue::Set(1777463543359i64),
+            cpu_usage: sea_orm::ActiveValue::Set(Some(50i16)),
+            gpu_usage: sea_orm::ActiveValue::Set(None),
+            used_swap: sea_orm::ActiveValue::Set(Some(0i64)),
+            total_swap: sea_orm::ActiveValue::Set(Some(0i64)),
+            used_memory: sea_orm::ActiveValue::Set(Some(650596352i64)),
+            total_memory: sea_orm::ActiveValue::Set(Some(16734150656i64)),
+            available_memory: sea_orm::ActiveValue::Set(Some(16083554304i64)),
+            load_one: sea_orm::ActiveValue::Set(Some(5i16)),
+            load_five: sea_orm::ActiveValue::Set(Some(3i16)),
+            load_fifteen: sea_orm::ActiveValue::Set(Some(1i16)),
+            uptime: sea_orm::ActiveValue::Set(Some(14043i32)),
+            boot_time: sea_orm::ActiveValue::Set(Some(1777449499i64)),
+            process_count: sea_orm::ActiveValue::Set(Some(135i32)),
+            total_space: sea_orm::ActiveValue::Set(Some(64353267200i64)),
+            available_space: sea_orm::ActiveValue::Set(Some(61662812160i64)),
+            read_speed: sea_orm::ActiveValue::Set(Some(0i64)),
+            write_speed: sea_orm::ActiveValue::Set(Some(35902i64)),
+            tcp_connections: sea_orm::ActiveValue::Set(Some(14i32)),
+            udp_connections: sea_orm::ActiveValue::Set(Some(2i32)),
+            total_received: sea_orm::ActiveValue::Set(Some(52957882012i64)),
+            total_transmitted: sea_orm::ActiveValue::Set(Some(60236401467i64)),
+            transmit_speed: sea_orm::ActiveValue::Set(Some(8391i64)),
+            receive_speed: sea_orm::ActiveValue::Set(Some(7160i64)),
+        };
+        dynamic_monitoring_summary::Entity::insert(row)
+            .exec(&db)
+            .await
+            .expect("insert");
+
+        let fields = vec![
+            DynamicSummaryQueryField::CpuUsage,
+            DynamicSummaryQueryField::UsedMemory,
+            DynamicSummaryQueryField::TotalMemory,
+            DynamicSummaryQueryField::AvailableMemory,
+            DynamicSummaryQueryField::UsedSwap,
+            DynamicSummaryQueryField::TotalSwap,
+            DynamicSummaryQueryField::TotalSpace,
+            DynamicSummaryQueryField::AvailableSpace,
+            DynamicSummaryQueryField::ReadSpeed,
+            DynamicSummaryQueryField::WriteSpeed,
+            DynamicSummaryQueryField::ReceiveSpeed,
+            DynamicSummaryQueryField::TransmitSpeed,
+            DynamicSummaryQueryField::TotalReceived,
+            DynamicSummaryQueryField::TotalTransmitted,
+            DynamicSummaryQueryField::LoadOne,
+            DynamicSummaryQueryField::LoadFive,
+            DynamicSummaryQueryField::LoadFifteen,
+            DynamicSummaryQueryField::Uptime,
+            DynamicSummaryQueryField::BootTime,
+            DynamicSummaryQueryField::ProcessCount,
+            DynamicSummaryQueryField::TcpConnections,
+            DynamicSummaryQueryField::UdpConnections,
+        ];
+
+        let statement = build_single_last_select(1i16, &fields, DatabaseBackend::Sqlite);
+        let statement = StatementBuilder::build(&statement, &DatabaseBackend::Sqlite);
+
+        let rows: Vec<Value> = Value::find_by_statement(statement)
+            .all(&db)
+            .await
+            .expect("query");
+
+        assert_eq!(rows.len(), 1);
+        let row = rows.into_iter().next().unwrap();
+        let mut obj = row.as_object().expect("object").clone();
+
+        // Verify scaled fields are present in raw query result
+        assert!(
+            obj.contains_key("cpu_usage"),
+            "cpu_usage must be present in result"
+        );
+        assert!(
+            obj.contains_key("load_one"),
+            "load_one must be present in result"
+        );
+        assert!(
+            obj.contains_key("load_five"),
+            "load_five must be present in result"
+        );
+        assert!(
+            obj.contains_key("load_fifteen"),
+            "load_fifteen must be present in result"
+        );
+
+        // Raw values are still scaled (stored as *10 integers)
+        assert_eq!(obj["cpu_usage"], Value::Number(50i64.into()));
+        assert_eq!(obj["load_one"], Value::Number(5i64.into()));
+        assert_eq!(obj["load_five"], Value::Number(3i64.into()));
+        assert_eq!(obj["load_fifteen"], Value::Number(1i64.into()));
+
+        // Apply descaling and verify
+        apply_descaling(&mut obj);
+        assert_eq!(obj["cpu_usage"], Value::Number(serde_json::Number::from_f64(5.0).unwrap()));
+        assert_eq!(obj["load_one"], Value::Number(serde_json::Number::from_f64(0.5).unwrap()));
+        assert_eq!(obj["load_five"], Value::Number(serde_json::Number::from_f64(0.3).unwrap()));
+        assert_eq!(obj["load_fifteen"], Value::Number(serde_json::Number::from_f64(0.1).unwrap()));
+
+        // Verify other fields are unaffected
+        assert_eq!(obj["used_memory"], Value::Number(650596352i64.into()));
+    }
+
+    #[test]
+    fn test_postgres_sql_includes_div_10() {
+        let fields = vec![
+            DynamicSummaryQueryField::CpuUsage,
+            DynamicSummaryQueryField::UsedMemory,
+            DynamicSummaryQueryField::LoadOne,
+        ];
+
+        let stmt = build_single_last_select(1i16, &fields, DatabaseBackend::Postgres);
+        let sql = StatementBuilder::build(&stmt, &DatabaseBackend::Postgres).to_string();
+
+        assert!(
+            sql.contains(r#""cpu_usage" / 10 AS "cpu_usage""#),
+            "PostgreSQL SQL should descale cpu_usage in SQL: {}",
+            sql
+        );
+        assert!(
+            sql.contains(r#""load_one" / 10 AS "load_one""#),
+            "PostgreSQL SQL should descale load_one in SQL: {}",
+            sql
+        );
+        assert!(
+            !sql.contains(r#""used_memory" / 10"#),
+            "PostgreSQL SQL should NOT descale used_memory in SQL: {}",
+            sql
+        );
+    }
+
+    #[test]
+    fn test_sqlite_sql_has_no_div_10() {
+        let fields = vec![
+            DynamicSummaryQueryField::CpuUsage,
+            DynamicSummaryQueryField::UsedMemory,
+            DynamicSummaryQueryField::LoadOne,
+        ];
+
+        let stmt = build_single_last_select(1i16, &fields, DatabaseBackend::Sqlite);
+        let sql = StatementBuilder::build(&stmt, &DatabaseBackend::Sqlite).to_string();
+
+        assert!(
+            !sql.contains("/ 10"),
+            "SQLite SQL should NOT contain / 10 expressions: {}",
+            sql
+        );
+    }
 }
