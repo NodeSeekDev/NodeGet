@@ -94,6 +94,9 @@ allow_edit_config = true
 # 是否允许获取 IP 地址
 allow_ip = true
 
+# 是否允许获取 Agent 版本信息
+allow_version = true
+
 
 # 第二个 Server
 [[server]]

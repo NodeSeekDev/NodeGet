@@ -45,6 +45,8 @@ pub enum TaskEventType {
     EditConfig(String), // 编辑本地 config.toml（完整 TOML 字符串）
 
     Ip,
+
+    Version,            // 获取 Agent 版本信息
 }
 
 pub struct WebShellTask {
@@ -118,6 +120,8 @@ pub struct HttpRequestTask {
 }
 
 "ip" // 对就是一个 `ip`，无其他东西
+
+"version" // 获取 Agent 版本信息
 ```
 
 ### 注意事项
@@ -158,6 +162,8 @@ pub enum TaskEventResult {
     EditConfig(bool),   // 是否成功写入
 
     Ip(Option<Ipv4Addr>, Option<Ipv6Addr>), // V4 V6 IP
+
+    Version(NodeGetVersion), // Agent 版本信息
 }
 
 pub struct HttpRequestTaskResult {

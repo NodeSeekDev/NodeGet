@@ -118,7 +118,7 @@ pub enum DynamicMonitoring {
 
 // 任务权限枚举
 // Type 字段名
-// 接受 ping / tcp_ping / http_ping / web_shell / execute / http_request / ip
+// 接受 ping / tcp_ping / http_ping / web_shell / execute / http_request / ip / version
 // 支持通配符 `*`：
 // - `"*"` 匹配所有任务类型
 // - `"tcp*"` 匹配以 tcp 开头的任务类型（如 tcp_ping）
@@ -278,6 +278,11 @@ Monitoring 删除权限:
     {
       "task": {
         "write": "ip" // 上报 ip 任务
+      }
+    },
+    {
+      "task": {
+        "write": "version" // 上报 version 任务
       }
     }
   ]
