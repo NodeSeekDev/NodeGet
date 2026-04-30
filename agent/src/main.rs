@@ -112,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
             let ntp_server = config
                 .ntp_server
                 .as_deref()
-                .unwrap_or("time.pool.aliyun.com");
+                .unwrap_or("pool.ntp.org");
             let ntp_offset = ntp::fetch_ntp_offset(ntp_server).await;
             println!("NTP time offset: {ntp_offset} ms");
             set_ntp_offset_ms(ntp_offset);

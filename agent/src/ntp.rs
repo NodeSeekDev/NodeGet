@@ -61,7 +61,7 @@ pub async fn fetch_ntp_offset(ntp_server: &str) -> i64 {
             0
         }
         Err(_) => {
-            info!("NTP request timed out after 2s for {ntp_server}");
+            info!("NTP request timed out after 10s for {ntp_server}");
             0
         }
     }
