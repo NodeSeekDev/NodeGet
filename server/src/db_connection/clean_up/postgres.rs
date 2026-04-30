@@ -125,9 +125,8 @@ async fn cleanup_static_monitoring(
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning static monitoring (postgres)");
     let uuid = Uuid::parse_str(agent_uuid)?;
     let uuid_cache = MonitoringUuidCache::global();
-    let uuid_id = match uuid_cache.get_id(&uuid).await {
-        Some(id) => id,
-        None => return Ok(0), // UUID not in monitoring_uuid table, nothing to clean
+    let Some(uuid_id) = uuid_cache.get_id(&uuid).await else {
+        return Ok(0); // UUID not in monitoring_uuid table, nothing to clean
     };
 
     // 首先查询该 agent 的最大 timestamp
@@ -139,9 +138,8 @@ async fn cleanup_static_monitoring(
         .one(db)
         .await?;
 
-    let max_ts = match max_timestamp {
-        Some(ts) => ts,
-        None => return Ok(0), // 没有数据需要清理
+    let Some(max_ts) = max_timestamp else {
+        return Ok(0); // 没有数据需要清理
     };
 
     // 计算截止时间
@@ -166,9 +164,8 @@ async fn cleanup_dynamic_monitoring(
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning dynamic monitoring (postgres)");
     let uuid = Uuid::parse_str(agent_uuid)?;
     let uuid_cache = MonitoringUuidCache::global();
-    let uuid_id = match uuid_cache.get_id(&uuid).await {
-        Some(id) => id,
-        None => return Ok(0),
+    let Some(uuid_id) = uuid_cache.get_id(&uuid).await else {
+        return Ok(0);
     };
 
     // 首先查询该 agent 的最大 timestamp
@@ -180,9 +177,8 @@ async fn cleanup_dynamic_monitoring(
         .one(db)
         .await?;
 
-    let max_ts = match max_timestamp {
-        Some(ts) => ts,
-        None => return Ok(0),
+    let Some(max_ts) = max_timestamp else {
+        return Ok(0);
     };
 
     let cutoff_timestamp = max_ts - limit_millis;
@@ -205,9 +201,8 @@ async fn cleanup_dynamic_monitoring_summary(
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning dynamic monitoring summary (postgres)");
     let uuid = Uuid::parse_str(agent_uuid)?;
     let uuid_cache = MonitoringUuidCache::global();
-    let uuid_id = match uuid_cache.get_id(&uuid).await {
-        Some(id) => id,
-        None => return Ok(0),
+    let Some(uuid_id) = uuid_cache.get_id(&uuid).await else {
+        return Ok(0);
     };
 
     // 首先查询该 agent 的最大 timestamp (uuid_id is smallint)
@@ -222,9 +217,8 @@ async fn cleanup_dynamic_monitoring_summary(
         .one(db)
         .await?;
 
-    let max_ts = match max_timestamp {
-        Some(ts) => ts,
-        None => return Ok(0),
+    let Some(max_ts) = max_timestamp else {
+        return Ok(0);
     };
 
     let cutoff_timestamp = max_ts - limit_millis;
@@ -251,9 +245,8 @@ async fn cleanup_task(db: &DatabaseConnection, agent_uuid: &str, limit_millis: i
         .one(db)
         .await?;
 
-    let max_ts = match max_timestamp {
-        Some(ts) => ts,
-        None => return Ok(0),
+    let Some(max_ts) = max_timestamp else {
+        return Ok(0);
     };
 
     let cutoff_timestamp = max_ts - limit_millis;
@@ -281,9 +274,8 @@ async fn cleanup_crontab_result(db: &DatabaseConnection, limit_millis: i64) -> R
         .one(db)
         .await?;
 
-    let max_rt = match max_run_time {
-        Some(rt) => rt,
-        None => return Ok(0),
+    let Some(max_rt) = max_run_time else {
+        return Ok(0);
     };
 
     let cutoff_run_time = max_rt - limit_millis;

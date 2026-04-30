@@ -8,7 +8,7 @@ use nodeget_lib::permission::token_auth::TokenOrAuth;
 use serde_json::Value;
 use tracing::{trace, warn};
 
-fn scopes_from_cron_type(cron_type: &CronType) -> anyhow::Result<Vec<Scope>> {
+fn scopes_from_cron_type(cron_type: &CronType) -> Vec<Scope> {
     let scopes = match cron_type {
         CronType::Agent(uuids, _) => uuids
             .iter()
@@ -24,7 +24,7 @@ fn scopes_from_cron_type(cron_type: &CronType) -> anyhow::Result<Vec<Scope>> {
         }
     }
 
-    Ok(deduped)
+    deduped
 }
 
 fn write_permissions_from_cron_type(cron_type: &CronType) -> Vec<Permission> {
@@ -53,7 +53,7 @@ pub async fn ensure_crontab_payload_write_permission(
     cron_type: &CronType,
 ) -> anyhow::Result<()> {
     trace!(target: "crontab", "checking crontab payload write permission");
-    let scopes = scopes_from_cron_type(cron_type)?;
+    let scopes = scopes_from_cron_type(cron_type);
     let mut permissions = write_permissions_from_cron_type(cron_type);
     if matches!(cron_type, CronType::Agent(_, _)) {
         if scopes.is_empty() {
@@ -130,7 +130,7 @@ pub async fn ensure_crontab_scope_permission(
     denied_message: &'static str,
 ) -> anyhow::Result<()> {
     trace!(target: "crontab", "checking crontab scope permission");
-    let scopes = scopes_from_cron_type(cron_type)?;
+    let scopes = scopes_from_cron_type(cron_type);
     // Empty agent list: fall back to Global scope for permission check
     let scopes = if scopes.is_empty() {
         vec![Scope::Global]

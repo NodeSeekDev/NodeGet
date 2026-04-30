@@ -156,9 +156,7 @@ async fn handle_agent(
         }
     }
 
-    let parsed_uuid = if let Ok(u) = Uuid::parse_str(&agent_uuid) {
-        u
-    } else {
+    let Ok(parsed_uuid) = Uuid::parse_str(&agent_uuid) else {
         reject_with_error(socket, 108, "Invalid Agent UUID format").await;
         return;
     };
@@ -290,9 +288,7 @@ async fn handle_user(
 
     // 获取会话槽位
     let (tx_to_agent, rx_from_agent) = {
-        let parsed_uuid = if let Ok(u) = Uuid::parse_str(&agent_uuid) {
-            u
-        } else {
+        let Ok(parsed_uuid) = Uuid::parse_str(&agent_uuid) else {
             warn!(target: "terminal", agent_uuid = %agent_uuid, "User connection rejected: invalid UUID format");
             return;
         };

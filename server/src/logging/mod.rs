@@ -190,6 +190,7 @@ where
                 {
                     obj["fields"] = serde_json::Value::String(strip_ansi(&fields.to_string()));
                 }
+                drop(ext);
                 obj
             })
             .collect();
@@ -405,6 +406,7 @@ where
                 } else {
                     write!(writer, "{}", span.name())?;
                 }
+                drop(ext);
             }
             if !first {
                 write!(writer, "]")?;
@@ -454,6 +456,7 @@ where
                 if let Some(fields) = ext.get::<FormattedFields<N>>().filter(|f| !f.is_empty()) {
                     obj["fields"] = serde_json::Value::String(strip_ansi(&fields.to_string()));
                 }
+                drop(ext);
                 obj
             })
             .collect();
@@ -635,7 +638,7 @@ impl StreamFilter {
         }
 
         // Sort by target length descending for longest-prefix match
-        targets.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        targets.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
         Self {
             default_level,
@@ -740,12 +743,15 @@ where
         }
 
         // Pre-filter: collect subscribers interested in this event
-        let interested: Vec<&StreamLogSubscriber> = guard
+        let interested_tx: Vec<tokio::sync::mpsc::Sender<serde_json::Value>> = guard
             .values()
             .filter(|sub| sub.filter.is_enabled(meta))
+            .map(|sub| sub.tx.clone())
             .collect();
 
-        if interested.is_empty() {
+        drop(guard);
+
+        if interested_tx.is_empty() {
             return;
         }
 
@@ -767,6 +773,7 @@ where
                 {
                     obj["fields"] = serde_json::Value::String(strip_ansi(&fields.to_string()));
                 }
+                drop(ext);
                 obj
             })
             .collect();
@@ -783,8 +790,8 @@ where
         });
 
         // Broadcast to all interested subscribers (non-blocking)
-        for sub in interested {
-            let _ = sub.tx.try_send(entry.clone());
+        for tx in interested_tx {
+            let _ = tx.try_send(entry.clone());
         }
     }
 }

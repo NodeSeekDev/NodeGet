@@ -14,19 +14,22 @@ use tracing::{debug, error, info};
 // 如果配置无效或连接失败，则会记录错误并退出进程。
 pub async fn init_db_connection() {
     info!(target: "db", "initializing database connection");
-    let config_guard = SERVER_CONFIG
-        .get()
-        .expect("Server config not initialized")
-        .read()
-        .expect("SERVER_CONFIG lock poisoned");
+    let (db_url, connect_timeout, acquire_timeout, idle_timeout, max_lifetime, max_connections) = {
+        let config_guard = SERVER_CONFIG
+            .get()
+            .expect("Server config not initialized")
+            .read()
+            .expect("SERVER_CONFIG lock poisoned");
 
-    let db_url = config_guard.database.database_url.clone();
-    let connect_timeout = config_guard.database.connect_timeout_ms.unwrap_or(3000);
-    let acquire_timeout = config_guard.database.acquire_timeout_ms.unwrap_or(3000);
-    let idle_timeout = config_guard.database.idle_timeout_ms.unwrap_or(3000);
-    let max_lifetime = config_guard.database.max_lifetime_ms.unwrap_or(30000);
-    let max_connections = config_guard.database.max_connections.unwrap_or(10);
-    drop(config_guard);
+        (
+            config_guard.database.database_url.clone(),
+            config_guard.database.connect_timeout_ms.unwrap_or(3000),
+            config_guard.database.acquire_timeout_ms.unwrap_or(3000),
+            config_guard.database.idle_timeout_ms.unwrap_or(3000),
+            config_guard.database.max_lifetime_ms.unwrap_or(30000),
+            config_guard.database.max_connections.unwrap_or(10),
+        )
+    };
 
     DB.get_or_init(|| async {
         let mut opt = ConnectOptions::new(&db_url);

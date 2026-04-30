@@ -31,9 +31,7 @@ impl NtpTimestampGenerator for StdTimestampGen {
 /// 从指定的 NTP 服务器获取本地时间与 NTP 参考时间的偏差（毫秒）。
 /// 连接失败或超时时返回 0，等同于使用本地时间。
 pub async fn fetch_ntp_offset(ntp_server: &str) -> i64 {
-    let addr = if let Some(addr) = resolve_ntp_addr(ntp_server).await {
-        addr
-    } else {
+    let Some(addr) = resolve_ntp_addr(ntp_server).await else {
         info!("Failed to resolve NTP server address for: {ntp_server}");
         return 0;
     };

@@ -116,6 +116,8 @@ impl JsRuntimePool {
         }
     }
 
+    /// # Errors
+    /// Returns an error if the worker channel is closed or script execution fails.
     pub async fn execute_script(
         &self,
         script_name: &str,
@@ -338,13 +340,13 @@ fn spawn_worker(script_name: &str) -> anyhow::Result<Arc<RuntimeWorkerHandle>> {
 
     std::thread::Builder::new()
         .name(format!("js-rt-{script_name}"))
-        .spawn(move || worker_loop(script_name, rx))
+        .spawn(move || worker_loop(&script_name, rx))
         .map_err(|e| anyhow::anyhow!("Failed to spawn JS runtime worker thread: {e}"))?;
 
     Ok(handle)
 }
 
-fn worker_loop(script_name: String, receiver: std::sync::mpsc::Receiver<WorkerCommand>) {
+fn worker_loop(script_name: &str, receiver: std::sync::mpsc::Receiver<WorkerCommand>) {
     trace!(target: "js_runtime", script_name = %script_name, "worker loop started");
     let host_rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -378,7 +380,7 @@ fn worker_loop(script_name: String, receiver: std::sync::mpsc::Receiver<WorkerCo
                 let exec_result = host_rt.block_on(async {
                     execute_on_worker(
                         &mut runtime_state,
-                        script_name.as_str(),
+                        script_name,
                         bytecode,
                         bytecode_hash,
                         run_type,

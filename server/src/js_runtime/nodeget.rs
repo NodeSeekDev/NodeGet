@@ -20,6 +20,8 @@ async fn raw_single_request(json: &str) -> StdResult<String, Error> {
     Ok(resp.to_string())
 }
 
+/// # Errors
+/// Returns an error if the JSON-RPC request fails.
 pub async fn js_nodeget(json: String) -> StdResult<String, Error> {
     debug!(target: "js_runtime", "handling JS nodeget RPC call");
     let trimmed = json.trim();

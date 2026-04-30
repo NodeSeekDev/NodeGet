@@ -5,6 +5,8 @@ use serde_json::Value;
 use std::result::Result as StdResult;
 use tracing::debug;
 
+/// # Errors
+/// Returns an error if the params are not valid JSON or the inline call fails.
 pub async fn js_inline_call(
     js_worker_name: String,
     params_json: String,

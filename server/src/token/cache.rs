@@ -99,6 +99,7 @@ impl TokenCache {
         guard.by_key = by_key;
         guard.by_username = by_username;
         guard.super_token = super_token;
+        drop(guard);
 
         tracing::debug!(target: "token", "Token cache reloaded");
         Ok(())

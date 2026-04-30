@@ -380,28 +380,28 @@ mod tests {
         let row = dynamic_monitoring_summary::ActiveModel {
             id: sea_orm::ActiveValue::NotSet,
             uuid_id: sea_orm::ActiveValue::Set(1i16),
-            timestamp: sea_orm::ActiveValue::Set(1777463543359i64),
+            timestamp: sea_orm::ActiveValue::Set(1_777_463_543_359i64),
             cpu_usage: sea_orm::ActiveValue::Set(Some(50i16)),
             gpu_usage: sea_orm::ActiveValue::Set(None),
             used_swap: sea_orm::ActiveValue::Set(Some(0i64)),
             total_swap: sea_orm::ActiveValue::Set(Some(0i64)),
-            used_memory: sea_orm::ActiveValue::Set(Some(650596352i64)),
-            total_memory: sea_orm::ActiveValue::Set(Some(16734150656i64)),
-            available_memory: sea_orm::ActiveValue::Set(Some(16083554304i64)),
+            used_memory: sea_orm::ActiveValue::Set(Some(650_596_352i64)),
+            total_memory: sea_orm::ActiveValue::Set(Some(16_734_150_656i64)),
+            available_memory: sea_orm::ActiveValue::Set(Some(16_083_554_304i64)),
             load_one: sea_orm::ActiveValue::Set(Some(5i16)),
             load_five: sea_orm::ActiveValue::Set(Some(3i16)),
             load_fifteen: sea_orm::ActiveValue::Set(Some(1i16)),
             uptime: sea_orm::ActiveValue::Set(Some(14043i32)),
-            boot_time: sea_orm::ActiveValue::Set(Some(1777449499i64)),
+            boot_time: sea_orm::ActiveValue::Set(Some(1_777_449_499i64)),
             process_count: sea_orm::ActiveValue::Set(Some(135i32)),
-            total_space: sea_orm::ActiveValue::Set(Some(64353267200i64)),
-            available_space: sea_orm::ActiveValue::Set(Some(61662812160i64)),
+            total_space: sea_orm::ActiveValue::Set(Some(64_353_267_200i64)),
+            available_space: sea_orm::ActiveValue::Set(Some(61_662_812_160i64)),
             read_speed: sea_orm::ActiveValue::Set(Some(0i64)),
             write_speed: sea_orm::ActiveValue::Set(Some(35902i64)),
             tcp_connections: sea_orm::ActiveValue::Set(Some(14i32)),
             udp_connections: sea_orm::ActiveValue::Set(Some(2i32)),
-            total_received: sea_orm::ActiveValue::Set(Some(52957882012i64)),
-            total_transmitted: sea_orm::ActiveValue::Set(Some(60236401467i64)),
+            total_received: sea_orm::ActiveValue::Set(Some(52_957_882_012i64)),
+            total_transmitted: sea_orm::ActiveValue::Set(Some(60_236_401_467i64)),
             transmit_speed: sea_orm::ActiveValue::Set(Some(8391i64)),
             receive_speed: sea_orm::ActiveValue::Set(Some(7160i64)),
         };
@@ -491,7 +491,7 @@ mod tests {
         );
 
         // Verify other fields are unaffected
-        assert_eq!(obj["used_memory"], Value::Number(650596352i64.into()));
+        assert_eq!(obj["used_memory"], Value::Number(650_596_352i64.into()));
     }
 
     #[test]
@@ -507,18 +507,15 @@ mod tests {
 
         assert!(
             sql.contains(r#""cpu_usage" / 10 AS "cpu_usage""#),
-            "PostgreSQL SQL should descale cpu_usage in SQL: {}",
-            sql
+            "PostgreSQL SQL should descale cpu_usage in SQL: {sql}"
         );
         assert!(
             sql.contains(r#""load_one" / 10 AS "load_one""#),
-            "PostgreSQL SQL should descale load_one in SQL: {}",
-            sql
+            "PostgreSQL SQL should descale load_one in SQL: {sql}"
         );
         assert!(
             !sql.contains(r#""used_memory" / 10"#),
-            "PostgreSQL SQL should NOT descale used_memory in SQL: {}",
-            sql
+            "PostgreSQL SQL should NOT descale used_memory in SQL: {sql}"
         );
     }
 
@@ -535,8 +532,7 @@ mod tests {
 
         assert!(
             !sql.contains("/ 10"),
-            "SQLite SQL should NOT contain / 10 expressions: {}",
-            sql
+            "SQLite SQL should NOT contain / 10 expressions: {sql}"
         );
     }
 }

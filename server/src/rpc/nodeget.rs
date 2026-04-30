@@ -220,9 +220,8 @@ impl RpcServer for NodegetServerRpcImpl {
 
         tokio::spawn(async move {
             while let Some(entry) = rx.recv().await {
-                let json_str = match serde_json::to_string(&entry) {
-                    Ok(s) => s,
-                    Err(_) => continue,
+                let Ok(json_str) = serde_json::to_string(&entry) else {
+                    continue;
                 };
                 let Ok(raw) = RawValue::from_string(json_str) else {
                     continue;
@@ -369,7 +368,7 @@ mod config_ops {
                 .await
                 .map_err(|e| {
                     // 清理临时文件
-                    let _ = tokio::fs::remove_file(&temp_path);
+                    drop(tokio::fs::remove_file(&temp_path));
                     NodegetError::Other(format!("Failed to rename config file: {e}"))
                 })?;
             debug!(target: "server", "Config file renamed from temp to target");
@@ -741,6 +740,11 @@ mod database_storage {
         Ok(result)
     }
 
+            #[derive(FromQueryResult)]
+            struct SizeRow {
+                table_size: i64,
+            }
+
     /// `SQLite`: 使用 dbstat 虚拟表查询各表占用的页面总大小
     async fn query_sqlite(db: &DatabaseConnection) -> anyhow::Result<BTreeMap<String, i64>> {
         debug!(target: "server", "querying sqlite table sizes");
@@ -750,11 +754,6 @@ mod database_storage {
             // dbstat 虚拟表在 SQLite 编译时需启用 SQLITE_ENABLE_DBSTAT_VTAB
             // sqlx 的 bundled SQLite 默认启用此选项
             let sql = "SELECT COALESCE(SUM(pgsize), 0) AS table_size FROM dbstat WHERE name = ?";
-
-            #[derive(FromQueryResult)]
-            struct SizeRow {
-                table_size: i64,
-            }
 
             let row = SizeRow::find_by_statement(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,

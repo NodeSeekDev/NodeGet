@@ -26,6 +26,9 @@ impl StaticMonitoringData {
     /// 内部将三个字段各自序列化为 `serde_json::Value`，再递归排序所有 object key，
     /// 拼接为一个确定性字符串后取 SHA-256。
     /// 同一组数据无论 JSON 序列化时 key 顺序如何，都会得到相同的哈希值。
+    ///
+    /// # Panics
+    /// Panics if serializing any of the fields fails (should never happen with valid data).
     #[must_use]
     pub fn compute_data_hash(
         cpu: &StaticCPUData,

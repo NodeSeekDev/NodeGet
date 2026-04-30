@@ -151,6 +151,8 @@ fn compile_module_bytecode_no_eval(ctx: &Ctx<'_>, script: &str) -> Result<Vec<u8
     enrich_exception(ctx, "js_compile", module.write(WriteOptions::default()))
 }
 
+/// # Errors
+/// Returns an error if the JS module cannot be compiled.
 pub fn compile_js_module_to_bytecode(js_code: impl AsRef<str>) -> Result<Vec<u8>, Error> {
     debug!(target: "js_runtime", "compiling JS module to bytecode");
     let js_code = js_code.as_ref().to_owned();
@@ -179,6 +181,8 @@ pub fn compile_js_module_to_bytecode(js_code: impl AsRef<str>) -> Result<Vec<u8>
     })
 }
 
+/// # Errors
+/// Returns an error if building the host runtime or JS execution fails.
 pub fn js_runner(
     js_code: JsCodeInput,
     run_type: RunType,
@@ -425,6 +429,8 @@ pub fn js_runner(
     })
 }
 
+/// # Errors
+/// Returns an error if building the host runtime or JS execution fails.
 pub fn js_runner_source_mode(
     source_code: &str,
     script_name: &str,

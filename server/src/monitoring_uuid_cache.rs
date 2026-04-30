@@ -84,6 +84,7 @@ impl MonitoringUuidCache {
         let mut guard = cache.inner.write().await;
         guard.by_uuid = by_uuid;
         guard.by_id = by_id;
+        drop(guard);
 
         debug!(target: "monitoring", "MonitoringUuidCache reloaded");
         Ok(())

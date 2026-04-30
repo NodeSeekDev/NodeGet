@@ -123,9 +123,8 @@ async fn cleanup_static_monitoring_generic(
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning static monitoring (generic)");
     let uuid = Uuid::parse_str(agent_uuid)?;
     let uuid_cache = MonitoringUuidCache::global();
-    let uuid_id = match uuid_cache.get_id(&uuid).await {
-        Some(id) => id,
-        None => return Ok(0),
+    let Some(uuid_id) = uuid_cache.get_id(&uuid).await else {
+        return Ok(0);
     };
 
     // 获取该 agent 的最大 timestamp
@@ -167,9 +166,8 @@ async fn cleanup_dynamic_monitoring_generic(
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning dynamic monitoring (generic)");
     let uuid = Uuid::parse_str(agent_uuid)?;
     let uuid_cache = MonitoringUuidCache::global();
-    let uuid_id = match uuid_cache.get_id(&uuid).await {
-        Some(id) => id,
-        None => return Ok(0),
+    let Some(uuid_id) = uuid_cache.get_id(&uuid).await else {
+        return Ok(0);
     };
 
     // 获取该 agent 的最大 timestamp
@@ -211,9 +209,8 @@ async fn cleanup_dynamic_monitoring_summary_generic(
     trace!(target: "db", agent_uuid = %agent_uuid, "cleaning dynamic monitoring summary (generic)");
     let uuid = Uuid::parse_str(agent_uuid)?;
     let uuid_cache = MonitoringUuidCache::global();
-    let uuid_id = match uuid_cache.get_id(&uuid).await {
-        Some(id) => id,
-        None => return Ok(0),
+    let Some(uuid_id) = uuid_cache.get_id(&uuid).await else {
+        return Ok(0);
     };
 
     // 获取该 agent 的最大 timestamp

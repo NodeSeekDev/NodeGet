@@ -29,13 +29,10 @@ pub mod token;
 ///
 /// Zero-allocation: returns borrowed slices into the original string.
 pub fn token_identity(token: &str) -> (&str, &str) {
-    if let Some(colon) = token.find(':') {
-        (&token[..colon], "")
-    } else if let Some(pipe) = token.find('|') {
-        ("", &token[..pipe])
-    } else {
-        ("???", "")
-    }
+    token.find(':').map_or_else(
+        || token.find('|').map_or(("???", ""), |pipe| ("", &token[..pipe])),
+        |colon| (&token[..colon], ""),
+    )
 }
 
 /// A wrapper around `&RawValue` that truncates its `Display` output to 1024 bytes.

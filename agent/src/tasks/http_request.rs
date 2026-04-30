@@ -89,10 +89,10 @@ pub async fn execute_http_request(task: HttpRequestTask) -> Result<HttpRequestTa
         .bytes()
         .await
         .map_err(|e| NodegetError::Other(format!("Failed to read HTTP response body: {e}")))?;
-    let (body, body_base64) = match String::from_utf8(bytes.to_vec()) {
-        Ok(s) => (Some(s), None),
-        Err(_) => (None, Some(BASE64_STANDARD.encode(&bytes))),
-    };
+    let (body, body_base64) = String::from_utf8(bytes.to_vec()).map_or_else(
+        |_| (None, Some(BASE64_STANDARD.encode(&bytes))),
+        |s| (Some(s), None),
+    );
 
     Ok(HttpRequestTaskResult {
         status,

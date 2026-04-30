@@ -83,6 +83,7 @@ impl CrontabCache {
         let by_id = Self::build_cache(all);
         let mut guard = cache.inner.write().await;
         guard.by_id = by_id;
+        drop(guard);
 
         debug!(target: "crontab", "CrontabCache reloaded");
         Ok(())
