@@ -6,10 +6,17 @@
 
 ***Next-generation server monitoring and management tools***
 
+![Dynamic TOML Badge](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FNodeSeekDev%2FNodeGet%2Frefs%2Fheads%2Fmain%2Fnodeget-lib%2FCargo.toml&query=package.version&prefix=v&style=for-the-badge&label=Latest%20Version&link=https%3A%2F%2Fraw.githubusercontent.com%2FNodeSeekDev%2FNodeGet%2Frefs%2Fheads%2Fmain%2Fnodeget-lib%2FCargo.toml)
+![GitHub top language](https://img.shields.io/github/languages/top/NodeSeekDev/NodeGet?style=for-the-badge&label=Rust&color=red)
+![GitHub License](https://img.shields.io/github/license/NodeSeekDev/NodeGet?style=for-the-badge)
+![GitHub contributors](https://img.shields.io/github/contributors/NodeSeekDev/NodeGet?style=for-the-badge)
+![GitHub Repo stars](https://img.shields.io/github/stars/NodeSeekDev/NodeGet?style=for-the-badge&color=yellow)
+![GitHub forks](https://img.shields.io/github/forks/NodeSeekDev/NodeGet?style=for-the-badge&color=white)
+
 </div>
 
 > [!IMPORTANT]
-> **NOTICE**: NodeGet 正处于 ***早期阶段***，如果你担心安全问题，请在正式发布 **v1.0.0** 版本后再进行使用 *(预计 2-3 周以内)*。遇到问题请及时报告
+> NodeGet 正处于 ***早期阶段***，如果你担心安全问题，请在正式发布 **v1.0.0** 版本后再进行使用 *(预计 2-3 周以内)*。遇到问题请及时报告
 
 
 ## **简介**
@@ -82,3 +89,22 @@ NodeGet 后端以 **`AGPLv3`** 协议开源，包括 *Server*、*Agent* 与 *Lib
 NodeGet 文档以 **`CC BY 4.0`** 协议开源，范围包括 `docs` 目录下的所有 Markdown 文档
 
 如果无另外说明，以上协议不包括 NodeGet 衍生项目，包括但不限于前端以及第三方代码
+
+## 鸣谢
+
+- [JetBrains RustRover](https://www.jetbrains.com/rust/)
+- [Komari](https://github.com/komari-monitor/komari)
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=NodeSeekDev%2FNodeGet&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=NodeSeekDev/NodeGet&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=NodeSeekDev/NodeGet&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=NodeSeekDev/NodeGet&type=date&legend=top-left" />
+ </picture>
+</a>
+
+## Contributors
+
+![](https://contrib.rocks/image?repo=NodeSeekDev/NodeGet)
