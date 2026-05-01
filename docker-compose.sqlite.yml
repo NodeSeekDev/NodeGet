@@ -2,21 +2,15 @@ name: nodeget-sqlite
 
 services:
   nodeget:
-    image: "${NODEGET_IMAGE:-genshinmc/nodeget:latest}"
+    image: genshinmc/nodeget:latest
     restart: unless-stopped
     environment:
-      NODEGET_CONFIG_FROM_ENV: "true"
-      NODEGET_PORT: "${NODEGET_PORT:-3000}"
-      NODEGET_SERVER_UUID: "${NODEGET_SERVER_UUID:-auto_gen}"
-      NODEGET_LOG_FILTER: "${NODEGET_LOG_FILTER:-info}"
-      NODEGET_DATABASE_URL: "${NODEGET_DATABASE_URL:-sqlite:///var/lib/nodeget/nodeget.db?mode=rwc}"
+      NODEGET_PORT: "3000"
+      NODEGET_SERVER_UUID: auto_gen
+      NODEGET_LOG_FILTER: info
+      NODEGET_DATABASE_URL: sqlite:///var/lib/nodeget/nodeget.db?mode=rwc
     ports:
-      - "${NODEGET_HOST_PORT:-3000}:${NODEGET_PORT:-3000}"
+      - "3000:3000"
     volumes:
-      - ./data/config.toml:/etc/nodeget/config.toml
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- \"http://127.0.0.1:$${NODEGET_PORT:-3000}/\" >/dev/null"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      - ./data/config:/etc/nodeget
+      - ./data/sqlite:/var/lib/nodeget

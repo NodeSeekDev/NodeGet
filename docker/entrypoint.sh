@@ -1,15 +1,8 @@
 #!/bin/sh
 set -eu
 
-CONFIG_PATH="${NODEGET_CONFIG:-/etc/nodeget/config.toml}"
+CONFIG_PATH="/etc/nodeget/config.toml"
 DATA_DIR="${NODEGET_DATA_DIR:-/var/lib/nodeget}"
-
-as_bool() {
-    case "${1:-}" in
-        1 | true | TRUE | yes | YES | on | ON) return 0 ;;
-        *) return 1 ;;
-    esac
-}
 
 toml_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
@@ -57,7 +50,12 @@ has_config_arg() {
 
 mkdir -p "$(dirname "${CONFIG_PATH}")" "${DATA_DIR}"
 
-if [ ! -f "${CONFIG_PATH}" ] || as_bool "${NODEGET_CONFIG_FROM_ENV:-false}"; then
+if [ -d "${CONFIG_PATH}" ]; then
+    echo "Config path ${CONFIG_PATH} is a directory. Remove it or replace it with a regular file." >&2
+    exit 1
+fi
+
+if [ ! -s "${CONFIG_PATH}" ]; then
     write_config_from_env
 fi
 
