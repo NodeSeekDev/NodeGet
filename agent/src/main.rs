@@ -14,12 +14,11 @@ use crate::rpc::monitoring_data_report::{
     handle_dynamic_monitoring_data_report, handle_static_monitoring_data_report,
 };
 use crate::tasks::handle_task;
-use log::{Level, error, info};
+use log::{Level, info};
 use nodeget_lib::args_parse::agent::AgentArgs;
 use nodeget_lib::config::agent::AgentConfig;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::utils::set_ntp_offset_ms;
-use nodeget_lib::utils::uuid::compare_uuid;
 use nodeget_lib::utils::version::NodeGetVersion;
 use std::str::FromStr;
 use std::sync::{OnceLock, RwLock};
@@ -99,10 +98,6 @@ async fn main() -> anyhow::Result<()> {
             simple_logger::init_with_level(level)
                 .map_err(|e| NodegetError::Other(format!("Failed to init logger: {e}")))?;
             logger_initialized = true;
-        }
-
-        if let Err(e) = compare_uuid(config.agent_uuid) {
-            error!("UUID comparison failed: {e}");
         }
 
         info!("Starting nodeget-agent with config: {config:?}");

@@ -1,4 +1,3 @@
-use crate::utils::uuid::get_stable_device_uuid;
 use serde::{Deserialize, Deserializer};
 use uuid::Uuid;
 
@@ -10,9 +9,9 @@ pub mod server;
 #[cfg(feature = "for-agent")]
 pub mod agent;
 
-// 自定义 UUID 反序列化函数，支持 "auto_gen" 关键字自动生成设备 UUID
+// 自定义 UUID 反序列化函数
 //
-// 当输入为 "auto_gen" 时，使用设备稳定 UUID 生成器生成 UUID；
+// auto_gen 被禁止直接反序列化；持久化替换由 get_and_parse_config 完成。
 // 否则尝试解析输入字符串为标准 UUID 格式
 fn deserialize_uuid_or_auto<'de, D>(deserializer: D) -> Result<Uuid, D::Error>
 where
@@ -20,9 +19,10 @@ where
 {
     let s: String = String::deserialize(deserializer)?;
 
-    // 2. 判断逻辑
     if s.eq_ignore_ascii_case("auto_gen") {
-        get_stable_device_uuid().map_err(serde::de::Error::custom)
+        return Err(serde::de::Error::custom(
+            "auto_gen is not supported here; use get_and_parse_config for auto-generation",
+        ));
     } else {
         Uuid::parse_str(&s).map_err(serde::de::Error::custom)
     }

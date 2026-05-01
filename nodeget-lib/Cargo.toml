@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 tokio = { version = "1.48.0", default-features = false, features = ["fs"] }
 uuid = { version = "1.19.0", default-features = false, features = ["std", "v5", "fast-rng", "v4", "serde"] }
-machine-uid = "0.5.4"
+
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
 toml = { version = "0.9.11", default-features = false, features = ["std", "serde", "parse"] }
@@ -17,6 +17,7 @@ sha2 = "0.10"
 thiserror = "2.0.18"
 anyhow = "1.0.100"
 palc = { version = "0.0.2", default-features = false, features = ["help"] }
+regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl"] }
 
 [features]
 for-agent = []

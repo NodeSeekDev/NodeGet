@@ -103,16 +103,37 @@ pub struct DatabaseConfig {
 impl ServerConfig {
     /// 从指定路径读取并解析服务器配置
     ///
+    /// 若配置文件中 `server_uuid` 为 `"auto_gen"`，则会生成随机 UUIDv4
+    /// 并直接覆盖原配置文件，后续启动不再触发自动生成。
+    ///
     /// # Errors
     ///
     /// 当文件读取失败或TOML解析失败时返回错误
     pub async fn get_and_parse_config(
         path: impl AsRef<Path>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let file = fs::read_to_string(path).await?;
+        let content = fs::read_to_string(path.as_ref()).await?;
 
-        let config: Self = toml::from_str(&file)?;
+        // 检查并替换 auto_gen
+        let value: toml::Value = toml::from_str(&content)?;
+        let is_auto_gen = value
+            .get("server_uuid")
+            .and_then(|v| v.as_str())
+            .map_or(false, |s| s.eq_ignore_ascii_case("auto_gen"));
 
+        if is_auto_gen {
+            let new_uuid = uuid::Uuid::new_v4().to_string();
+            let re = regex::Regex::new(r#"(?im)^(\s*server_uuid\s*=\s*["'])auto_gen(["'].*)$"#)
+                .expect("static regex is valid");
+            let new_content = re
+                .replace(&content, format!(r#"${{1}}{}${{2}}"#, new_uuid))
+                .into_owned();
+            fs::write(path.as_ref(), &new_content).await?;
+            let config: Self = toml::from_str(&new_content)?;
+            return Ok(config);
+        }
+
+        let config: Self = toml::from_str(&content)?;
         Ok(config)
     }
 }

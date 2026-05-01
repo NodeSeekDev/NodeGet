@@ -92,7 +92,7 @@ Commands:
 install-server 选项:
 
   --server-ws <addr>     WebSocket 监听地址 (默认: 0.0.0.0:2211)
-  --server-id <uuid>     服务端 ID (可选，默认自动生成)
+  --server-id <uuid>     服务端 ID (可选，默认首次启动时随机生成并持久化)
   --db <url>             PostgreSQL/SQLite 数据库连接字符串 (默认采用 SQLite)
   --tunnel <true|false>  是否创建 Cloudflare 临时隧道
 
@@ -102,7 +102,7 @@ install-agent 选项:
   --server-ws <url>      服务端 WebSocket 地址 (必填)
   --server-name <name>   节点名称 (默认: 主机名)
   --token <token>        认证 Token (必填)
-  --agent-id <uuid>      客户端 ID (可选，默认自动生成)
+  --agent-id <uuid>      客户端 ID (可选，默认首次启动时随机生成并持久化)
   --server-id <uuid>     绑定的服务端 ID (可选)
 
 ----------------------------------------
