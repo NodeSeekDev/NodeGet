@@ -31,7 +31,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/nodeget-server
+  IMAGE_NAME: nodeseekdev/nodeget-server
   DOCKERHUB_IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE_NAME || 'nodeseek/nodeget-server' }}
 
 jobs:

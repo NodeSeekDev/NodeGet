@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-config_path="${NODEGET_CONFIG:-/etc/nodeget/config.toml}"
+config_path="${NODEGET_CONFIG:-/config/config.toml}"
 config_dir="$(dirname "$config_path")"
 
 mkdir -p "$config_dir"
@@ -31,6 +31,10 @@ max_connections = ${NODEGET_DATABASE_MAX_CONNECTIONS:-10}
 EOF
 fi
 
+if [ "$(id -u)" -eq 0 ]; then
+    chown -R nodeget:nodeget "$config_dir"
+fi
+
 if [ "$#" -eq 0 ]; then
     set -- serve
 fi
@@ -50,5 +54,9 @@ case "$1" in
         set -- nodeget-server "$@"
         ;;
 esac
+
+if [ "$(id -u)" -eq 0 ] && [ "$1" = "nodeget-server" ]; then
+    set -- su-exec nodeget "$@"
+fi
 
 exec "$@"

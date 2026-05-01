@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: nodeget
       POSTGRES_USER: nodeget
-      POSTGRES_PASSWORD: nodeget
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nodeget -d nodeget"]
       interval: 10s
@@ -30,7 +30,7 @@ services:
       NODEGET_PORT: 3000
       NODEGET_SERVER_UUID: auto_gen
       NODEGET_LOG_FILTER: info
-      NODEGET_DATABASE_URL: postgres://nodeget:nodeget@postgres:5432/nodeget
+      NODEGET_DATABASE_URL: postgres://nodeget:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/nodeget
     volumes:
       - ./nodeget-config-postgres:/config
 

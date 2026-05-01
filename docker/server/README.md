@@ -14,6 +14,8 @@ docker compose -f docker-compose.sqlite.yml up -d
 PostgreSQL:
 
 ```bash
+cp docker/server/postgres.env.example .env
+# Edit .env and set a strong POSTGRES_PASSWORD before starting.
 docker compose -f docker-compose.postgres.yml up -d
 ```
 
@@ -48,6 +50,8 @@ If you mount your own `config.toml`, the environment variables are not written i
 SQLite uses `./nodeget-config-sqlite/config.toml` and `./nodeget-config-sqlite/nodeget.db`.
 PostgreSQL uses `./nodeget-config-postgres/config.toml` and the `postgres-data` named volume.
 
+The entrypoint prepares `/config` when needed, then runs `nodeget-server` as the unprivileged `nodeget` user.
+
 ## Commands
 
 ```bash
@@ -72,6 +76,7 @@ Build arguments:
 
 - `NODEGET_VERSION`: release tag to package, default `latest`
 - `NODEGET_RELEASE_REPO`: repository that hosts release assets, default `GenshinMinecraft/NodeGet`
+- `NODEGET_SERVER_SHA256`: optional SHA-256 checksum for the downloaded server binary
 
 Supported platforms:
 
@@ -88,11 +93,13 @@ Docker Hub publishing is optional. Configure these repository secrets to enable 
 - `DOCKERHUB_TOKEN`
 
 Optionally set `DOCKERHUB_IMAGE_NAME` as a repository variable. The default is `nodeseek/nodeget-server`.
+GHCR publishing uses `ghcr.io/nodeseekdev/nodeget-server`.
 
 ## Verification
 
 ```bash
 docker compose -f docker-compose.sqlite.yml config
+cp docker/server/postgres.env.example .env
 docker compose -f docker-compose.postgres.yml config
 docker build -f Dockerfile.server --build-arg NODEGET_VERSION=v0.0.6 --build-arg NODEGET_RELEASE_REPO=GenshinMinecraft/NodeGet -t nodeget-server:local .
 docker run --rm nodeget-server:local version

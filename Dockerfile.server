@@ -2,6 +2,7 @@ FROM alpine:3.20
 
 ARG NODEGET_VERSION=latest
 ARG NODEGET_RELEASE_REPO=GenshinMinecraft/NodeGet
+ARG NODEGET_SERVER_SHA256=
 ARG TARGETARCH
 
 ENV NODEGET_CONFIG=/config/config.toml \
@@ -10,7 +11,11 @@ ENV NODEGET_CONFIG=/config/config.toml \
     NODEGET_LOG_FILTER=info \
     NODEGET_DATABASE_URL=sqlite:///config/nodeget.db?mode=rwc
 
-RUN apk add --no-cache ca-certificates curl tar
+RUN apk add --no-cache ca-certificates curl su-exec tar \
+    && addgroup -S nodeget \
+    && adduser -S -G nodeget -h /config -s /sbin/nologin nodeget \
+    && mkdir -p /config \
+    && chown nodeget:nodeget /config
 
 COPY docker/server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
@@ -28,6 +33,9 @@ RUN set -eux; \
         url="https://github.com/${NODEGET_RELEASE_REPO}/releases/download/${NODEGET_VERSION}/${asset}"; \
     fi; \
     curl -fsSL "$url" -o /usr/local/bin/nodeget-server; \
+    if [ -n "${NODEGET_SERVER_SHA256}" ]; then \
+        echo "${NODEGET_SERVER_SHA256}  /usr/local/bin/nodeget-server" | sha256sum -c -; \
+    fi; \
     chmod +x /usr/local/bin/nodeget-server
 
 EXPOSE 3000

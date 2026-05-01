@@ -11,4 +11,6 @@ docs/.vitepress/cache
 config.toml
 nodeget-config*
 .env
+*.env
+!*.env.example
 .DS_Store
