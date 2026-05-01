@@ -65,11 +65,12 @@ COPY docker/entrypoint.sh /usr/local/bin/nodeget-entrypoint
 
 RUN chmod 0755 /usr/local/bin/nodeget-entrypoint
 
-WORKDIR /var/lib/nodeget
+WORKDIR /etc/nodeget
 
 ENV NODEGET_PORT="3000" \
     NODEGET_SERVER_UUID="auto_gen" \
     NODEGET_LOG_FILTER="info" \
+    NODEGET_CONFIG_PATH="/etc/nodeget/config.toml" \
     NODEGET_DATABASE_URL="sqlite:///var/lib/nodeget/nodeget.db?mode=rwc"
 
 EXPOSE 3000

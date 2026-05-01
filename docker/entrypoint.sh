@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-CONFIG_PATH="/etc/nodeget/config.toml"
+CONFIG_PATH="${NODEGET_CONFIG_PATH:-/etc/nodeget/config.toml}"
 DATA_DIR="${NODEGET_DATA_DIR:-/var/lib/nodeget}"
 
 toml_escape() {
