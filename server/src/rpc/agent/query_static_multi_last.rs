@@ -87,21 +87,73 @@ pub async fn static_data_multi_last_query(
             uuid_id_pairs.push((*uuid, uuid_id));
         }
 
-        let statement = build_union_last_statement(&uuid_id_pairs, &fields, db)?;
+        // ── Fast path: in-memory last-cache (partial hit merge) ─────
+        let last_cache = crate::monitoring_last_cache::MonitoringLastCache::global();
+        let mut results: Vec<Option<serde_json::Value>> = vec![None; uuid_id_pairs.len()];
+        let mut misses: Vec<(usize, i16)> = Vec::new();
+        for (idx, (uuid, uuid_id)) in uuid_id_pairs.iter().enumerate() {
+            match last_cache.get_static_last(uuid, &fields).await {
+                Some(v) => results[idx] = Some(v),
+                None => misses.push((idx, *uuid_id)),
+            }
+        }
 
-        let field_mappings: Vec<(&str, &str)> = fields
-            .iter()
-            .map(|field| (field.column_name(), field.json_key()))
-            .collect();
+        if !misses.is_empty() {
+            let miss_pairs: Vec<(Uuid, i16)> = misses
+                .iter()
+                .map(|(idx, _)| uuid_id_pairs[*idx])
+                .collect();
+            let statement = build_union_last_statement(&miss_pairs, &fields, db)?;
+            let field_mappings: Vec<(&str, &str)> = fields
+                .iter()
+                .map(|field| (field.column_name(), field.json_key()))
+                .collect();
+            let miss_raw = execute_statement_query(
+                db,
+                statement,
+                &field_mappings,
+                miss_pairs.len(),
+                uuid_cache,
+            )
+            .await?;
+            let miss_values: Vec<serde_json::Value> = serde_json::from_str(miss_raw.get())
+                .map_err(|e| {
+                    NodegetError::SerializationError(format!("Parse DB results: {e}"))
+                })?;
+            for (i, val) in miss_values.into_iter().enumerate() {
+                let idx = misses[i].0;
+                results[idx] = Some(val);
+            }
+            debug!(target: "monitoring", cache_hits = uuid_id_pairs.len() - misses.len(), misses = misses.len(), "Static multi-last query partial cache hit");
+        } else {
+            debug!(target: "monitoring", uuids_count = uuid_id_pairs.len(), "Static multi-last query full cache hit");
+        }
 
-        execute_statement_query(
-            db,
-            statement,
-            &field_mappings,
-            deduped_uuids.len(),
-            uuid_cache,
-        )
-        .await
+        // ── Unified serialization (cache + DB merged) ─────────────────
+        let mut output_buffer: Vec<u8> = Vec::with_capacity(results.len().saturating_mul(200));
+        output_buffer.push(b'[');
+        let mut first = true;
+        for opt in results {
+            if let Some(value) = opt {
+                if first {
+                    first = false;
+                } else {
+                    output_buffer.push(b',');
+                }
+                if let Err(e) = serde_json::to_writer(&mut output_buffer, &value) {
+                    error!(target: "monitoring", error = %e, "Result serialization failed");
+                    return Err(NodegetError::SerializationError(format!(
+                        "Serialization failed: {e}"
+                    )).into());
+                }
+            }
+        }
+        output_buffer.push(b']');
+        let json_string = String::from_utf8(output_buffer).map_err(|e| {
+            NodegetError::SerializationError(format!("UTF8 conversion error: {e}"))
+        })?;
+        return RawValue::from_string(json_string)
+            .map_err(|e| NodegetError::SerializationError(e.to_string()).into());
     };
 
     match process_logic.await {

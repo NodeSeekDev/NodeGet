@@ -76,12 +76,22 @@ pub async fn report_static(
             hash_cache
                 .update(uuid_id, static_monitoring_data.data_hash.clone())
                 .await;
+            // Also update last-cache so subsequent multi-last queries can hit the cache
+            // even when the data hash is unchanged (common for static monitoring).
+            crate::monitoring_last_cache::MonitoringLastCache::global()
+                .update_static(agent_uuid, static_monitoring_data.time.cast_signed(), &static_monitoring_data)
+                .await;
             debug!(target: "monitoring", agent_uuid = %static_monitoring_data.uuid, "Static data hash already exists, skipping");
             return RawValue::from_string(
                 r#"{"status":"skipped","reason":"duplicate_hash"}"#.to_owned(),
             )
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into());
         }
+
+        // Update in-memory last-cache (used by multi-last queries, zero DB hit)
+        crate::monitoring_last_cache::MonitoringLastCache::global()
+            .update_static(agent_uuid, static_monitoring_data.time.cast_signed(), &static_monitoring_data)
+            .await;
 
         let data_hash = static_monitoring_data.data_hash;
         let in_data = static_monitoring::ActiveModel {

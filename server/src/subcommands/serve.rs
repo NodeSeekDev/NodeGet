@@ -31,6 +31,9 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
     crate::static_hash_cache::StaticHashCache::init();
     debug!(target: "server", "Static hash cache initialized");
 
+    crate::monitoring_last_cache::MonitoringLastCache::init();
+    debug!(target: "server", "Monitoring last cache initialized");
+
     crate::crontab::cache::CrontabCache::init()
         .await
         .expect("Failed to initialize crontab cache");

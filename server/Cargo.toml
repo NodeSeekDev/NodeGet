@@ -1,6 +1,6 @@
 [package]
 name = "nodeget-server"
-version = "0.0.6"
+version = "0.0.7"
 edition = "2024"
 description = "Next-generation server monitoring and management tools"
 license = "AGPL-3"
