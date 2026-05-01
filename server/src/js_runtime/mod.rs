@@ -11,6 +11,7 @@ use uuid::Uuid;
 pub mod inline_call;
 pub mod nodeget;
 pub mod runtime_pool;
+pub(crate) mod server_runtime;
 
 pub(crate) const JS_RT_MEMORY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 
