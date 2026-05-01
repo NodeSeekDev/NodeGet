@@ -14,4 +14,4 @@ services:
       NODEGET_LOG_FILTER: info
       NODEGET_DATABASE_URL: sqlite:///tmp/nodeget.db?mode=rwc
     volumes:
-      - ./nodeget-config:/config
+      - ./nodeget-config-sqlite:/config

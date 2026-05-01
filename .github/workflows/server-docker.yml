@@ -7,6 +7,10 @@ on:
         description: NodeGet release tag to package
         required: false
         default: latest
+      nodeget_release_repo:
+        description: GitHub repository that hosts NodeGet release assets
+        required: false
+        default: GenshinMinecraft/NodeGet
   push:
     branches:
       - main
@@ -49,6 +53,16 @@ jobs:
             echo "value=latest" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Set release repository
+        id: release-repo
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.nodeget_release_repo }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=GenshinMinecraft/NodeGet" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -88,6 +102,7 @@ jobs:
           push: true
           build-args: |
             NODEGET_VERSION=${{ steps.version.outputs.value }}
+            NODEGET_RELEASE_REPO=${{ steps.release-repo.outputs.value }}
           tags: ${{ steps.meta-ghcr.outputs.tags }}
           labels: ${{ steps.meta-ghcr.outputs.labels }}
 
@@ -112,5 +127,6 @@ jobs:
           push: true
           build-args: |
             NODEGET_VERSION=${{ steps.version.outputs.value }}
+            NODEGET_RELEASE_REPO=${{ steps.release-repo.outputs.value }}
           tags: ${{ steps.meta-dockerhub.outputs.tags }}
           labels: ${{ steps.meta-dockerhub.outputs.labels }}

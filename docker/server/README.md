@@ -1,6 +1,7 @@
 # NodeGet Server Docker
 
 This image runs `nodeget-server` on Alpine Linux by downloading the released musl binary.
+Release assets are currently downloaded from `GenshinMinecraft/NodeGet` by default because the official repository release workflow is temporarily unavailable.
 
 ## Quick Start
 
@@ -32,14 +33,15 @@ Supported environment variables:
 - `NODEGET_CONFIG`: config path, default `/config/config.toml`
 
 If you mount your own `config.toml`, the environment variables are not written into it.
-The compose files persist `./nodeget-config/config.toml` only. Other runtime data is not persisted by default.
+The compose files persist their generated `config.toml` only. Other runtime data is not persisted by default.
+SQLite uses `./nodeget-config-sqlite/config.toml`; PostgreSQL uses `./nodeget-config-postgres/config.toml`.
 The SQLite compose file stores its database in `/tmp`, so it is suitable for simple or disposable deployments.
 
 ## Commands
 
 ```bash
 docker run --rm ghcr.io/nodeseekdev/nodeget-server:latest version
-docker run --rm -v ./nodeget-config:/config ghcr.io/nodeseekdev/nodeget-server:latest get-uuid
+docker run --rm -v ./nodeget-config-sqlite:/config ghcr.io/nodeseekdev/nodeget-server:latest get-uuid
 ```
 
 The entrypoint automatically appends `--config /config/config.toml` for these commands:
@@ -58,6 +60,7 @@ docker build -f Dockerfile.server --build-arg NODEGET_VERSION=v0.0.6 -t nodeget-
 Build arguments:
 
 - `NODEGET_VERSION`: release tag to package, default `latest`
+- `NODEGET_RELEASE_REPO`: repository that hosts release assets, default `GenshinMinecraft/NodeGet`
 
 Supported platforms:
 
@@ -80,6 +83,6 @@ Optionally set `DOCKERHUB_IMAGE_NAME` as a repository variable. The default is `
 ```bash
 docker compose -f docker-compose.sqlite.yml config
 docker compose -f docker-compose.postgres.yml config
-docker build -f Dockerfile.server --build-arg NODEGET_VERSION=v0.0.6 -t nodeget-server:local .
+docker build -f Dockerfile.server --build-arg NODEGET_VERSION=v0.0.6 --build-arg NODEGET_RELEASE_REPO=GenshinMinecraft/NodeGet -t nodeget-server:local .
 docker run --rm nodeget-server:local version
 ```

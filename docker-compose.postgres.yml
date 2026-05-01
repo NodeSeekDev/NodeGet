@@ -30,4 +30,4 @@ services:
       NODEGET_LOG_FILTER: info
       NODEGET_DATABASE_URL: postgres://nodeget:nodeget@postgres:5432/nodeget
     volumes:
-      - ./nodeget-config:/config
+      - ./nodeget-config-postgres:/config

@@ -9,6 +9,6 @@ docs/.vitepress/cache
 *.db-wal
 *.local.toml
 config.toml
-nodeget-config
+nodeget-config*
 .env
 .DS_Store

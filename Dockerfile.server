@@ -1,6 +1,7 @@
 FROM alpine:3.20
 
 ARG NODEGET_VERSION=latest
+ARG NODEGET_RELEASE_REPO=GenshinMinecraft/NodeGet
 ARG TARGETARCH
 
 ENV NODEGET_CONFIG=/config/config.toml \
@@ -22,9 +23,9 @@ RUN set -eux; \
     esac; \
     asset="nodeget-server-linux-${asset_arch}-musl"; \
     if [ "${NODEGET_VERSION}" = "latest" ]; then \
-        url="https://github.com/NodeSeekDev/NodeGet/releases/latest/download/${asset}"; \
+        url="https://github.com/${NODEGET_RELEASE_REPO}/releases/latest/download/${asset}"; \
     else \
-        url="https://github.com/NodeSeekDev/NodeGet/releases/download/${NODEGET_VERSION}/${asset}"; \
+        url="https://github.com/${NODEGET_RELEASE_REPO}/releases/download/${NODEGET_VERSION}/${asset}"; \
     fi; \
     curl -fsSL "$url" -o /usr/local/bin/nodeget-server; \
     chmod +x /usr/local/bin/nodeget-server
