@@ -28,14 +28,25 @@ Supported environment variables:
 - `NODEGET_PORT`: server port, default `3000`
 - `NODEGET_SERVER_UUID`: server UUID, default `auto_gen`
 - `NODEGET_LOG_FILTER`: log filter, default `info`
-- `NODEGET_DATABASE_URL`: database URL, default `sqlite:///tmp/nodeget.db?mode=rwc`
+- `NODEGET_DATABASE_URL`: database URL, default `sqlite:///config/nodeget.db?mode=rwc`
 - `NODEGET_DATABASE_MAX_CONNECTIONS`: database max connections, default `10`
 - `NODEGET_CONFIG`: config path, default `/config/config.toml`
 
+Additional environment variables map to the defaults in `server/config.toml.example`:
+
+- `NODEGET_JSONRPC_MAX_CONNECTIONS`
+- `NODEGET_ENABLE_UNIX_SOCKET`
+- `NODEGET_UNIX_SOCKET_PATH`
+- `NODEGET_MONITORING_FLUSH_INTERVAL_MS`
+- `NODEGET_MONITORING_MAX_BATCH_SIZE`
+- `NODEGET_DATABASE_CONNECT_TIMEOUT_MS`
+- `NODEGET_DATABASE_ACQUIRE_TIMEOUT_MS`
+- `NODEGET_DATABASE_IDLE_TIMEOUT_MS`
+- `NODEGET_DATABASE_MAX_LIFETIME_MS`
+
 If you mount your own `config.toml`, the environment variables are not written into it.
-The compose files persist their generated `config.toml` only. Other runtime data is not persisted by default.
-SQLite uses `./nodeget-config-sqlite/config.toml`; PostgreSQL uses `./nodeget-config-postgres/config.toml`.
-The SQLite compose file stores its database in `/tmp`, so it is suitable for simple or disposable deployments.
+SQLite uses `./nodeget-config-sqlite/config.toml` and `./nodeget-config-sqlite/nodeget.db`.
+PostgreSQL uses `./nodeget-config-postgres/config.toml` and the `postgres-data` named volume.
 
 ## Commands
 

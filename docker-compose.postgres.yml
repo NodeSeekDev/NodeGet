@@ -11,6 +11,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
 
   nodeget:
     image: ghcr.io/nodeseekdev/nodeget-server:latest
@@ -31,3 +33,6 @@ services:
       NODEGET_DATABASE_URL: postgres://nodeget:nodeget@postgres:5432/nodeget
     volumes:
       - ./nodeget-config-postgres:/config
+
+volumes:
+  postgres-data:

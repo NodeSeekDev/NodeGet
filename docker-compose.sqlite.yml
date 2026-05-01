@@ -12,6 +12,6 @@ services:
       NODEGET_PORT: 3000
       NODEGET_SERVER_UUID: auto_gen
       NODEGET_LOG_FILTER: info
-      NODEGET_DATABASE_URL: sqlite:///tmp/nodeget.db?mode=rwc
+      NODEGET_DATABASE_URL: sqlite:///config/nodeget.db?mode=rwc
     volumes:
       - ./nodeget-config-sqlite:/config

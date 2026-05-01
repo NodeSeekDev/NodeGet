@@ -9,22 +9,24 @@ mkdir -p "$config_dir"
 if [ ! -f "$config_path" ]; then
     cat > "$config_path" <<EOF
 ws_listener = "0.0.0.0:${NODEGET_PORT:-3000}"
-jsonrpc_max_connections = 100
-enable_unix_socket = false
-unix_socket_path = "/var/lib/nodeget.sock"
+jsonrpc_max_connections = ${NODEGET_JSONRPC_MAX_CONNECTIONS:-100}
+enable_unix_socket = ${NODEGET_ENABLE_UNIX_SOCKET:-false}
+unix_socket_path = "${NODEGET_UNIX_SOCKET_PATH:-/var/lib/nodeget.sock}"
 server_uuid = "${NODEGET_SERVER_UUID:-auto_gen}"
 
 [logging]
 log_filter = "${NODEGET_LOG_FILTER:-info}"
 
 [monitoring_buffer]
+flush_interval_ms = ${NODEGET_MONITORING_FLUSH_INTERVAL_MS:-500}
+max_batch_size = ${NODEGET_MONITORING_MAX_BATCH_SIZE:-1000}
 
 [database]
-database_url = "${NODEGET_DATABASE_URL:-sqlite:///tmp/nodeget.db?mode=rwc}"
-connect_timeout_ms = 3000
-acquire_timeout_ms = 3000
-idle_timeout_ms = 3000
-max_lifetime_ms = 30000
+database_url = "${NODEGET_DATABASE_URL:-sqlite:///config/nodeget.db?mode=rwc}"
+connect_timeout_ms = ${NODEGET_DATABASE_CONNECT_TIMEOUT_MS:-3000}
+acquire_timeout_ms = ${NODEGET_DATABASE_ACQUIRE_TIMEOUT_MS:-3000}
+idle_timeout_ms = ${NODEGET_DATABASE_IDLE_TIMEOUT_MS:-3000}
+max_lifetime_ms = ${NODEGET_DATABASE_MAX_LIFETIME_MS:-30000}
 max_connections = ${NODEGET_DATABASE_MAX_CONNECTIONS:-10}
 EOF
 fi
