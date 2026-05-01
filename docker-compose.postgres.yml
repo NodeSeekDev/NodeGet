@@ -24,7 +24,6 @@ services:
         condition: service_healthy
     environment:
       NODEGET_PORT: "2211"
-      NODEGET_SERVER_UUID: auto_gen
       NODEGET_LOG_FILTER: info
       NODEGET_DATABASE_URL: postgres://nodeget:nodeget@postgres:5432/nodeget
     ports:
