@@ -72,5 +72,5 @@ export default {
 请求：
 
 ```bash
-curl -i http://127.0.0.1:3000/worker-route/demo_route/hello
+curl -i http://127.0.0.1:2211/worker-route/demo_route/hello
 ```

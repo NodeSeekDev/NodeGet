@@ -9,7 +9,7 @@ toml_escape() {
 }
 
 write_config_from_env() {
-    port="${NODEGET_PORT:-${PORT:-3000}}"
+    port="${NODEGET_PORT:-${PORT:-2211}}"
     ws_listener="${NODEGET_WS_LISTENER:-0.0.0.0:${port}}"
     server_uuid="${NODEGET_SERVER_UUID:-${SERVER_UUID:-auto_gen}}"
     log_filter="${NODEGET_LOG_FILTER:-${LOG_FILTER:-info}}"

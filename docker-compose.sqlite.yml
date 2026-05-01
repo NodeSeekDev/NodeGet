@@ -5,12 +5,12 @@ services:
     image: genshinmc/nodeget:latest
     restart: unless-stopped
     environment:
-      NODEGET_PORT: "3000"
+      NODEGET_PORT: "2211"
       NODEGET_SERVER_UUID: auto_gen
       NODEGET_LOG_FILTER: info
       NODEGET_DATABASE_URL: sqlite:///var/lib/nodeget/nodeget.db?mode=rwc
     ports:
-      - "3000:3000"
+      - "2211:2211"
     volumes:
       - ./data/config:/etc/nodeget
       - ./data/sqlite:/var/lib/nodeget

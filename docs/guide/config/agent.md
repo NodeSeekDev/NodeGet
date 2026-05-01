@@ -103,5 +103,5 @@ allow_version = true
 name = "test_server2"
 server_uuid = "00000000-0000-0000-0000-000000000000"
 token = "test_server2_token"
-ws_url = "ws://127.0.0.1:3000/"
+ws_url = "ws://nodeget-secondary.example.com:2211/"
 ```
