@@ -11,7 +11,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: nodeseekdev/nodeget-server
+  IMAGE_NAME: llleixx/nodeget-server
   RUST_IMAGE: rustlang/rust:nightly-alpine3.22
 
 jobs:
