@@ -1,0 +1,93 @@
+name: Publish Docker Image
+
+on:
+  workflow_run:
+    workflows: ["nodeget-server-build"]
+    types:
+      - completed
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (latest, dev, or vX.Y.Z)'
+        required: true
+        default: 'latest'
+
+env:
+  REGISTRY_GHCR: ghcr.io
+  IMAGE_NAME: nodeseekdev/nodeget-server
+
+jobs:
+  build-and-push:
+    # 只在 server-build 工作流成功时执行
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_GHCR }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        # 仅当配置了 Docker Hub 的 Secret 时才尝试登录
+        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY_GHCR }}/${{ env.IMAGE_NAME }}
+            # 只有配置了 Docker Hub Secret 才会推送到 Docker Hub
+            ${{ secrets.DOCKERHUB_USERNAME != '' && format('{0}/nodeget-server', secrets.DOCKERHUB_USERNAME) || '' }}
+          tags: |
+            # 如果是 dev 分支触发，则标签为 dev
+            type=raw,value=dev,enable=${{ github.event.workflow_run.head_branch == 'dev' }}
+            # 如果是 main 分支触发，则标签为 latest
+            type=raw,value=latest,enable=${{ github.event.workflow_run.head_branch == 'main' }}
+            # 如果是手动触发，则使用输入的版本
+            type=raw,value=${{ github.event.inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Determine Download Version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+          elif [[ "${{ github.event.workflow_run.head_branch }}" == "dev" ]]; then
+            echo "VERSION=dev" >> $GITHUB_ENV
+          else
+            echo "VERSION=latest" >> $GITHUB_ENV
+          fi
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ env.VERSION }}

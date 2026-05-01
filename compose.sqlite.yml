@@ -1,0 +1,15 @@
+services:
+  nodeget-server:
+    image: ghcr.io/nodeseekdev/nodeget-server:latest
+    container_name: nodeget-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - SERVER_UUID=auto_gen
+      - LOG_FILTER=info
+      - DATABASE_URL=sqlite://nodeget.db?mode=rwc
+    volumes:
+      # SQLite 数据库文件持久化
+      - ./nodeget.db:/app/nodeget.db
