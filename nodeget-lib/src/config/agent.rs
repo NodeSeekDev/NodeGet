@@ -110,7 +110,10 @@ impl AgentConfig {
 
         let config_content = if is_auto_gen {
             let new_uuid = uuid::Uuid::new_v4().to_string();
-            let re = regex::Regex::new(r#"(?im)^(\s*agent_uuid\s*=\s*["'])auto_gen(["'].*)$"#)
+            let re = regex::RegexBuilder::new(r#"^(\s*agent_uuid\s*=\s*["'])auto_gen(["'].*)$"#)
+                .case_insensitive(true)
+                .multi_line(true)
+                .build()
                 .expect("static regex is valid");
             let new_content = re
                 .replace(&content, format!(r#"${{1}}{}${{2}}"#, new_uuid))
