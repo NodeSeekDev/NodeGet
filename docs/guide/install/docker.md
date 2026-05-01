@@ -10,8 +10,6 @@
 ### PostgreSQL + NodeGet
 
 ```shell
-mkdir -p nodeget
-touch nodeget/config.toml
 curl -fsSL https://raw.githubusercontent.com/NodeSeekDev/NodeGet/main/docker-compose.postgres.yml -o docker-compose.yml
 docker compose up -d
 ```
@@ -19,31 +17,28 @@ docker compose up -d
 ### SQLite
 
 ```shell
-mkdir -p nodeget
-touch nodeget/config.toml
 curl -fsSL https://raw.githubusercontent.com/NodeSeekDev/NodeGet/main/docker-compose.sqlite.yml -o docker-compose.yml
 docker compose up -d
 ```
 
-默认暴露 `3000` 端口。可通过环境变量覆盖常用配置：
+数据会保存在当前目录的 `./data` 下：
 
-```shell
-NODEGET_HOST_PORT=2211 \
-NODEGET_PORT=2211 \
-NODEGET_SERVER_UUID=auto_gen \
-NODEGET_LOG_FILTER=info \
-docker compose up -d
+```text
+data/
+  config/
+    config.toml
+  sqlite/
+    nodeget.db
+  postgres/
 ```
 
-PostgreSQL 部署时如需修改数据库密码，设置 `POSTGRES_PASSWORD` 即可；默认的 `NODEGET_DATABASE_URL` 会自动使用同一组 `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD`。
+`./data/config/config.toml` 是 NodeGet 配置文件。SQLite 部署使用 `./data/sqlite`，PostgreSQL 部署使用 `./data/postgres`。删除容器不会删除这些目录；如需清空数据，请停止服务后手动删除对应目录。
 
-如需使用指定镜像 tag：
+默认暴露 `3000` 端口。
 
-```shell
-NODEGET_IMAGE=genshinmc/nodeget:v0.0.6 docker compose up -d
-```
+如需修改镜像 tag、端口映射、数据库账号等 Docker 部署参数，请编辑下载下来的 `docker-compose.yml`。
 
-Compose 示例只持久化 `./nodeget/config.toml`。若希望完全手动维护配置文件，可以取消 `NODEGET_CONFIG_FROM_ENV=true`，直接编辑 `./nodeget/config.toml`。
+`./data/config/config.toml` 生成后，NodeGet 的运行配置以这个文件为准。修改监听地址、日志级别、数据库地址等 NodeGet 配置时，请编辑 `./data/config/config.toml`；只改 `docker-compose.yml` 不会覆盖已有配置文件。
 
 ## 安装 Agent
 

@@ -67,8 +67,7 @@ RUN chmod 0755 /usr/local/bin/nodeget-entrypoint
 
 WORKDIR /var/lib/nodeget
 
-ENV NODEGET_CONFIG="/etc/nodeget/config.toml" \
-    NODEGET_PORT="3000" \
+ENV NODEGET_PORT="3000" \
     NODEGET_SERVER_UUID="auto_gen" \
     NODEGET_LOG_FILTER="info" \
     NODEGET_DATABASE_URL="sqlite:///var/lib/nodeget/nodeget.db?mode=rwc"
