@@ -1,0 +1,35 @@
+FROM alpine:3.20
+
+ARG NODEGET_VERSION=latest
+ARG TARGETARCH
+
+ENV NODEGET_CONFIG=/etc/nodeget/config.toml \
+    NODEGET_PORT=3000 \
+    NODEGET_SERVER_UUID=auto_gen \
+    NODEGET_LOG_FILTER=info \
+    NODEGET_DATABASE_URL=sqlite:///tmp/nodeget.db?mode=rwc
+
+RUN apk add --no-cache ca-certificates curl tar
+
+COPY docker/server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+        amd64) asset_arch="x86_64" ;; \
+        arm64) asset_arch="aarch64" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    asset="nodeget-server-linux-${asset_arch}-musl"; \
+    if [ "${NODEGET_VERSION}" = "latest" ]; then \
+        url="https://github.com/NodeSeekDev/NodeGet/releases/latest/download/${asset}"; \
+    else \
+        url="https://github.com/NodeSeekDev/NodeGet/releases/download/${NODEGET_VERSION}/${asset}"; \
+    fi; \
+    curl -fsSL "$url" -o /usr/local/bin/nodeget-server; \
+    chmod +x /usr/local/bin/nodeget-server
+
+EXPOSE 3000
+VOLUME ["/config"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["serve"]

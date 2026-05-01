@@ -1,0 +1,17 @@
+services:
+  nodeget:
+    image: ghcr.io/nodeseekdev/nodeget-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODEGET_CONFIG: /config/config.toml
+      NODEGET_PORT: 3000
+      NODEGET_SERVER_UUID: auto_gen
+      NODEGET_LOG_FILTER: info
+      NODEGET_DATABASE_URL: sqlite:///tmp/nodeget.db?mode=rwc
+    volumes:
+      - ./nodeget-config:/config

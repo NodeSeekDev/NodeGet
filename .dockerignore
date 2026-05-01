@@ -1,0 +1,14 @@
+.git
+.github
+target
+node_modules
+docs/.vitepress/dist
+docs/.vitepress/cache
+*.db
+*.db-shm
+*.db-wal
+*.local.toml
+config.toml
+nodeget-config
+.env
+.DS_Store
