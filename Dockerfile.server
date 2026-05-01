@@ -3,7 +3,7 @@ FROM alpine:3.20
 ARG NODEGET_VERSION=latest
 ARG TARGETARCH
 
-ENV NODEGET_CONFIG=/etc/nodeget/config.toml \
+ENV NODEGET_CONFIG=/config/config.toml \
     NODEGET_PORT=3000 \
     NODEGET_SERVER_UUID=auto_gen \
     NODEGET_LOG_FILTER=info \

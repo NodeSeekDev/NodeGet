@@ -40,6 +40,7 @@ NodeGet 是一款基于 ***Rust*** 语言编写的服务器管理、监控软件
 ## **相关链接**
 
 - **官方文档**：<https://nodeget.com>
+- **Server Docker 部署**：[docker/server/README.md](docker/server/README.md)
 - **设计 Intro**：<https://www.nodeseek.com/post-704497-1>
 - **Telegram 频道**：[@NodeGetProject](https://t.me/NodeGetProject)
 - **Telegram 讨论组**：[@NodegetGroup](https://t.me/NodegetGroup)
