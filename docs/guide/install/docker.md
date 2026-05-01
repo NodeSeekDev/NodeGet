@@ -9,12 +9,16 @@
 
 ### PostgreSQL + NodeGet
 
+先进入一个用于存放 NodeGet Server 配置和数据的目录，然后执行：
+
 ```shell
 curl -fsSL https://raw.githubusercontent.com/NodeSeekDev/NodeGet/main/docker-compose.postgres.yml -o docker-compose.yml
 docker compose up -d
 ```
 
-### SQLite
+### SQLite + NodeGet
+
+同样先进入一个用于存放 NodeGet Server 配置和数据的目录，然后执行：
 
 ```shell
 curl -fsSL https://raw.githubusercontent.com/NodeSeekDev/NodeGet/main/docker-compose.sqlite.yml -o docker-compose.yml
@@ -35,6 +39,14 @@ data/
 `./data/config/config.toml` 是 NodeGet 配置文件。SQLite 部署使用 `./data/sqlite`，PostgreSQL 部署使用 `./data/postgres`。删除容器不会删除这些目录；如需清空数据，请停止服务后手动删除对应目录。
 
 默认暴露 `2211` 端口。
+
+服务**首次启动**时会生成 Super Token。可在 `docker-compose.yml` 所在目录执行下面的命令查看：
+
+```shell
+docker compose logs nodeget | grep -E 'Super Token'
+```
+
+获取 Super Token 后，可前往 [NodeGet Dashboard 的 Server 管理页面](https://dash.nodeget.com/#/dashboard/node-manage?tab=servers) 添加 Server。
 
 如需修改镜像 tag、端口映射、数据库账号等 Docker 部署参数，请编辑下载下来的 `docker-compose.yml`。
 
