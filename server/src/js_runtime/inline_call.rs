@@ -1,4 +1,5 @@
 use crate::js_runtime::js_error;
+use crate::js_runtime::server_runtime::spawn_on_server_runtime;
 use crate::rpc::js_worker::service::run_inline_call_and_record_result;
 use rquickjs::Error;
 use serde_json::Value;
@@ -21,15 +22,17 @@ pub async fn js_inline_call(
         )
     })?;
 
-    let result_value =
-        run_inline_call_and_record_result(js_worker_name, params, timeout_sec, inline_caller)
-            .await
-            .map_err(|e| js_error("inline_call", e.to_string()))?;
-
-    serde_json::to_string(&result_value).map_err(|e| {
-        js_error(
-            "inline_call",
-            format!("Failed to serialize inline_call result: {e}"),
-        )
+    let result_json = spawn_on_server_runtime(async move {
+        let result_value =
+            run_inline_call_and_record_result(js_worker_name, params, timeout_sec, inline_caller)
+                .await
+                .map_err(|e| e.to_string())?;
+        serde_json::to_string(&result_value)
+            .map_err(|e| format!("Failed to serialize inline_call result: {e}"))
     })
+    .await
+    .map_err(|e| js_error("inline_call", e))?
+    .map_err(|e| js_error("inline_call", e))?;
+
+    Ok(result_json)
 }

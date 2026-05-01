@@ -50,6 +50,7 @@ pub(crate) static RELOAD_NOTIFY: std::sync::OnceLock<tokio::sync::Notify> =
 #[tokio::main]
 async fn main() {
     println!("Starting nodeget-server");
+    js_runtime::server_runtime::init(tokio::runtime::Handle::current());
 
     let args = ServerArgs::par();
 

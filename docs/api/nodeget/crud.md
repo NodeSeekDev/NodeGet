@@ -263,7 +263,7 @@
 ```json
 {
   "jsonrpc": "2.0",
-  "result": "ws_listener = \"0.0.0.0:3000\"\\nserver_uuid = \"auto_gen\"\\n\\n[logging]\\nlog_filter = \"info\"\\n\\n[database]\\ndatabase_url = \"sqlite://nodeget.db?mode=rwc\"\\n...", // 配置文件原始文本
+  "result": "ws_listener = \"0.0.0.0:2211\"\\nserver_uuid = \"auto_gen\"\\n\\n[logging]\\nlog_filter = \"info\"\\n\\n[database]\\ndatabase_url = \"sqlite://nodeget.db?mode=rwc\"\\n...", // 配置文件原始文本
   "id": 1
 }
 ```
@@ -279,7 +279,7 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET", // SuperToken 字符串
-  "config_string": "ws_listener = \"0.0.0.0:3000\"\\n..."   // 完整的 TOML 配置文本
+  "config_string": "ws_listener = \"0.0.0.0:2211\"\\n..."   // 完整的 TOML 配置文本
 }
 ```
 
@@ -312,7 +312,7 @@
   "method": "nodeget-server_edit_config",
   "params": {
     "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET",
-    "config_string": "ws_listener = \"0.0.0.0:3000\"\\nserver_uuid = \"auto_gen\"\\njsonrpc_max_connections = 100\\n\\n[logging]\\nlog_filter = \"info\"\\n\\n[database]\\ndatabase_url = \"sqlite://data/server.db?mode=rwc\""
+    "config_string": "ws_listener = \"0.0.0.0:2211\"\\nserver_uuid = \"auto_gen\"\\njsonrpc_max_connections = 100\\n\\n[logging]\\nlog_filter = \"info\"\\n\\n[database]\\ndatabase_url = \"sqlite://data/server.db?mode=rwc\""
   },
   "id": 1
 }

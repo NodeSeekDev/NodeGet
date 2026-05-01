@@ -1,4 +1,5 @@
 use crate::js_runtime::js_error;
+use crate::js_runtime::server_runtime::spawn_on_server_runtime;
 use crate::rpc::get_modules;
 use futures_util::future::join_all;
 use rquickjs::Error;
@@ -9,15 +10,19 @@ use tracing::{debug, trace};
 async fn raw_single_request(json: &str) -> StdResult<String, Error> {
     trace!(target: "js_runtime", "processing raw JSON-RPC request from JS");
     let rpc_module = get_modules();
+    let json = json.to_owned();
 
-    let (resp, _stream) = match rpc_module.raw_json_request(json, 16).await {
-        Ok(resp) => resp,
-        Err(e) => {
-            return Err(js_error("jsonrpc_module", e.to_string()));
-        }
-    };
+    let response = spawn_on_server_runtime(async move {
+        let (resp, _stream) = rpc_module
+            .raw_json_request(&json, 16)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>(resp.to_string())
+    })
+    .await
+    .map_err(|e| js_error("jsonrpc_module", e))?;
 
-    Ok(resp.to_string())
+    response.map_err(|e| js_error("jsonrpc_module", e))
 }
 
 /// # Errors

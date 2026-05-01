@@ -1,17 +1,41 @@
 #!/bin/sh
 set -eu
 
-CONFIG_PATH="/etc/nodeget/config.toml"
+CONFIG_PATH="${NODEGET_CONFIG_PATH:-/etc/nodeget/config.toml}"
 DATA_DIR="${NODEGET_DATA_DIR:-/var/lib/nodeget}"
 
 toml_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+generate_server_uuid() {
+    if [ -r /proc/sys/kernel/random/uuid ]; then
+        read -r uuid </proc/sys/kernel/random/uuid
+        printf '%s' "${uuid}"
+        return 0
+    fi
+
+    if command -v uuidgen >/dev/null 2>&1; then
+        uuidgen
+        return 0
+    fi
+
+    echo "Unable to generate server UUID: /proc/sys/kernel/random/uuid and uuidgen are unavailable." >&2
+    exit 1
+}
+
+resolve_server_uuid() {
+    if [ -n "${NODEGET_SERVER_UUID:-}" ]; then
+        printf '%s' "${NODEGET_SERVER_UUID}"
+    else
+        generate_server_uuid
+    fi
+}
+
 write_config_from_env() {
-    port="${NODEGET_PORT:-${PORT:-3000}}"
+    port="${NODEGET_PORT:-${PORT:-2211}}"
     ws_listener="${NODEGET_WS_LISTENER:-0.0.0.0:${port}}"
-    server_uuid="${NODEGET_SERVER_UUID:-${SERVER_UUID:-auto_gen}}"
+    server_uuid="$(resolve_server_uuid)"
     log_filter="${NODEGET_LOG_FILTER:-${LOG_FILTER:-info}}"
     database_url="${NODEGET_DATABASE_URL:-${DATABASE_URL:-sqlite:///${DATA_DIR}/nodeget.db?mode=rwc}}"
 

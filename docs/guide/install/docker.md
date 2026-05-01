@@ -34,7 +34,7 @@ data/
 
 `./data/config/config.toml` 是 NodeGet 配置文件。SQLite 部署使用 `./data/sqlite`，PostgreSQL 部署使用 `./data/postgres`。删除容器不会删除这些目录；如需清空数据，请停止服务后手动删除对应目录。
 
-默认暴露 `3000` 端口。
+默认暴露 `2211` 端口。
 
 如需修改镜像 tag、端口映射、数据库账号等 Docker 部署参数，请编辑下载下来的 `docker-compose.yml`。
 

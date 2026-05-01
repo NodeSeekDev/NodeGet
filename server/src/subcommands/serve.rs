@@ -36,9 +36,6 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
         .expect("Failed to initialize crontab cache");
     debug!(target: "server", "Crontab cache initialized");
 
-    let _ = nodeget_lib::utils::uuid::compare_uuid(config.server_uuid);
-    debug!(target: "server", uuid = %config.server_uuid, "Server UUID compared");
-
     let terminal_state = crate::terminal::TerminalState {
         sessions: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };

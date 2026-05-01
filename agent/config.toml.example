@@ -15,7 +15,7 @@ dynamic_report_interval_ms = 1000
 # 静态监控数据上报间隔（毫秒），默认 300000（5 分钟）
 # static_report_interval_ms = 300000
 
-# Agent 的 Uuid，建议设置为 auto_gen 以自动生成，根据系统环境自动生成，可保证数据不冲突（概率极小）
+# Agent 的 Uuid，建议设置为 auto_gen，首次启动时会随机生成并持久化到配置文件
 # 如果不是 auto_gen，请自行确保每个 Agent 的 uuid 唯一，否则可能导致数据混乱或 UB
 agent_uuid = "auto_gen"
 
@@ -52,7 +52,7 @@ server_uuid = "00000000-0000-0000-0000-000000000000"
 token = "test_server1_token"
 
 # Server 的 Websocket 地址，必须携带协议头
-ws_url = "ws://127.0.0.1:3000/"
+ws_url = "ws://127.0.0.1:2211/"
 
 # 是否允许执行任务
 allow_task = true
@@ -93,4 +93,4 @@ allow_version = true
 name = "test_server2"
 server_uuid = "00000000-0000-0000-0000-000000000000"
 token = "test_server2_token"
-ws_url = "ws://127.0.0.1:3000/"
+ws_url = "ws://nodeget-secondary.example.com:2211/"
