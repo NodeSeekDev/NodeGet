@@ -123,14 +123,47 @@ impl ServerConfig {
 
         if is_auto_gen {
             let new_uuid = uuid::Uuid::new_v4().to_string();
-            let re = regex::RegexBuilder::new(r#"^(\s*server_uuid\s*=\s*["'])auto_gen(["'].*)$"#)
-                .case_insensitive(true)
-                .multi_line(true)
-                .build()
-                .expect("static regex is valid");
-            let new_content = re
-                .replace(&content, format!(r#"${{1}}{}${{2}}"#, new_uuid))
-                .into_owned();
+            let mut new_content = String::with_capacity(content.len() + 32);
+            for line in content.lines() {
+                let trimmed = line.trim_start();
+                // Skip comments and lines that don't start with server_uuid (case-insensitive)
+                if trimmed.starts_with('#') || trimmed.is_empty() {
+                    new_content.push_str(line);
+                    new_content.push('\n');
+                    continue;
+                }
+                // Check if this line defines server_uuid
+                let key_end = trimmed
+                    .find(|c: char| c == '=' || c.is_ascii_whitespace())
+                    .unwrap_or(trimmed.len());
+                if key_end == 11 && trimmed[..key_end].eq_ignore_ascii_case("server_uuid") {
+                    // Find the '=' position in the original line
+                    if let Some(eq_pos) = line.find('=') {
+                        let before = &line[..eq_pos + 1];
+                        let after = &line[eq_pos + 1..];
+                        let after_trimmed = after.trim_start();
+                        // Check value starts with a quote char followed by auto_gen
+                        if let Some(first_char) = after_trimmed.chars().next() {
+                            if first_char == '\"' || first_char == '\'' {
+                                let rest = &after_trimmed[1..];
+                                if rest.len() >= 8 && rest[..8].eq_ignore_ascii_case("auto_gen")
+                                {
+                                    let after_value = &rest[8..];
+                                    new_content.push_str(before);
+                                    new_content.push(' ');
+                                    new_content.push(first_char);
+                                    new_content.push_str(&new_uuid);
+                                    new_content.push_str(after_value);
+                                    new_content.push('\n');
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+                new_content.push_str(line);
+                new_content.push('\n');
+            }
             fs::write(path.as_ref(), &new_content).await?;
             let config: Self = toml::from_str(&new_content)?;
             return Ok(config);
