@@ -121,37 +121,59 @@ pub struct DynamicMonitoringSummaryData {
     pub receive_speed: Option<i64>,
 }
 
+const VIRTUAL_INTERFACE_PREFIXES: &[&str] = &[
+    "br", "cni", "docker", "podman", "flannel", "lo", "veth", "virbr", "vmbr", "tap", "fwbr", "fwpr",
+];
+
+const EXCLUDED_MOUNT_PREFIXES: &[&str] = &[
+    "/tmp",
+    "/var/tmp",
+    "/dev",
+    "/run",
+    "/var/lib/containers",
+    "/var/lib/docker",
+    "/proc",
+    "/sys",
+    "/sys/fs/cgroup",
+    "/etc/resolv.conf",
+    "/etc/host",
+    "/nix/store",
+];
+
+fn is_virtual_interface(name: &str) -> bool {
+    VIRTUAL_INTERFACE_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
+fn is_excluded_mount(mount_point: &str) -> bool {
+    EXCLUDED_MOUNT_PREFIXES
+        .iter()
+        .any(|prefix| mount_point.starts_with(prefix))
+}
+
 impl From<&DynamicMonitoringData> for DynamicMonitoringSummaryData {
     fn from(data: &DynamicMonitoringData) -> Self {
-        let total_space: u64 = data.disk.iter().map(|d| d.total_space).sum();
-        let available_space: u64 = data.disk.iter().map(|d| d.available_space).sum();
-        let read_speed: u64 = data.disk.iter().map(|d| d.read_speed).sum();
-        let write_speed: u64 = data.disk.iter().map(|d| d.write_speed).sum();
+        let disks: Vec<_> = data
+            .disk
+            .iter()
+            .filter(|d| !is_excluded_mount(&d.mount_point))
+            .collect();
+        let total_space: u64 = disks.iter().map(|d| d.total_space).sum();
+        let available_space: u64 = disks.iter().map(|d| d.available_space).sum();
+        let read_speed: u64 = disks.iter().map(|d| d.read_speed).sum();
+        let write_speed: u64 = disks.iter().map(|d| d.write_speed).sum();
 
-        let total_received: u64 = data
+        let ifaces: Vec<_> = data
             .network
             .interfaces
             .iter()
-            .map(|i| i.total_received)
-            .sum();
-        let total_transmitted: u64 = data
-            .network
-            .interfaces
-            .iter()
-            .map(|i| i.total_transmitted)
-            .sum();
-        let receive_speed_net: u64 = data
-            .network
-            .interfaces
-            .iter()
-            .map(|i| i.receive_speed)
-            .sum();
-        let transmit_speed: u64 = data
-            .network
-            .interfaces
-            .iter()
-            .map(|i| i.transmit_speed)
-            .sum();
+            .filter(|i| !is_virtual_interface(&i.interface_name))
+            .collect();
+        let total_received: u64 = ifaces.iter().map(|i| i.total_received).sum();
+        let total_transmitted: u64 = ifaces.iter().map(|i| i.total_transmitted).sum();
+        let receive_speed_net: u64 = ifaces.iter().map(|i| i.receive_speed).sum();
+        let transmit_speed: u64 = ifaces.iter().map(|i| i.transmit_speed).sum();
 
         Self {
             uuid: data.uuid.clone(),
