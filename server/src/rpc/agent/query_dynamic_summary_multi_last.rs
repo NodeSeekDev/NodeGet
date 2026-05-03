@@ -105,16 +105,12 @@ pub async fn dynamic_summary_multi_last_query(
 
         // ── Fast path: in-memory last-cache (partial hit merge) ─────
         let last_cache = crate::monitoring_last_cache::MonitoringLastCache::global();
-        let needs_app_descaling = db.get_database_backend() != sea_orm::DatabaseBackend::Postgres;
         let mut results: Vec<Option<serde_json::Value>> = vec![None; uuid_id_pairs.len()];
         let mut misses: Vec<(usize, i16)> = Vec::new();
         for (idx, (uuid, uuid_id)) in uuid_id_pairs.iter().enumerate() {
             match last_cache.get_dynamic_summary_last(uuid, &fields).await {
-                Some(mut v) => {
-                    if needs_app_descaling && let Some(obj) = v.as_object_mut() {
-                        nodeget_lib::monitoring::query::apply_descaling_to_json_object(obj);
-                    }
-                    results[idx] = Some(v);
+                Some(v) => {
+                    results[idx] = Some(descale_cached_summary(v));
                 }
                 None => misses.push((idx, *uuid_id)),
             }
@@ -179,6 +175,13 @@ pub async fn dynamic_summary_multi_last_query(
             ))
         }
     }
+}
+
+fn descale_cached_summary(mut value: serde_json::Value) -> serde_json::Value {
+    if let Some(obj) = value.as_object_mut() {
+        nodeget_lib::monitoring::query::apply_descaling_to_json_object(obj);
+    }
+    value
 }
 
 fn dedupe_uuids(uuids: Vec<Uuid>) -> Vec<Uuid> {
@@ -395,8 +398,131 @@ async fn execute_statement_query(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::monitoring_last_cache::MonitoringLastCache;
+    use nodeget_lib::monitoring::data_structure::DynamicMonitoringSummaryData;
     use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Schema, StatementBuilder};
     use serde_json::Value;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn test_cache_hit_descaling_for_selected_fields() {
+        MonitoringLastCache::init();
+        let cache = MonitoringLastCache::global();
+        let uuid = Uuid::new_v4();
+        let summary = DynamicMonitoringSummaryData {
+            uuid: uuid.to_string(),
+            time: 1_777_463_543_359,
+            cpu_usage: Some(50),
+            gpu_usage: None,
+            used_swap: None,
+            total_swap: None,
+            used_memory: None,
+            total_memory: None,
+            available_memory: None,
+            load_one: Some(5),
+            load_five: None,
+            load_fifteen: None,
+            uptime: None,
+            boot_time: None,
+            process_count: None,
+            total_space: None,
+            available_space: None,
+            read_speed: None,
+            write_speed: None,
+            tcp_connections: None,
+            udp_connections: None,
+            total_received: None,
+            total_transmitted: None,
+            transmit_speed: None,
+            receive_speed: None,
+        };
+
+        cache.update_dynamic_summary(uuid, 1_777_463_543_359, &summary).await;
+        let cached = cache
+            .get_dynamic_summary_last(
+                &uuid,
+                &[
+                    DynamicSummaryQueryField::CpuUsage,
+                    DynamicSummaryQueryField::LoadOne,
+                ],
+            )
+            .await
+            .expect("cache hit");
+
+        let obj = descale_cached_summary(cached)
+            .as_object()
+            .expect("object")
+            .clone();
+        assert_eq!(
+            obj["cpu_usage"],
+            Value::Number(serde_json::Number::from_f64(5.0).unwrap())
+        );
+        assert_eq!(
+            obj["load_one"],
+            Value::Number(serde_json::Number::from_f64(0.5).unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cache_hit_descaling_for_full_object() {
+        MonitoringLastCache::init();
+        let cache = MonitoringLastCache::global();
+        let uuid = Uuid::new_v4();
+        let summary = DynamicMonitoringSummaryData {
+            uuid: uuid.to_string(),
+            time: 1_777_463_543_359,
+            cpu_usage: Some(1000),
+            gpu_usage: None,
+            used_swap: None,
+            total_swap: None,
+            used_memory: None,
+            total_memory: None,
+            available_memory: None,
+            load_one: Some(25),
+            load_five: Some(13),
+            load_fifteen: Some(7),
+            uptime: None,
+            boot_time: None,
+            process_count: None,
+            total_space: None,
+            available_space: None,
+            read_speed: None,
+            write_speed: None,
+            tcp_connections: None,
+            udp_connections: None,
+            total_received: None,
+            total_transmitted: None,
+            transmit_speed: None,
+            receive_speed: None,
+        };
+
+        cache.update_dynamic_summary(uuid, 1_777_463_543_359, &summary).await;
+        let cached = cache
+            .get_dynamic_summary_last(&uuid, &[])
+            .await
+            .expect("full cache hit");
+
+        let obj = descale_cached_summary(cached)
+            .as_object()
+            .expect("object")
+            .clone();
+        assert_eq!(
+            obj["cpu_usage"],
+            Value::Number(serde_json::Number::from_f64(100.0).unwrap())
+        );
+        assert_eq!(
+            obj["load_one"],
+            Value::Number(serde_json::Number::from_f64(2.5).unwrap())
+        );
+        assert_eq!(
+            obj["load_five"],
+            Value::Number(serde_json::Number::from_f64(1.3).unwrap())
+        );
+        assert_eq!(
+            obj["load_fifteen"],
+            Value::Number(serde_json::Number::from_f64(0.7).unwrap())
+        );
+    }
 
     #[tokio::test]
     async fn test_multi_last_sqlite_scaled_fields_present() {
