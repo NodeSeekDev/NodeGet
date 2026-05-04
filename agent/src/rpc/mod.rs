@@ -5,7 +5,7 @@ pub mod multi_server;
 
 use crate::AGENT_CONFIG;
 use crate::rpc::multi_server::subscribe_to;
-use log::{error, warn};
+use log::{error, info, warn};
 use nodeget_lib::config::agent::AgentConfig;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::task::TaskEvent;
@@ -101,8 +101,21 @@ pub async fn handle_error_message() {
                 }
             };
 
-            while let Ok(message) = rx.recv().await {
-                let server_name = server.name.clone();
+            loop {
+                let message = match rx.recv().await {
+                    Ok(msg) => msg,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("[{}] Error handler lagged, dropped {n} messages", server.name);
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        info!("[{}] Error handler channel closed", server.name);
+                        break;
+                    }
+                };
+                {
+                    let message = message;
+                    let server_name = server.name.clone();
                 tokio::spawn(async move {
                     let rpc = match message {
                         Message::Text(text) => text.to_string(),
@@ -120,6 +133,7 @@ pub async fn handle_error_message() {
                         server_name, json.result.error_id, json.result.error_message
                     );
                 });
+                }
             }
         });
     }

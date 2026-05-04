@@ -1,7 +1,7 @@
 use crate::rpc::multi_server::{send_to, subscribe_to};
 use crate::rpc::{JsonRpcTask, wrap_json_into_rpc_with_id_1};
 use crate::{AGENT_ARGS, AGENT_CONFIG, RELOAD_NOTIFY};
-use log::{error, info};
+use log::{error, info, warn};
 use nodeget_lib::config::agent::AgentConfig;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::task::{TaskEventResponse, TaskEventResult, TaskEventType};
@@ -169,8 +169,21 @@ pub async fn handle_task() {
                     }
                 };
 
-            while let Ok(message) = rx.recv().await {
-                let server_name = server.name.clone();
+            loop {
+                let message = match rx.recv().await {
+                    Ok(msg) => msg,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("[{}] Handle task lagged, dropped {n} messages", server.name);
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        info!("[{}] Handle task channel closed", server.name);
+                        break;
+                    }
+                };
+                {
+                    let message = message;
+                    let server_name = server.name.clone();
                 let server_token = server.token.clone();
                 let server_config = server.clone();
                 tokio::spawn(async move {
@@ -278,6 +291,7 @@ pub async fn handle_task() {
                         }
                     }
                 });
+                }
             }
         });
     }
