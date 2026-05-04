@@ -47,6 +47,10 @@ pub enum TaskEventType {
     Ip,
 
     Version,            // 获取 Agent 版本信息
+
+    SelfUpdate(String), // 目标版本号，格式 vX.Y.Z，触发自动下载替换重启
+                          // Unix 平台使用 execv 替换当前进程（不创建新进程）
+                          // Windows 平台拉起新进程后自身退出
 }
 
 pub struct WebShellTask {
@@ -122,6 +126,10 @@ pub struct HttpRequestTask {
 "ip" // 对就是一个 `ip`，无其他东西
 
 "version" // 获取 Agent 版本信息
+
+{
+  "self_update": "v0.0.14" // 目标版本号，触发自动更新
+}
 ```
 
 ### 注意事项
@@ -164,6 +172,8 @@ pub enum TaskEventResult {
     Ip(Option<Ipv4Addr>, Option<Ipv6Addr>), // V4 V6 IP
 
     Version(NodeGetVersion), // Agent 版本信息
+
+    SelfUpdate(bool), // 是否成功下载替换并重启
 }
 
 pub struct HttpRequestTaskResult {
@@ -212,6 +222,10 @@ pub struct HttpRequestTaskResult {
     "1.1.1.1",
     "2606:4700:4700::1111"
   ]
+}
+
+{
+  "self_update": true // 是否成功下载替换并重启/替换进程
 }
 ```
 

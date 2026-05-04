@@ -239,11 +239,10 @@ pub fn restart_process() -> ! {
 }
 
 #[cfg(unix)]
-pub fn restart_process_with_exec_v() -> !{
+pub fn restart_process_with_exec_v() -> ! {
     use std::ffi::CString;
+    use std::os::raw::c_char;
     use std::ptr;
-    use libc::execv;
-    use libc::c_char;
 
     let current = std::env::current_exe().unwrap_or_else(|e| {
         log::error!("Failed to get current exe path: {e}");
@@ -252,21 +251,21 @@ pub fn restart_process_with_exec_v() -> !{
 
     let path = CString::new(current.to_str().unwrap()).unwrap();
 
-    let mut args = std::env::args();
-    let args_str = args.collect::< Vec<String> >().join(" ");
+    // 每个参数转成独立的 CString，Vec 保活指针
+    let c_args: Vec<CString> = std::env::args()
+        .map(|s| CString::new(s).unwrap())
+        .collect();
 
-    let args = [
-        args_str.as_ptr(),
-        ptr::null(), // 结尾的 NULL
-    ];
+    let mut ptrs: Vec<*const c_char> = c_args.iter().map(|c| c.as_ptr()).collect();
+    ptrs.push(ptr::null()); // argv 以 NULL 结尾
 
     info!("Starting execv...");
 
     unsafe {
-        execv(path.as_ptr(), args.as_ptr() as *const *const c_char);
+        libc::execv(path.as_ptr(), ptrs.as_ptr());
 
-        // if failed
-        error!("execv failed!");
+        // execv 只在失败时返回
+        error!("execv failed: {}", std::io::Error::last_os_error());
         std::process::exit(1);
     }
 }

@@ -304,7 +304,13 @@ pub async fn handle_task() {
                                 "[{server_name}] Self-update successful, restarting agent..."
                             );
                             time::sleep(Duration::from_millis(300)).await;
-                            crate::tasks::self_update::restart_process_with_exec_v();
+                            #[cfg(target_os = "windows")]
+                            {
+                                crate::tasks::self_update::restart_process();
+                            }
+                            #[cfg(not(target_os = "windows"))]{
+                                crate::tasks::self_update::restart_process_with_exec_v();
+                            }
                         }
                     });
                 }

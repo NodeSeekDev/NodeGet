@@ -137,6 +137,28 @@
 }
 ```
 
+请求 (self_update):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "task_create_task",
+  "params": {
+    "token": "demo_token",
+    "target_uuid": "AGENT_UUID_HERE",
+    "task_type": {
+      "self_update": "v0.0.14"    // 目标版本号，格式 vX.Y.Z
+    }
+  },
+  "id": 1
+}
+```
+
+SelfUpdate 任务触发 Agent 从 `https://install.nodeget.com/` 下载对应架构的二进制并自动替换。
+需确保 Agent 配置中 `allow_self_update = true`，且版本号格式为 `vX.Y.Z`。
+- Unix 平台：使用 execv 替换当前进程（不创建新进程）
+- Windows 平台：拉起新进程后自身退出
+
 错误示例 — Agent 未注册:
 
 ```json
