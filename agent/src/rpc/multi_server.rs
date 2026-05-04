@@ -234,20 +234,28 @@ async fn connection_manager(
             }
         }
 
+        let mut task_resubscribe_interval = if server.allow_task.unwrap_or(false) {
+            Some(tokio::time::interval_at(
+                tokio::time::Instant::now() + Duration::from_secs(60),
+                Duration::from_secs(60),
+            ))
+        } else {
+            None
+        };
+
         loop {
             tokio::select! {
                 // Channel -> WebSocket (上行数据)
                 msg_res = uplink_rx.recv() => {
                     match msg_res {
                         Ok(msg) => {
-                            // 正常收到消息，发送给 WebSocket
                             if let Err(e) = ws_write.send(msg).await {
                                 error!("[{name}] Write error: {e}, triggering reconnect...");
                                 break;
                             }
                         }
                         Err(RecvError::Lagged(skipped_count)) => {
-                            warn!("[{name}] Connection lagged, dropped {skipped_count} old messages. Creating space for new data.");
+                            warn!("[{name}] Connection lagged, dropped {skipped_count} old messages.");
                         }
                         Err(RecvError::Closed) => {
                             info!("[{name}] Channel closed, manager task exiting.");
@@ -266,18 +274,46 @@ async fn connection_manager(
                                         error!("[{name}] RPC Error Response: {}: {}", err.code, err.message);
                                     }
                             if let Err(_) = downlink_tx.send(msg) {
-                                warn!("[{name}] Downlink broadcast send skipped (no active receivers)");
+                                warn!("[{name}] Downlink send skipped (no active receivers)");
                             }
                         }
                         Some(Err(e)) => {
-                            error!("[{name}] Read error: {e}, triggering reconnect...");
+                            error!("[{name}] Read error: {e}, reconnecting...");
                             break;
                         }
                         None => {
-                            warn!("[{name}] Connection closed by server, triggering reconnect...");
+                            warn!("[{name}] Server closed connection, reconnecting...");
                             break;
                         }
                     }
+                }
+
+                // 定时重注册 task（仅 allow_task 时）
+                _ = async {
+                if let Some(ref mut interval) = task_resubscribe_interval {
+                    interval.tick().await;
+                } else {
+                    loop { tokio::time::sleep(Duration::from_secs(3600)).await; }
+                }
+                } => {
+                    let agent_uuid = AGENT_CONFIG
+                        .get()
+                        .expect("Agent not initialized")
+                        .read()
+                        .expect("AGENT_CONFIG poisoned")
+                        .agent_uuid;
+                    let rpc = wrap_json_into_rpc_with_id_1(
+                        "task_register_task",
+                        vec![
+                            serde_json::Value::String(token.clone()),
+                            serde_json::Value::String(agent_uuid.to_string()),
+                        ],
+                    );
+                    if let Err(e) = ws_write.send(Message::Text(Utf8Bytes::from(rpc))).await {
+                        error!("[{name}] Write error on task re-sub: {e}, reconnecting...");
+                        break;
+                    }
+                    debug!("[{name}] Task subscription refreshed");
                 }
             }
         }
