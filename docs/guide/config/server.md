@@ -27,6 +27,12 @@ unix_socket_path = "/var/lib/nodeget.sock"
 # 如果不是 auto_gen，请自行确保 Uuid 唯一，否则可能导致数据混乱或 UB
 server_uuid = "auto_gen"
 
+# TLS 配置（可选）
+# 同时指定 tls_cert 和 tls_key 后即启用 TLS（HTTPS/WSS）
+# 文件应为 PEM 格式
+# tls_cert = "/path/to/fullchain.pem"
+# tls_key = "/path/to/privkey.pem"
+
 # 日志配置（可选，整个 [logging] 段不填则使用默认值）
 [logging]
 
@@ -116,3 +122,19 @@ curl --unix-socket /var/lib/nodeget.sock \
 ```
 
 若希望仅使用 Unix Socket，可将 `ws_listener` 绑定到本地回环地址并配合防火墙策略限制外部访问。
+
+## TLS 说明
+
+- 同时配置 `tls_cert` 和 `tls_key` 后，Server 启动时将走 TLS（HTTPS/WSS）。
+- TLS 和 TCP 监听同一地址，启动后不额外占用新端口。
+- 证书文件需为 PEM 格式。支持 `fullchain.pem + privkey.pem` 的常见 Nginx 风格。
+- 若两字段均未配置，默认走明文 HTTP/WS。
+
+示例（通过 HTTPS 调用 JSON-RPC）：
+
+```bash
+curl --cacert /path/to/fullchain.pem \
+  -H "content-type: application/json" \
+  -X POST https://127.0.0.1:2211/jsonrpc \
+  -d '{"jsonrpc":"2.0","method":"nodeget-server_hello","params":[],"id":1}'
+```

@@ -84,6 +84,9 @@ pub enum TaskEventType {
 
     // 获取 Agent 版本信息
     Version,
+
+    // 自我更新 tag
+    SelfUpdate(String),
 }
 
 impl TaskEventType {
@@ -101,6 +104,7 @@ impl TaskEventType {
             Self::ReadConfig => "read_config",
             Self::Ip => "ip",
             Self::Version => "version",
+            Self::SelfUpdate(_) => "self_update",
         }
     }
 
@@ -141,6 +145,7 @@ impl TaskEventType {
             Self::EditConfig(_) => "allow_edit_config",
             Self::Ip => "allow_ip",
             Self::Version => "allow_version",
+            Self::SelfUpdate(_) => "allow_self_update",
         }
     }
 }
@@ -184,6 +189,9 @@ pub enum TaskEventResult {
 
     // 获取 Agent 版本信息结果
     Version(crate::utils::version::NodeGetVersion),
+
+    // 自我更新结果，返回是否成功
+    SelfUpdate(bool),
 }
 
 impl TaskEventResult {
@@ -201,6 +209,7 @@ impl TaskEventResult {
             Self::EditConfig(_) => "edit_config",
             Self::Ip(_, _) => "ip",
             Self::Version(_) => "version",
+            Self::SelfUpdate(_) => "self_update",
         }
     }
 

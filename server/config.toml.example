@@ -18,9 +18,15 @@ enable_unix_socket = false
 # 若 enable_unix_socket = true 且不配置该项，则默认 /var/lib/nodeget.sock
 unix_socket_path = "/var/lib/nodeget.sock"
 
-# Server 的 Uuid，建议设置为 auto_gen，首次启动时会随机生成并持久化到配置文件
+# Server 的 Uuid，建议设置为 auto_gen 以自动生成，根据系统环境自动生成，可保证数据不冲突（概率极小）
 # 如果不是 auto_gen，请自行确保 Uuid 唯一，否则可能导致数据混乱或 UB
 server_uuid = "auto_gen"
+
+# TLS 配置（可选）
+# 同时指定 tls_cert 和 tls_key 后即启用 TLS（HTTPS/WSS）
+# 文件应为 PEM 格式
+# tls_cert = "/path/to/fullchain.pem"
+# tls_key = "/path/to/privkey.pem"
 
 # 日志配置（可选，整个 [logging] 段不填则使用默认值）
 [logging]

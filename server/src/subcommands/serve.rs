@@ -15,6 +15,8 @@ use crate::rpc::get_modules;
 use crate::rpc_timing::RpcTimingMiddleware;
 
 pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     super::init_or_skip_super_token().await;
     debug!(target: "server", "Super token initialization completed");
 
@@ -169,47 +171,91 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
         error!(target: "server", address = %config.ws_listener, error = %e, "failed to parse listen address");
         panic!("Invalid listen address '{}': {e}", config.ws_listener);
     });
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .unwrap_or_else(|e| {
-            error!(target: "server", address = %addr, error = %e, "failed to bind TCP listener");
-            panic!("Failed to bind to {addr}: {e}");
-        });
-    info!(target: "server", address = %addr, "Server listening on TCP");
 
-    let serve_future = IntoFuture::into_future(axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    ));
-    tokio::pin!(serve_future);
+    let tls_enabled = config.tls_cert.is_some() && config.tls_key.is_some();
+    if tls_enabled {
+        let cert_path = config.tls_cert.as_deref().unwrap();
+        let key_path = config.tls_key.as_deref().unwrap();
+        info!(target: "server", address = %addr, cert = %cert_path, key = %key_path, "Server listening on TCP with TLS");
+        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
+            .await
+            .unwrap_or_else(|e| panic!("Failed to load TLS config: {e}"));
+        let serve_future =
+            axum_server::bind_rustls(addr, tls_config).serve(app.into_make_service());
+        tokio::pin!(serve_future);
 
-    tokio::select! {
-        result = &mut serve_future => {
-            result.unwrap();
-            crate::monitoring_buffer::flush_and_shutdown().await;
-            #[cfg(not(target_os = "windows"))]
-            if let Some(task) = unix_server_task.take() {
-                task.abort();
-            }
-            #[cfg(not(target_os = "windows"))]
-            cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
-        }
-        () = RELOAD_NOTIFY
-            .get()
-            .expect("Reload notify not initialized")
-            .notified() => {
-            info!(target: "server", "Config reload requested, stopping server for restart...");
-            crate::monitoring_buffer::flush_and_shutdown().await;
-            let stop_handle = stop_handle.clone();
-            tokio::spawn(async move {
+        tokio::select! {
+            result = &mut serve_future => {
+                result.unwrap();
+                crate::monitoring_buffer::flush_and_shutdown().await;
                 let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
-            });
-            #[cfg(not(target_os = "windows"))]
-            if let Some(task) = unix_server_task.take() {
-                task.abort();
+                #[cfg(not(target_os = "windows"))]
+                if let Some(task) = unix_server_task.take() {
+                    task.abort();
+                }
+                #[cfg(not(target_os = "windows"))]
+                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
             }
-            #[cfg(not(target_os = "windows"))]
-            cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+            () = RELOAD_NOTIFY
+                .get()
+                .expect("Reload notify not initialized")
+                .notified() => {
+                info!(target: "server", "Config reload requested, stopping TLS server...");
+                crate::monitoring_buffer::flush_and_shutdown().await;
+                let stop_handle = stop_handle.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
+                });
+                #[cfg(not(target_os = "windows"))]
+                if let Some(task) = unix_server_task.take() {
+                    task.abort();
+                }
+                #[cfg(not(target_os = "windows"))]
+                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+            }
+        }
+    } else {
+        info!(target: "server", address = %addr, "Server listening on TCP");
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
+            .unwrap_or_else(|e| {
+                error!(target: "server", address = %addr, error = %e, "failed to bind TCP listener");
+                panic!("Failed to bind to {addr}: {e}");
+            });
+        let serve_future = IntoFuture::into_future(axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        ));
+        tokio::pin!(serve_future);
+
+        tokio::select! {
+            result = &mut serve_future => {
+                result.unwrap();
+                crate::monitoring_buffer::flush_and_shutdown().await;
+                #[cfg(not(target_os = "windows"))]
+                if let Some(task) = unix_server_task.take() {
+                    task.abort();
+                }
+                #[cfg(not(target_os = "windows"))]
+                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+            }
+            () = RELOAD_NOTIFY
+                .get()
+                .expect("Reload notify not initialized")
+                .notified() => {
+                info!(target: "server", "Config reload requested, stopping server for restart...");
+                crate::monitoring_buffer::flush_and_shutdown().await;
+                let stop_handle = stop_handle.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
+                });
+                #[cfg(not(target_os = "windows"))]
+                if let Some(task) = unix_server_task.take() {
+                    task.abort();
+                }
+                #[cfg(not(target_os = "windows"))]
+                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+            }
         }
     }
 }

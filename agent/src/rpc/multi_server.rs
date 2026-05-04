@@ -198,7 +198,39 @@ async fn connection_manager(
                     );
                     continue;
                 }
-                debug!("[{name}] Task register request sent.");
+
+                let sub_ack = match timeout(Duration::from_secs(5), ws_read.next()).await {
+                    Ok(Some(Ok(Message::Text(text)))) => {
+                        let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+                        if v.get("error").is_some() {
+                            error!("[{name}] Task subscription rejected: {v}, reconnecting...");
+                            continue;
+                        }
+                        if v.get("result").is_some() {
+                            info!("[{name}] Task listener registered successfully");
+                        }
+                    }
+                    Err(_) => {
+                        error!("[{name}] Task subscription timeout, reconnecting...");
+                        continue;
+                    }
+                    Ok(None) => {
+                        error!(
+                            "[{name}] Connection closed during task subscription, reconnecting..."
+                        );
+                        continue;
+                    }
+                    Ok(Some(Err(e))) => {
+                        error!(
+                            "[{name}] Read error during task subscription: {e}, reconnecting..."
+                        );
+                        continue;
+                    }
+                    Ok(Some(Ok(_))) => {
+                        debug!("[{name}] Non-text message during subscription ack");
+                    }
+                };
+                let _ = sub_ack;
             }
         }
 
@@ -233,7 +265,9 @@ async fn connection_manager(
                                     && let Some(err) = check.error {
                                         error!("[{name}] RPC Error Response: {}: {}", err.code, err.message);
                                     }
-                            let _ = downlink_tx.send(msg);
+                            if let Err(_) = downlink_tx.send(msg) {
+                                warn!("[{name}] Downlink broadcast send skipped (no active receivers)");
+                            }
                         }
                         Some(Err(e)) => {
                             error!("[{name}] Read error: {e}, triggering reconnect...");

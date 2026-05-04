@@ -87,7 +87,6 @@ allow_ip = true
 # 是否允许获取 Agent 版本信息
 allow_version = true
 
-
 # 第二个 Server
 [[server]]
 name = "test_server2"

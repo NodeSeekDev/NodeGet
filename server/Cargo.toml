@@ -1,6 +1,6 @@
 [package]
 name = "nodeget-server"
-version = "0.0.12"
+version = "0.0.13"
 edition = "2024"
 description = "Next-generation server monitoring and management tools"
 license = "AGPL-3"
@@ -31,6 +31,8 @@ sea-orm = { version = "2.0.0-rc.38", default-features = false, features = ["runt
 # Server
 jsonrpsee = { version = "0.26.0", default-features = false, features = ["server", "macros"] }
 axum = { version = "0.8.8", default-features = false, features = ["tokio", "ws", "http1", "query"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+rustls = "0.23"
 tower = { version = "0.5.3", default-features = false }
 
 # 解析

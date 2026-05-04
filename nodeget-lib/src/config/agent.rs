@@ -77,6 +77,8 @@ pub struct Server {
     pub allow_ip: Option<bool>,
     // 是否允许获取版本信息
     pub allow_version: Option<bool>,
+    // 是否允许自更新
+    pub allow_self_update: Option<bool>,
 }
 
 // IP 地址获取服务提供商枚举

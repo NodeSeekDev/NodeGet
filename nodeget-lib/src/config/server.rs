@@ -36,6 +36,12 @@ pub struct ServerConfig {
 
     // JSON-RPC 最大响应体大小（字节），默认 104857600（100MB）
     pub max_response_body_size: Option<u32>,
+
+    // TLS 证书文件路径（PEM），必须与 tls_key 同时指定才启用 TLS
+    pub tls_cert: Option<String>,
+
+    // TLS 私钥文件路径（PEM），必须与 tls_cert 同时指定才启用 TLS
+    pub tls_key: Option<String>,
 }
 
 /// 监控数据缓冲写入配置
