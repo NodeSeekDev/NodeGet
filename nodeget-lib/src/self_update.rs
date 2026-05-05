@@ -138,9 +138,7 @@ fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
 }
 
 fn should_update(target: (u32, u32, u32), current: (u32, u32, u32)) -> bool {
-    target.0 > current.0
-        || (target.0 == current.0 && target.1 > current.1)
-        || (target.0 == current.0 && target.1 == current.1 && target.2 >= current.2)
+    true
 }
 
 pub fn check_if_update_needed(tag: &str) -> ((u32, u32, u32),(u32, u32, u32), bool) {
