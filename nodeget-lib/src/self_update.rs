@@ -1,4 +1,3 @@
-use std::os::unix::prelude::CommandExt;
 use crate::utils::version::NodeGetVersion;
 
 #[cfg(feature = "for-agent")]
@@ -226,6 +225,7 @@ pub fn replace_binary(binary: Vec<u8>) -> bool {
 }
 
 
+#[cfg(not(unix))]
 pub fn restart_process() -> ! {
     let current = std::env::current_exe().unwrap_or_else(|e| {
         eprintln!("Failed to get current exe path: {e}");
@@ -237,12 +237,13 @@ pub fn restart_process() -> ! {
 
     println!("Restarting agent: {}", current.display());
 
-    let err = std::process::Command::new(&current)
-        .args(args)
-        .exec();
-
-    eprintln!("Failed to restart: {err}");
-    std::process::exit(1);
+    match std::process::Command::new(&current).args(args).spawn() {
+        Ok(_) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("Failed to restart: {e}");
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(unix)]
