@@ -98,6 +98,7 @@ allow_ip = true
 allow_version = true
 
 # 是否允许自更新，开启后 Server 可通过 SelfUpdate 任务触发 Agent 自动下载并替换二进制
+# 支持升级和降级，版本号仅做格式校验（vX.Y.Z）
 # 重启后生效，需谨慎开启
 # 注意：Unix 平台使用 execv 替换当前进程（不创建新进程）
 # 注意：Windows 平台拉起新进程后自身退出

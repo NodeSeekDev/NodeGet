@@ -48,7 +48,8 @@ pub enum TaskEventType {
 
     Version,            // 获取 Agent 版本信息
 
-    SelfUpdate(String), // 目标版本号，格式 vX.Y.Z，触发自动下载替换重启
+    SelfUpdate(String), // 目标版本号，格式 vX.Y.Z，支持升级和降级，触发自动下载替换重启
+                          // 传入版本号仅做格式校验（vX.Y.Z），不做版本大小比较
                           // Unix 平台使用 execv 替换当前进程（不创建新进程）
                           // Windows 平台拉起新进程后自身退出
 }
@@ -128,7 +129,7 @@ pub struct HttpRequestTask {
 "version" // 获取 Agent 版本信息
 
 {
-  "self_update": "v0.0.14" // 目标版本号，触发自动更新
+  "self_update": "v0.0.14" // 目标版本号，支持升级和降级，仅做格式校验
 }
 ```
 

@@ -66,7 +66,10 @@ pub async fn self_update(tag: &str) -> bool {
 
     match replace_binary(bytes.to_vec()) {
         true => log::info!("Binary replaced successfully"),
-        false => log::error!("Failed to replace binary"),
+        false => {
+            log::error!("Failed to replace binary");
+            return false;
+        }
     }
 
     #[cfg(unix)]
