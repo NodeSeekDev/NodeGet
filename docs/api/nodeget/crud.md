@@ -643,3 +643,67 @@
   "id": 2
 }
 ```
+
+## Self Update
+
+触发服务端自动检查并下载最新版本，替换当前二进制后自动重启。
+
+### 方法
+
+调用方法名为 `nodeget-server_self_update`，仅需传入 super token。
+
+### 权限要求
+
+仅允许 **super token** 调用，普通 token 会返回权限错误。
+
+### 返回值
+
+- 当前已是最新版本：返回 `null`
+- 开始更新：返回 `null`，服务端在响应发出后 **3 秒** 自动重启
+- 失败：返回 JSON-RPC error object
+
+### 完整示例
+
+请求:
+
+```bash
+curl -X POST http://127.0.0.1:2211/jsonrpc \
+  -H "content-type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "nodeget-server_self_update",
+    "params": ["<super-token>"],
+    "id": 1
+  }'
+```
+
+响应（无需更新）:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": null,
+  "id": "1"
+}
+```
+
+响应（权限不足）:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": 102,
+    "message": "Permission Denied: Super token required"
+  },
+  "id": "1"
+}
+```
+
+### 注意事项
+
+- 服务端会从 GitHub Releases 获取最新版本，自动匹配当前架构的发布包
+- 下载地址格式：`https://install.nodeget.com/releases/<binary_name>?tag=<tag>`
+- 替换二进制前会自动备份原文件为 `<current>.old`
+- 重启使用 `execve` 覆盖当前进程，PID 不变，systemd 等外部管理器无感知
+- 更新失败时（如下载不完整、替换失败）不会重启，原进程继续运行

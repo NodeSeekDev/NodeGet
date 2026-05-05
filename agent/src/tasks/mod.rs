@@ -9,7 +9,6 @@ use nodeget_lib::utils::get_local_timestamp_ms;
 use std::time::Duration;
 use tokio::{fs, time};
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
-use nodeget_lib::self_update::{restart_process, restart_process_with_exec_v};
 
 /// Task 结果类型
 pub type Result<T> = anyhow::Result<T>;
@@ -307,10 +306,10 @@ pub async fn handle_task() {
                             time::sleep(Duration::from_millis(300)).await;
                             #[cfg(target_os = "windows")]
                             {
-                                restart_process()
+                                nodeget_lib::self_update::restart_process();
                             }
                             #[cfg(not(target_os = "windows"))]{
-                                restart_process_with_exec_v();
+                                nodeget_lib::self_update::restart_process_with_exec_v();
                             }
                         }
                     });

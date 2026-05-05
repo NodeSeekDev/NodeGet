@@ -204,7 +204,7 @@ pub fn get_server_url(tag: &str) -> Option<String> {
 pub fn replace_binary(binary: Vec<u8>) -> bool {
     let current = match std::env::current_exe() {
         Ok(p) => p,
-        Err(e) => {
+        Err(_) => {
             return false;
         }
     };
@@ -212,11 +212,11 @@ pub fn replace_binary(binary: Vec<u8>) -> bool {
     let mut backup = current.as_os_str().to_os_string();
     backup.push(".old");
 
-    if let Err(e) = std::fs::rename(&current, &backup) {
+    if std::fs::rename(&current, &backup).is_err() {
         return false;
     }
 
-    if let Err(e) = std::fs::write(&current, &binary) {
+    if std::fs::write(&current, &binary).is_err() {
         // Try to restore backup
         let _ = std::fs::rename(&backup, &current);
         return false;

@@ -1,7 +1,3 @@
-use nodeget_lib::utils::version::NodeGetVersion;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
-use log::{error, info};
 use nodeget_lib::self_update::{check_if_update_needed, get_url, replace_binary};
 
 pub async fn self_update(tag: &str) -> bool {
