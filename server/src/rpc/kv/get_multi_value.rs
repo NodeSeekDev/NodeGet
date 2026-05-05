@@ -1,4 +1,4 @@
-use crate::kv::get_kv_store;
+use crate::kv::get_kv_store_optional;
 use crate::rpc::kv::auth::check_kv_read_permission_with_pattern;
 use crate::rpc::kv::{KvValueItem, NamespaceKeyItem};
 use jsonrpsee::core::RpcResult;
@@ -54,13 +54,25 @@ pub async fn get_multi_value(
             let key_pattern = item.key;
 
             if !namespace_cache.contains_key(&namespace) {
-                let kv_store = get_kv_store(namespace.clone()).await?;
-                namespace_cache.insert(namespace.clone(), kv_store);
+                if let Some(kv_store) = get_kv_store_optional(namespace.clone()).await? {
+                    namespace_cache.insert(namespace.clone(), kv_store);
+                }
             }
 
-            let kv_store = namespace_cache
-                .get(&namespace)
-                .ok_or_else(|| NodegetError::Other("KV namespace cache missing".to_owned()))?;
+            let kv_store = match namespace_cache.get(&namespace) {
+                Some(store) => store,
+                None => {
+                    // namespace 不存在：精确 key 返回 null，通配符跳过
+                    if wildcard_prefix(&key_pattern).is_none() {
+                        output.push(KvValueItem {
+                            namespace: namespace.clone(),
+                            key: key_pattern,
+                            value: Value::Null,
+                        });
+                    }
+                    continue;
+                }
+            };
 
             if let Some(prefix) = wildcard_prefix(&key_pattern) {
                 let mut matched_keys: Vec<&str> = kv_store

@@ -251,6 +251,29 @@ pub async fn get_kv_store(namespace: String) -> Result<KVStore> {
     Ok(kv_store)
 }
 
+/// 获取完整的 `KVStore`，namespace 不存在时返回 None 而非报错
+pub async fn get_kv_store_optional(namespace: String) -> Result<Option<KVStore>> {
+    let db = get_db()?;
+    if !namespace_exists(db, &namespace).await? {
+        return Ok(None);
+    }
+
+    let models = kv::Entity::find()
+        .filter(kv::Column::Namespace.eq(&namespace))
+        .order_by_asc(kv::Column::Key)
+        .all(db)
+        .await?;
+
+    let entries_count = models.len();
+    let mut kv_store = KVStore::new(namespace.clone());
+    for model in models {
+        kv_store.set(model.key, model.value);
+    }
+
+    debug!(target: "kv", namespace = %namespace, entries_count, "get_kv_store_optional completed");
+    Ok(Some(kv_store))
+}
+
 /// 列出所有 KV 命名空间
 ///
 /// # 返回值
