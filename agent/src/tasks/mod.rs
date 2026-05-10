@@ -202,6 +202,14 @@ pub async fn handle_task() {
             // 切换至 Arc 带来的 cache-line 争用，权衡后维持 clone。
 
             loop {
+                while let Some(join_result) = per_task.try_join_next() {
+                    if let Err(e) = join_result {
+                        if !e.is_cancelled() {
+                            warn!("[{}] Per-message task failed: {e}", server.name);
+                        }
+                    }
+                }
+
                 let message = match rx.recv().await {
                     Ok(msg) => msg,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {

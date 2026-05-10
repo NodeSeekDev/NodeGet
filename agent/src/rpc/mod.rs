@@ -109,6 +109,14 @@ pub async fn handle_error_message() {
             let mut per_message_tasks = JoinSet::new();
 
             loop {
+                while let Some(join_result) = per_message_tasks.try_join_next() {
+                    if let Err(e) = join_result {
+                        if !e.is_cancelled() {
+                            warn!("[{}] Error handler task failed: {e}", server.name);
+                        }
+                    }
+                }
+
                 let message = match rx.recv().await {
                     Ok(msg) => msg,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
