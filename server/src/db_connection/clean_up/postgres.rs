@@ -57,15 +57,25 @@ pub async fn cleanup_expired_data_postgres(db: &DatabaseConnection) -> Result<Cl
         result.crontab_result = deleted;
     }
 
-    // 若本轮清理删除过任何 monitoring/task 数据，重建 AgentUuidCache 以剔除已空 UUID
+    // 清理不属于任何 active uuid 的孤儿 monitoring 数据
+    let (orphaned_static, orphaned_dynamic, orphaned_summary) =
+        cleanup_orphaned_monitoring_data_postgres(db).await?;
+    result.orphaned_static += orphaned_static;
+    result.orphaned_dynamic += orphaned_dynamic;
+    result.orphaned_dynamic_summary += orphaned_summary;
+
+    // 若本轮清理删除过任何数据，刷新 MonitoringUuidCache
     if result.static_monitoring
         + result.dynamic_monitoring
         + result.dynamic_monitoring_summary
         + result.task
+        + result.orphaned_static
+        + result.orphaned_dynamic
+        + result.orphaned_dynamic_summary
         > 0
     {
-        if let Err(e) = crate::agent_uuid_cache::AgentUuidCache::resync().await {
-            tracing::error!(target: "agent_uuid", error = %e, "Failed to resync AgentUuidCache after postgres cleanup");
+        if let Err(e) = crate::monitoring_uuid_cache::MonitoringUuidCache::reload().await {
+            tracing::error!(target: "monitoring_uuid_cache", error = %e, "Failed to reload MonitoringUuidCache after postgres cleanup");
         }
     }
 
@@ -364,4 +374,42 @@ struct ConfigRow {
 #[derive(FromQueryResult)]
 struct UuidResult {
     name: String,
+}
+
+/// 清理三张 monitoring 表中 uuid_id 不在 active monitoring_uuid 集合中的孤儿数据。
+///
+/// PostgreSQL 版本：使用原生 DELETE ... WHERE uuid_id NOT IN (SELECT id ...) 以获得最佳性能。
+async fn cleanup_orphaned_monitoring_data_postgres(
+    db: &DatabaseConnection,
+) -> Result<(u64, u64, u64)> {
+    trace!(target: "db", "cleaning orphaned monitoring data (postgres)");
+
+    let static_sql = r#"
+        DELETE FROM static_monitoring
+        WHERE uuid_id NOT IN (
+            SELECT id FROM monitoring_uuid WHERE soft_delete = false
+        )
+    "#;
+    let dynamic_sql = r#"
+        DELETE FROM dynamic_monitoring
+        WHERE uuid_id NOT IN (
+            SELECT id FROM monitoring_uuid WHERE soft_delete = false
+        )
+    "#;
+    let summary_sql = r#"
+        DELETE FROM dynamic_monitoring_summary
+        WHERE uuid_id NOT IN (
+            SELECT id FROM monitoring_uuid WHERE soft_delete = false
+        )
+    "#;
+
+    let static_result = db.execute_unprepared(static_sql).await?;
+    let dynamic_result = db.execute_unprepared(dynamic_sql).await?;
+    let summary_result = db.execute_unprepared(summary_sql).await?;
+
+    Ok((
+        static_result.rows_affected(),
+        dynamic_result.rows_affected(),
+        summary_result.rows_affected(),
+    ))
 }

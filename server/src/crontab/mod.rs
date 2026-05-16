@@ -226,16 +226,24 @@ async fn run_cleanup_database_job(cron_id: i64, cron_name: String) {
                 cron_name = %cron_name,
                 static_monitoring = result.static_monitoring,
                 dynamic_monitoring = result.dynamic_monitoring,
+                dynamic_monitoring_summary = result.dynamic_monitoring_summary,
                 task = result.task,
                 crontab_result = result.crontab_result,
+                orphaned_static = result.orphaned_static,
+                orphaned_dynamic = result.orphaned_dynamic,
+                orphaned_dynamic_summary = result.orphaned_dynamic_summary,
                 "database cleanup completed"
             );
             let msg = format!(
-                "数据库清理完成。已删除：static_monitoring={}，dynamic_monitoring={}，task={}，crontab_result={}",
+                "数据库清理完成。已删除：static_monitoring={}，dynamic_monitoring={}，dynamic_monitoring_summary={}，task={}，crontab_result={}，orphaned_static={}，orphaned_dynamic={}，orphaned_dynamic_summary={}",
                 result.static_monitoring,
                 result.dynamic_monitoring,
+                result.dynamic_monitoring_summary,
                 result.task,
-                result.crontab_result
+                result.crontab_result,
+                result.orphaned_static,
+                result.orphaned_dynamic,
+                result.orphaned_dynamic_summary
             );
             (true, msg)
         }

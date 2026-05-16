@@ -45,10 +45,6 @@ pub async fn report_dynamic_summary(
             .await
             .map_err(|e| NodegetError::DatabaseError(format!("UUID cache error: {e}")))?;
 
-        crate::agent_uuid_cache::AgentUuidCache::global()
-            .notify_seen(agent_uuid)
-            .await;
-
         let in_data = dynamic_monitoring_summary::ActiveModel {
             id: ActiveValue::default(),
             uuid_id: Set(uuid_id),

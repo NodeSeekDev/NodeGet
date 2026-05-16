@@ -69,7 +69,8 @@ pub enum Permission {
 
     // NodeGet 权限
     NodeGet(NodeGet),
-
+    // MonitoringUuid 权限（新的权威 Agent UUID 管理权限）
+    MonitoringUuid(MonitoringUuid),
     // Js Worker 权限
     JsWorker(JsWorker),
     // Js Result 权限
@@ -80,6 +81,28 @@ pub enum Permission {
     StaticBucket(StaticBucket),
     // 静态文件服务 Bucket 内文件操作权限（上传/读取/删除/重命名/列出文件）
     StaticBucketFile(StaticBucketFile),
+}
+
+// NodeGet 权限枚举
+// 在 Global Scope 下可列出系统内全部 Agent UUID
+// 在 AgentUuid Scope 下可列出对应范围内的 Agent UUID（仍需方法层校验）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeGet {
+    // 列出所有 Agent Uuid
+    #[deprecated(since = "0.2.13", note = "Use MonitoringUuid::List instead")]
+    ListAllAgentUuid,
+    GetRtPool,
+    #[deprecated(since = "0.2.13", note = "Use MonitoringUuid::Delete instead")]
+    DeleteAgentUuid,
+}
+
+// MonitoringUuid 权限枚举（权威 Agent UUID 管理权限）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitoringUuid {
+    List,
+    Delete,
 }
 
 // 静态监控权限枚举
@@ -176,17 +199,6 @@ pub enum Kv {
 #[serde(rename_all = "snake_case")]
 pub enum Terminal {
     Connect,
-}
-
-// NodeGet 权限枚举
-// 在 Global Scope 下可列出系统内全部 Agent UUID
-// 在 AgentUuid Scope 下可列出对应范围内的 Agent UUID（仍需方法层校验）
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeGet {
-    // 列出所有 Agent Uuid
-    ListAllAgentUuid,
-    GetRtPool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -16,6 +16,9 @@ pub struct CleanupResult {
     pub dynamic_monitoring_summary: u64,
     pub task: u64,
     pub crontab_result: u64,
+    pub orphaned_static: u64,
+    pub orphaned_dynamic: u64,
+    pub orphaned_dynamic_summary: u64,
 }
 
 /// 获取数据库连接

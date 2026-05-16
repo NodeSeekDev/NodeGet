@@ -33,11 +33,6 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
         .expect("Failed to initialize monitoring UUID cache");
     debug!(target: "server", "Monitoring UUID cache initialized");
 
-    crate::agent_uuid_cache::AgentUuidCache::init()
-        .await
-        .expect("Failed to initialize agent UUID cache");
-    debug!(target: "server", "Agent UUID cache initialized");
-
     crate::static_hash_cache::StaticHashCache::init();
     debug!(target: "server", "Static hash cache initialized");
 

@@ -80,9 +80,11 @@ pub async fn create_task_blocking(
 
         debug!(target: "task", task_id = task_id_u64, "task created, registering blocking waiter");
 
-        crate::agent_uuid_cache::AgentUuidCache::global()
-            .notify_seen(target_uuid)
-            .await;
+        // Ensure the uuid is registered in the monitoring_uuid table (authoritative Agent table)
+        crate::monitoring_uuid_cache::MonitoringUuidCache::global()
+            .get_or_insert(target_uuid)
+            .await
+            .ok();
 
         // 关键：在 send_event 之前注册 waiter，避免 agent 极快返回时错过通知
         let rx = manager.register_blocking_waiter(task_id_u64).await;

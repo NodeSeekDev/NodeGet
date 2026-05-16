@@ -55,15 +55,25 @@ pub async fn cleanup_expired_data_generic(db: &DatabaseConnection) -> Result<Cle
         result.crontab_result = deleted;
     }
 
-    // 若本轮清理删除过任何 monitoring/task 数据，重建 AgentUuidCache 以剔除已空 UUID
+    // 清理不属于任何 active uuid 的孤儿 monitoring 数据
+    let (orphaned_static, orphaned_dynamic, orphaned_summary) =
+        cleanup_orphaned_monitoring_data_generic(db).await?;
+    result.orphaned_static += orphaned_static;
+    result.orphaned_dynamic += orphaned_dynamic;
+    result.orphaned_dynamic_summary += orphaned_summary;
+
+    // 若本轮清理删除过任何数据，刷新 MonitoringUuidCache
     if result.static_monitoring
         + result.dynamic_monitoring
         + result.dynamic_monitoring_summary
         + result.task
+        + result.orphaned_static
+        + result.orphaned_dynamic
+        + result.orphaned_dynamic_summary
         > 0
     {
-        if let Err(e) = crate::agent_uuid_cache::AgentUuidCache::resync().await {
-            tracing::error!(target: "agent_uuid", error = %e, "Failed to resync AgentUuidCache after generic cleanup");
+        if let Err(e) = crate::monitoring_uuid_cache::MonitoringUuidCache::reload().await {
+            tracing::error!(target: "monitoring_uuid_cache", error = %e, "Failed to reload MonitoringUuidCache after generic cleanup");
         }
     }
 
@@ -400,4 +410,60 @@ pub async fn find_uuids_with_database_limit_paginated(
     let mut output: Vec<String> = result.into_iter().collect();
     output.sort_unstable();
     Ok(output)
+}
+
+/// 清理三张 monitoring 表中 uuid_id 不在 active monitoring_uuid 集合中的孤儿数据。
+///
+/// 通用版本（适用于 SQLite）：从 monitoring_uuid 表中读取 soft_delete=false 的 id 集合，
+/// 然后从三张 monitoring 表中删除 uuid_id 不在该集合中的行。
+async fn cleanup_orphaned_monitoring_data_generic(
+    db: &DatabaseConnection,
+) -> Result<(u64, u64, u64)> {
+    use crate::entity::monitoring_uuid;
+    use sea_orm::QueryFilter;
+
+    trace!(target: "db", "cleaning orphaned monitoring data (generic)");
+
+    let active_rows = monitoring_uuid::Entity::find()
+        .filter(monitoring_uuid::Column::SoftDelete.eq(false))
+        .all(db)
+        .await?;
+
+    let active_ids: Vec<i32> = active_rows.into_iter().map(|m| m.id).collect();
+
+    if active_ids.is_empty() {
+        // 没有任何 active uuid，清空三张 monitoring 表
+        let static_deleted = static_monitoring::Entity::delete_many().exec(db).await?;
+        let dynamic_deleted = dynamic_monitoring::Entity::delete_many().exec(db).await?;
+        let summary_deleted = dynamic_monitoring_summary::Entity::delete_many().exec(db).await?;
+        return Ok((
+            static_deleted.rows_affected,
+            dynamic_deleted.rows_affected,
+            summary_deleted.rows_affected,
+        ));
+    }
+
+    // SeaORM `is_not_in` 需要 Vec<sea_orm::Value>
+    let id_values: Vec<sea_orm::Value> = active_ids.into_iter().map(sea_orm::Value::from).collect();
+
+    let static_deleted = static_monitoring::Entity::delete_many()
+        .filter(static_monitoring::Column::UuidId.is_not_in(id_values.clone()))
+        .exec(db)
+        .await?;
+
+    let dynamic_deleted = dynamic_monitoring::Entity::delete_many()
+        .filter(dynamic_monitoring::Column::UuidId.is_not_in(id_values.clone()))
+        .exec(db)
+        .await?;
+
+    let summary_deleted = dynamic_monitoring_summary::Entity::delete_many()
+        .filter(dynamic_monitoring_summary::Column::UuidId.is_not_in(id_values))
+        .exec(db)
+        .await?;
+
+    Ok((
+        static_deleted.rows_affected,
+        dynamic_deleted.rows_affected,
+        summary_deleted.rows_affected,
+    ))
 }

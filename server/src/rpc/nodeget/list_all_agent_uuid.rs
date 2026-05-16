@@ -1,9 +1,9 @@
-use crate::agent_uuid_cache::AgentUuidCache;
+use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::token::get::get_token;
 use crate::token::super_token::check_super_token;
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::error::NodegetError;
-use nodeget_lib::permission::data_structure::{NodeGet, Permission, Scope};
+use nodeget_lib::permission::data_structure::{MonitoringUuid, NodeGet, Permission, Scope};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use nodeget_lib::utils::get_local_timestamp_ms_i64;
 use serde::Serialize;
@@ -27,7 +27,7 @@ pub async fn list_all_agent_uuid(token: String) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         let permission = resolve_list_agent_uuid_permission(&token).await?;
 
-        let all_uuids = AgentUuidCache::global().list_all().await;
+        let all_uuids = MonitoringUuidCache::global().list_all().await;
         let uuids = match permission {
             AgentUuidListPermission::All => all_uuids,
             AgentUuidListPermission::Scoped(allowed) => all_uuids
@@ -93,10 +93,14 @@ async fn resolve_list_agent_uuid_permission(
     let mut operable_scoped_uuids: HashSet<Uuid> = HashSet::new();
 
     for limit in &token_info.token_limit {
+        #[allow(deprecated)]
         let has_list_permission = limit
             .permissions
             .iter()
-            .any(|perm| matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid)));
+            .any(|perm| {
+                matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid))
+                    || matches!(perm, Permission::MonitoringUuid(MonitoringUuid::List))
+            });
 
         if has_list_permission {
             if limit
@@ -114,11 +118,15 @@ async fn resolve_list_agent_uuid_permission(
             }
         }
 
-        // "可操作" = 对该 AgentUuid Scope 至少拥有一种非 NodeGet::ListAllAgentUuid 的权限
+        // "可操作" = 对该 AgentUuid Scope 至少拥有一种非 list 权限
+        #[allow(deprecated)]
         let has_any_operation_permission = limit
             .permissions
             .iter()
-            .any(|perm| !matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid)));
+            .any(|perm| {
+                !matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid))
+                    && !matches!(perm, Permission::MonitoringUuid(MonitoringUuid::List))
+            });
 
         if has_any_operation_permission {
             for scope in &limit.scopes {

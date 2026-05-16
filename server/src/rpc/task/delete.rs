@@ -219,8 +219,8 @@ pub async fn delete(
         debug!(target: "task", rows_affected, condition_count, "Task delete completed");
 
         if rows_affected > 0 {
-            if let Err(e) = crate::agent_uuid_cache::AgentUuidCache::resync().await {
-                error!(target: "agent_uuid", error = %e, "Failed to resync AgentUuidCache after task::delete");
+            if let Err(e) = crate::monitoring_uuid_cache::MonitoringUuidCache::reload().await {
+                error!(target: "monitoring_uuid_cache", error = %e, "Failed to reload MonitoringUuidCache after task::delete");
             }
         }
 

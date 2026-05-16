@@ -7,6 +7,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     pub uuid: Uuid,
+    pub soft_delete: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

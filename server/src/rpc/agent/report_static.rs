@@ -45,8 +45,9 @@ pub async fn report_static(
             .await
             .map_err(|e| NodegetError::DatabaseError(format!("UUID cache error: {e}")))?;
 
-        crate::agent_uuid_cache::AgentUuidCache::global()
-            .notify_seen(agent_uuid)
+        // Update in-memory last-cache (used by multi-last queries, zero DB hit)
+        crate::monitoring_last_cache::MonitoringLastCache::global()
+            .update_static(agent_uuid, static_monitoring_data.time.cast_signed(), &static_monitoring_data)
             .await;
 
         // Fast path: check in-memory hash cache first to avoid DB query

@@ -10,6 +10,7 @@ use std::fmt;
 use std::sync::OnceLock;
 
 pub mod agent;
+pub mod agent_uuid;
 pub mod crontab;
 pub mod crontab_result;
 pub mod js_result;
@@ -110,6 +111,7 @@ pub fn get_modules() -> RpcModule<NodegetServerRpcImpl> {
 
 fn build_modules() -> RpcModule<NodegetServerRpcImpl> {
     use crate::rpc::agent::RpcServer as AgentRpcServer;
+    use crate::rpc::agent_uuid::AgentUuidRpcServer;
     use crate::rpc::crontab::RpcServer as CrontabRpcServer;
     use crate::rpc::crontab_result::RpcServer as CrontabResultRpcServer;
     use crate::rpc::js_result::RpcServer as JsResultRpcServer;
@@ -126,6 +128,8 @@ fn build_modules() -> RpcModule<NodegetServerRpcImpl> {
     let mut rpc_module = NodegetServerRpcImpl.into_rpc();
 
     rpc_module.merge(agent::AgentRpcImpl.into_rpc()).unwrap();
+
+    rpc_module.merge(agent_uuid::AgentUuidRpcImpl.into_rpc()).unwrap();
 
     rpc_module
         .merge(
