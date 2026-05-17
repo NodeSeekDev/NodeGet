@@ -217,6 +217,7 @@ export const themeZhConfig = {
                     text: 'Bucket File 文件 CRUD',
                     link: '/api/static_bucket_file/crud.md'
                 }]
+			},
             // Agent UUID
             {
                 text: 'Agent UUID',
