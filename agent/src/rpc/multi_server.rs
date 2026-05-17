@@ -131,7 +131,14 @@ async fn connection_manager(
     loop {
         info!("[{name}] Connecting to {url}...");
 
-        let ws_stream = match connect_with_retry(name, url, connect_timeout, server.ignore_cert.unwrap_or(false)).await {
+        let ws_stream = match connect_with_retry(
+            name,
+            url,
+            connect_timeout,
+            server.ignore_cert.unwrap_or(false),
+        )
+        .await
+        {
             Ok(ws) => ws,
             Err(e) => {
                 error!("[{name}] Failed to connect: {e}");

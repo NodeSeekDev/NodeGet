@@ -10,11 +10,7 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(Static::Table)
-                    .add_column(
-                        ColumnDef::new(Static::Enable)
-                            .boolean()
-                            .default(true),
-                    )
+                    .add_column(ColumnDef::new(Static::Enable).boolean().default(true))
                     .to_owned(),
             )
             .await

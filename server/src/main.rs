@@ -20,7 +20,6 @@ mod rpc;
 // 终端模块，处理终端连接
 mod terminal;
 // 令牌模块，处理令牌相关功能
-pub(crate) mod token;
 mod crontab;
 pub mod js_runtime;
 mod kv;
@@ -30,6 +29,7 @@ pub(crate) mod monitoring_uuid_cache;
 mod rpc_timing;
 mod static_file;
 pub(crate) mod static_hash_cache;
+pub(crate) mod token;
 
 pub(crate) mod monitoring_last_cache;
 mod subcommands;

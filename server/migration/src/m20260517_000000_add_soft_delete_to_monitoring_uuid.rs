@@ -16,7 +16,11 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(MonitoringUuid::Table)
-                    .add_column(boolean(MonitoringUuid::SoftDelete).default(false).not_null())
+                    .add_column(
+                        boolean(MonitoringUuid::SoftDelete)
+                            .default(false)
+                            .not_null(),
+                    )
                     .to_owned(),
             )
             .await

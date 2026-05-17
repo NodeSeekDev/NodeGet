@@ -47,7 +47,11 @@ pub async fn report_static(
 
         // Update in-memory last-cache (used by multi-last queries, zero DB hit)
         crate::monitoring_last_cache::MonitoringLastCache::global()
-            .update_static(agent_uuid, static_monitoring_data.time.cast_signed(), &static_monitoring_data)
+            .update_static(
+                agent_uuid,
+                static_monitoring_data.time.cast_signed(),
+                &static_monitoring_data,
+            )
             .await;
 
         // Fast path: check in-memory hash cache first to avoid DB query

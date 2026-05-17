@@ -56,16 +56,21 @@ impl StaticMonitoringData {
 
         let mut hasher = Sha256::new();
         let mut writer = WriteToDigest(&mut hasher);
-        write_canonical_json(&cpu_val, &mut writer)
-            .map_err(|e| crate::error::NodegetError::Other(format!("canonical write failed: {e}")))?;
-        writer.write_all(b"\n")
-            .map_err(|e| crate::error::NodegetError::Other(format!("canonical write failed: {e}")))?;
-        write_canonical_json(&sys_val, &mut writer)
-            .map_err(|e| crate::error::NodegetError::Other(format!("canonical write failed: {e}")))?;
-        writer.write_all(b"\n")
-            .map_err(|e| crate::error::NodegetError::Other(format!("canonical write failed: {e}")))?;
-        write_canonical_json(&gpu_val, &mut writer)
-            .map_err(|e| crate::error::NodegetError::Other(format!("canonical write failed: {e}")))?;
+        write_canonical_json(&cpu_val, &mut writer).map_err(|e| {
+            crate::error::NodegetError::Other(format!("canonical write failed: {e}"))
+        })?;
+        writer.write_all(b"\n").map_err(|e| {
+            crate::error::NodegetError::Other(format!("canonical write failed: {e}"))
+        })?;
+        write_canonical_json(&sys_val, &mut writer).map_err(|e| {
+            crate::error::NodegetError::Other(format!("canonical write failed: {e}"))
+        })?;
+        writer.write_all(b"\n").map_err(|e| {
+            crate::error::NodegetError::Other(format!("canonical write failed: {e}"))
+        })?;
+        write_canonical_json(&gpu_val, &mut writer).map_err(|e| {
+            crate::error::NodegetError::Other(format!("canonical write failed: {e}"))
+        })?;
 
         let hash = hasher.finalize();
         // 取前 16 字节 (128 bit) 足够去重
@@ -106,7 +111,7 @@ fn write_canonical_json<W: std::io::Write>(
                     w.write_all(b",")?;
                 }
                 serde_json::to_writer(&mut *w, k)?;
-                w.write_all(b":" )?;
+                w.write_all(b":")?;
                 write_canonical_json(map.get(*k).unwrap(), w)?;
             }
             w.write_all(b"}")?;
@@ -270,24 +275,47 @@ fn scale_load_to_i16(load: f64) -> Option<i16> {
     Some(v)
 }
 
-impl From<&DynamicMonitoringData> for DynamicMonitoringSummaryData {
-    fn from(data: &DynamicMonitoringData) -> Self {
-        let disks: Vec<_> = data
-            .disk
-            .iter()
-            .filter(|d| !is_excluded_mount(&d.mount_point))
-            .collect();
+impl DynamicMonitoringSummaryData {
+    /// 使用可选的磁盘和网卡筛选列表构建 DynamicMonitoringSummaryData
+    ///
+    /// - `select_disk`: 若存在且非空，仅统计 mount_point 匹配该列表的磁盘；否则回退到默认排除逻辑
+    /// - `select_network_interface`: 若存在且非空，仅统计 interface_name 匹配该列表的网卡；否则回退到默认排除逻辑
+    pub fn from_with_filter(
+        data: &DynamicMonitoringData,
+        select_disk: Option<&[String]>,
+        select_network_interface: Option<&[String]>,
+    ) -> Self {
+        let disks: Vec<_> = match select_disk {
+            Some(filter) if !filter.is_empty() => data
+                .disk
+                .iter()
+                .filter(|d| filter.contains(&d.mount_point))
+                .collect(),
+            _ => data
+                .disk
+                .iter()
+                .filter(|d| !is_excluded_mount(&d.mount_point))
+                .collect(),
+        };
         let total_space: u64 = disks.iter().map(|d| d.total_space).sum();
         let available_space: u64 = disks.iter().map(|d| d.available_space).sum();
         let read_speed: u64 = disks.iter().map(|d| d.read_speed).sum();
         let write_speed: u64 = disks.iter().map(|d| d.write_speed).sum();
 
-        let ifaces: Vec<_> = data
-            .network
-            .interfaces
-            .iter()
-            .filter(|i| !is_virtual_interface(&i.interface_name))
-            .collect();
+        let ifaces: Vec<_> = match select_network_interface {
+            Some(filter) if !filter.is_empty() => data
+                .network
+                .interfaces
+                .iter()
+                .filter(|i| filter.contains(&i.interface_name))
+                .collect(),
+            _ => data
+                .network
+                .interfaces
+                .iter()
+                .filter(|i| !is_virtual_interface(&i.interface_name))
+                .collect(),
+        };
         let total_received: u64 = ifaces.iter().map(|i| i.total_received).sum();
         let total_transmitted: u64 = ifaces.iter().map(|i| i.total_transmitted).sum();
         let receive_speed_net: u64 = ifaces.iter().map(|i| i.receive_speed).sum();
@@ -320,6 +348,12 @@ impl From<&DynamicMonitoringData> for DynamicMonitoringSummaryData {
             transmit_speed: Some(u64_to_i64_saturating(transmit_speed)),
             receive_speed: Some(u64_to_i64_saturating(receive_speed_net)),
         }
+    }
+}
+
+impl From<&DynamicMonitoringData> for DynamicMonitoringSummaryData {
+    fn from(data: &DynamicMonitoringData) -> Self {
+        Self::from_with_filter(data, None, None)
     }
 }
 
