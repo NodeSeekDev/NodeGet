@@ -143,6 +143,19 @@ impl MonitoringUuidCache {
         uuids
     }
 
+    /// List all UUIDs with their soft-delete status, sorted for stable output.
+    pub async fn list_all_with_agent_mode(&self) -> Vec<(Uuid, bool)> {
+        let guard = self.inner.read().await;
+        let mut result: Vec<(Uuid, bool)> = guard
+            .by_uuid
+            .iter()
+            .map(|(uuid, (_, soft_delete))| (*uuid, *soft_delete))
+            .collect();
+        drop(guard);
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        result
+    }
+
     // ── Write helpers ───────────────────────────────────────────────────
 
     /// Get or insert a `uuid` into the `monitoring_uuid` table.
