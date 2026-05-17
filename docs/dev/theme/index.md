@@ -20,7 +20,7 @@ NodeGet 主题本质上为纯静态构建的网站，可以部署到 Cloudflare 
 - custom.css/custom.js 用户自定义的样式和脚本
 - 大量的静态资源
 
-比如，官方的[演示主题](https://github.com/NodeSeekDev/NodeGet)编译结果的整体结构如下：
+比如，官方的[演示主题](https://github.com/NodeSeekDev/NodeGet-statusshow)编译结果的整体结构如下：
 
 ```
 ├── assets
@@ -193,7 +193,7 @@ er_preferences_form的作用只有在dashboard辅助用户覆写user_preferences
 
 ## NodeGet 主题的前端工程化
 
-如果没有特别需求，建议在 NodeGet 官方[演示主题](https://github.com/NodeSeekDev/NodeGet)的基础上定制开发
+如果没有特别需求，建议在 NodeGet 官方[演示主题](https://github.com/NodeSeekDev/NodeGet-statusshow)的基础上定制开发
 
 这里记录下官方演示主题的一些工程化设计，方便开发者理解并参与开发
 
