@@ -33,7 +33,6 @@ pub enum AgentCronType {
 }
 
 pub enum ServerCronType {
-    CleanUpDatabase,             // 数据库清理任务
     JsWorker(String, Value),     // 触发已注册 JsWorker（脚本名 + 入参）
 }
 ```
@@ -55,14 +54,6 @@ Agent 类型:
             }
         }
     ]
-}
-```
-
-Server 类型（数据库清理）:
-
-```json
-{
-    "server": "clean_up_database"
 }
 ```
 

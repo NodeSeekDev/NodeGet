@@ -52,14 +52,6 @@ Agent 任务类型 — 在特定 Agent 上执行任务:
 }
 ```
 
-Server 任务类型 — 在服务器上执行数据库清理任务:
-
-```json
-{
-  "server": "clean_up_database"
-}
-```
-
 Server 任务类型 — 触发已注册的 JsWorker 脚本:
 
 ```json
@@ -441,16 +433,6 @@ Server 任务类型 — 触发已注册的 JsWorker 脚本:
         ]
       },
       "last_run_time": 1769341269012
-    },
-    {
-      "id": 124,
-      "name": "db_cleanup",
-      "enable": true,
-      "cron_expression": "0 0 3 * * *",
-      "cron_type": {
-        "server": "clean_up_database"
-      },
-      "last_run_time": 1769337198000
     }
   ]
 }

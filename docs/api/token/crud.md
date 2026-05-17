@@ -490,10 +490,167 @@ pub struct TokenCreationRequest {
           ]
         }
       ],
-      "username": "gm"
+          "username": "gm"
+        }
+      ]
     }
-  ]
+  }
 }
+```
+
+## Change Password
+
+修改指定 Token 的密码。目标 Token 必须设置了 `username`（即支持 Username\|Password 鉴权），否则修改无意义。
+
+### 方法
+
+调用方法名为 `token_change_password`，需要提供以下参数：
+
+```json
+{
+  "token": "demo_super_token",                    // SuperToken，用于鉴权
+  "target_token": "target_token_key_or_username",   // 目标 Token 的 token_key 或 username
+  "new_password": "new_password_here"               // 新密码，不少于 6 个字符
+}
+```
+
+`target_token` 支持两种匹配方式：
+
+- `token_key`
+- `username`
+
+服务端会先按 `token_key` 匹配；若未命中，再按 `username` 匹配。
+
+也支持传入 `token_key:secret` 格式（secret 部分不校验，仅提取 key）。
+
+### 权限要求
+
+只有 **SuperToken** 可以调用该方法。
+
+普通 Token 会返回权限错误。
+
+注意事项:
+
+- `new_password` 不能为空，且长度必须不少于 6 个字符
+- 当 `target_token` 为空时，返回 `InvalidInput` 错误
+- 当目标 Token 不存在时，返回 `NotFound` 错误
+- 修改后会自动刷新 Token 缓存，无需重启 Server
+
+### 返回值
+
+```json
+{
+  "success": true,
+  "message": "Password changed successfully"
+}
+```
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "token_change_password",
+  "params": {
+    "token": "ROOT_KEY:ROOT_SECRET",
+    "target_token": "BgFqEhzoCISpAAON",
+    "new_password": "NewPass123"
+  },
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true,
+    "message": "Password changed successfully"
+  }
+}
+```
+
+## Roll Token Secret
+
+重新生成指定 Token 的 `token_secret`，旧 Secret 立即失效。
+
+### 方法
+
+调用方法名为 `token_roll_token_secret`，需要提供以下参数：
+
+```json
+{
+  "token": "demo_super_token",                    // SuperToken，用于鉴权
+  "target_token": "target_token_key_or_username"   // 目标 Token 的 token_key 或 username
+}
+```
+
+`target_token` 支持两种匹配方式：
+
+- `token_key`
+- `username`
+
+服务端会先按 `token_key` 匹配；若未命中，再按 `username` 匹配。
+
+也支持传入 `token_key:secret` 格式（secret 部分不校验，仅提取 key）。
+
+### 权限要求
+
+只有 **SuperToken** 可以调用该方法。
+
+普通 Token 会返回权限错误。
+
+注意事项:
+
+- 当 `target_token` 为空时，返回 `InvalidInput` 错误
+- 当目标 Token 不存在时，返回 `NotFound` 错误
+- SuperToken 的 Secret 也可以被重新生成（请妥善保管新生成的 Secret）
+- 修改后会自动刷新 Token 缓存，无需重启 Server
+
+### 返回值
+
+返回新的 `key` 与 `secret`，拼接后即可使用（格式: `key:secret`）：
+
+```json
+{
+  "key": "BgFqEhzoCISpAAON",              // Token Key
+  "secret": "x9qW3mP7vL2kR8tY5nJ4hG6fE1dC0bA3" // 新生成的 Token Secret
+}
+```
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "token_roll_token_secret",
+  "params": {
+    "token": "ROOT_KEY:ROOT_SECRET",
+    "target_token": "BgFqEhzoCISpAAON"
+  },
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "key": "BgFqEhzoCISpAAON",
+    "secret": "x9qW3mP7vL2kR8tY5nJ4hG6fE1dC0bA3"
+  }
+}
+```
 ```
 
 注意事项:

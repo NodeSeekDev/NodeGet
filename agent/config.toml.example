@@ -12,6 +12,14 @@ dynamic_report_interval_ms = 1000
 # 则每 2 秒上报一次摘要，每 4 秒上报一次完整动态数据
 # dynamic_summary_report_interval_ms = 1000
 
+# Disk 选择列表（按 mount_point 匹配），用于 Dynamic Summary 上报
+# 若指定且非空，则仅统计列表中的磁盘；否则回退到默认排除逻辑
+# dynamic_summary_select_disk = ["/", "/data"]
+
+# 网卡选择列表（按 interface_name 匹配），用于 Dynamic Summary 上报
+# 若指定且非空，则仅统计列表中的网卡；否则回退到默认排除逻辑
+# dynamic_summary_select_network_interface = ["eth0", "eth1"]
+
 # 静态监控数据上报间隔（毫秒），默认 300000（5 分钟）
 # static_report_interval_ms = 300000
 
