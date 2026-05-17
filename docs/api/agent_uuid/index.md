@@ -1,6 +1,7 @@
 # Agent UUID 总览
 
-Agent UUID 是 NodeGet 中所有 Agent（客户端）的唯一标识。`agent-uuid` 模块提供面向前端的权威 Agent UUID 管理接口，数据来源于 `monitoring_uuid` 表（支持软删除）。
+Agent UUID 是 NodeGet 中所有 Agent（客户端）的唯一标识。`agent-uuid` 模块提供面向前端的权威 Agent UUID 管理接口，数据来源于
+`monitoring_uuid` 表（支持软删除）。
 
 ## 基本概念
 
@@ -37,8 +38,8 @@ pub enum MonitoringUuid {
 
 ## 方法列表
 
-| 方法名                                              | 描述                |
-|--------------------------------------------------|-------------------|
-| [agent-uuid.list_all](./crud.md#list-all)        | 列出所有非软删除的 Agent UUID |
+| 方法名                                                                       | 描述                      |
+|---------------------------------------------------------------------------|-------------------------|
+| [agent-uuid.list_all](./crud.md#list-all)                                 | 列出所有非软删除的 Agent UUID    |
 | [agent-uuid.list_all_with_agent_mode](./crud.md#list-all-with-agent-mode) | 列出所有 Agent UUID（含软删除状态） |
-| [agent-uuid.delete](./crud.md#delete)            | 按 UUID 软删除 Agent      |
+| [agent-uuid.delete](./crud.md#delete)                                     | 按 UUID 软删除 Agent        |

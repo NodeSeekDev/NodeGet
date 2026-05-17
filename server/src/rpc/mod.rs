@@ -129,7 +129,9 @@ fn build_modules() -> RpcModule<NodegetServerRpcImpl> {
 
     rpc_module.merge(agent::AgentRpcImpl.into_rpc()).unwrap();
 
-    rpc_module.merge(agent_uuid::AgentUuidRpcImpl.into_rpc()).unwrap();
+    rpc_module
+        .merge(agent_uuid::AgentUuidRpcImpl.into_rpc())
+        .unwrap();
 
     rpc_module
         .merge(

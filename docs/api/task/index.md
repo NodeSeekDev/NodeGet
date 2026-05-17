@@ -279,13 +279,13 @@ pub struct DnsRecordResult {
 - **PTR** 记录查询时，`domain` 应传入 IP 地址字符串（如 `"1.1.1.1"`），而非域名
 - **CNAME** 查询时，部分域名可能直接返回 A 记录而非 CNAME，这属于正常 DNS 行为，不表示查询失败
 - 各记录类型的数据格式：
-  - **A/AAAA**: IP 地址字符串
-  - **CNAME/NS**: 主机名字符串
-  - **MX**: `优先级 交换器`
-  - **SRV**: `优先级 权重 端口 目标`
-  - **SOA**: `主NS 负责人 序列号 刷新 重试 过期 最小TTL`
-  - **TXT**: 文本字符串
-  - **CAA**: hickory Debug 格式输出（含 flags、tag、value 等完整信息）
+    - **A/AAAA**: IP 地址字符串
+    - **CNAME/NS**: 主机名字符串
+    - **MX**: `优先级 交换器`
+    - **SRV**: `优先级 权重 端口 目标`
+    - **SOA**: `主NS 负责人 序列号 刷新 重试 过期 最小TTL`
+    - **TXT**: 文本字符串
+    - **CAA**: hickory Debug 格式输出（含 flags、tag、value 等完整信息）
 
 权限要求：`Dns`
 

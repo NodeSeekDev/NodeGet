@@ -10,8 +10,8 @@ mod list_all;
 mod list_all_with_agent_mode;
 
 use crate::rpc::RpcHelper;
-use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::core::RpcResult;
+use jsonrpsee::proc_macros::rpc;
 use serde_json::value::RawValue;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -22,14 +22,11 @@ pub trait AgentUuidRpc {
     async fn list_all_agent_uuids(&self, token: String) -> RpcResult<Box<RawValue>>;
 
     #[method(name = "list_all_with_agent_mode")]
-    async fn list_all_agent_uuids_with_agent_mode(&self, token: String) -> RpcResult<Box<RawValue>>;
+    async fn list_all_agent_uuids_with_agent_mode(&self, token: String)
+    -> RpcResult<Box<RawValue>>;
 
     #[method(name = "delete")]
-    async fn delete_agent_uuid(
-        &self,
-        token: String,
-        agent_uuid: Uuid,
-    ) -> RpcResult<Box<RawValue>>;
+    async fn delete_agent_uuid(&self, token: String, agent_uuid: Uuid) -> RpcResult<Box<RawValue>>;
 }
 
 pub struct AgentUuidRpcImpl;
@@ -46,12 +43,19 @@ impl AgentUuidRpcServer for AgentUuidRpcImpl {
             .await
     }
 
-    async fn list_all_agent_uuids_with_agent_mode(&self, token: String) -> RpcResult<Box<RawValue>> {
+    async fn list_all_agent_uuids_with_agent_mode(
+        &self,
+        token: String,
+    ) -> RpcResult<Box<RawValue>> {
         let (tk, un) = crate::rpc::token_identity(&token);
         let span = tracing::info_span!(target: "server", "agent-uuid::list_all_with_agent_mode", token_key = tk, username = un);
-        async { crate::rpc::rpc_exec!(list_all_with_agent_mode::list_all_agent_uuids_with_agent_mode(token).await) }
-            .instrument(span)
-            .await
+        async {
+            crate::rpc::rpc_exec!(
+                list_all_with_agent_mode::list_all_agent_uuids_with_agent_mode(token).await
+            )
+        }
+        .instrument(span)
+        .await
     }
 
     async fn delete_agent_uuid(&self, token: String, agent_uuid: Uuid) -> RpcResult<Box<RawValue>> {

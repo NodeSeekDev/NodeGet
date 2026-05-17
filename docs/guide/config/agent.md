@@ -145,15 +145,17 @@ ws_url = "ws://nodeget-secondary.example.com:2211/"
 
 这两个字段用于控制 **Dynamic Summary**（动态监控摘要）中磁盘和网卡的统计范围，属于**可选配置**，留空或注释掉时会回退到默认行为。
 
-- **`dynamic_summary_select_disk`**：按磁盘的 `mount_point`（挂载点）进行白名单匹配，例如 `["/", "/data"]` 表示只统计根目录和 `/data` 的磁盘数据
-- **`dynamic_summary_select_network_interface`**：按网卡的 `interface_name`（接口名）进行白名单匹配，例如 `["eth0", "eth1"]` 表示只统计 `eth0` 和 `eth1` 的网络流量
+- **`dynamic_summary_select_disk`**：按磁盘的 `mount_point`（挂载点）进行白名单匹配，例如 `["/", "/data"]` 表示只统计根目录和
+  `/data` 的磁盘数据
+- **`dynamic_summary_select_network_interface`**：按网卡的 `interface_name`（接口名）进行白名单匹配，例如 `["eth0", "eth1"]`
+  表示只统计 `eth0` 和 `eth1` 的网络流量
 
 ### 回退行为
 
 - 若字段存在且数组**非空**，则仅统计列表中指定的项，其他项不参与汇总计算
 - 若字段不存在、为空数组，或被注释掉，则回退到默认排除逻辑：
-  - **磁盘**：自动过滤 `tmpfs`、`devtmpfs`、`proc`、`sysfs`、`cgroup` 等虚拟/临时文件系统
-  - **网卡**：自动过滤 `lo`、`docker0`、`veth*`、`tun*`、`br-*` 等虚拟/隧道网卡
+    - **磁盘**：自动过滤 `tmpfs`、`devtmpfs`、`proc`、`sysfs`、`cgroup` 等虚拟/临时文件系统
+    - **网卡**：自动过滤 `lo`、`docker0`、`veth*`、`tun*`、`br-*` 等虚拟/隧道网卡
 
 ### 使用场景
 

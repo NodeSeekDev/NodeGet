@@ -37,7 +37,8 @@ pub struct StaticDataQuery {
 ```
 
 - `fields`: 指定返回哪些数据字段，可选值为 `cpu` / `system` / `gpu`。若为空，返回 Token 有权限读取的所有字段
-- `condition`: 查询条件列表，多个条件为 AND 关系。支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` / `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`
+- `condition`: 查询条件列表，多个条件为 AND 关系。支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` /
+  `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`
 
 ### 权限要求
 
@@ -168,7 +169,8 @@ pub struct DynamicDataQuery {
 
 - `fields`: 指定返回哪些数据字段，可选值为 `cpu` / `ram` / `load` / `system` / `disk` / `network` / `gpu`。若为空，返回
   Token 有权限读取的所有字段
-- `condition`: 查询条件列表，多个条件为 AND 关系。支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` / `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`
+- `condition`: 查询条件列表，多个条件为 AND 关系。支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` /
+  `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`
 
 ### 权限要求
 
@@ -757,7 +759,9 @@ pub struct DynamicDataAvgQuery {
 参数说明：
 
 - `token`: Token
-- `conditions`: `Vec<QueryCondition>` — 使用与查询相同的条件结构体（支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` / `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`）。删除语义与查询语义一致
+- `conditions`: `Vec<QueryCondition>` — 使用与查询相同的条件结构体（支持 `uuid` / `timestamp_from_to` /
+  `timestamp_from` / `timestamp_to` / `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` /
+  `last`）。删除语义与查询语义一致
 
 注意事项：
 
@@ -838,7 +842,9 @@ pub struct DynamicDataAvgQuery {
 参数说明：
 
 - `token`: Token
-- `conditions`: `Vec<QueryCondition>` — 使用与查询相同的条件结构体（支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` / `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`）。删除语义与查询语义一致
+- `conditions`: `Vec<QueryCondition>` — 使用与查询相同的条件结构体（支持 `uuid` / `timestamp_from_to` /
+  `timestamp_from` / `timestamp_to` / `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` /
+  `last`）。删除语义与查询语义一致
 
 注意事项：
 
@@ -929,7 +935,8 @@ pub struct DynamicSummaryQuery {
   `total_memory` / `available_memory` / `load_one` / `load_five` / `load_fifteen` / `uptime` / `boot_time` /
   `process_count` / `total_space` / `available_space` / `read_speed` / `write_speed` / `tcp_connections` /
   `udp_connections` / `total_received` / `total_transmitted` / `transmit_speed` / `receive_speed`。若为空，返回所有字段
-- `condition`: 查询条件列表，多个条件为 AND 关系。支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` / `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`
+- `condition`: 查询条件列表，多个条件为 AND 关系。支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` /
+  `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`
 
 ### 权限要求
 
@@ -1210,7 +1217,9 @@ pub struct DynamicSummaryAvgQuery {
 参数说明：
 
 - `token`: Token
-- `conditions`: `Vec<QueryCondition>` — 使用与查询相同的条件结构体（支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` / `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`）。删除语义与查询语义一致
+- `conditions`: `Vec<QueryCondition>` — 使用与查询相同的条件结构体（支持 `uuid` / `timestamp_from_to` /
+  `timestamp_from` / `timestamp_to` / `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` /
+  `last`）。删除语义与查询语义一致
 
 注意事项：
 

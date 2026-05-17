@@ -451,7 +451,8 @@ JSON 解析示例：
 注意事项：
 
 - `timestamp_from_to` 等价于同时传 `timestamp_from` 和 `timestamp_to`，作用于 `timestamp` 列（Agent 上报时间）
-- `storage_time_from_to` / `storage_time_from` / `storage_time_to` 作用于 `storage_time` 列（Server 入库时间），仅在新增字段后写入的记录上生效；旧数据该列为 NULL，因此使用 storage_time 条件时不会命中旧记录
+- `storage_time_from_to` / `storage_time_from` / `storage_time_to` 作用于 `storage_time` 列（Server
+  入库时间），仅在新增字段后写入的记录上生效；旧数据该列为 NULL，因此使用 storage_time 条件时不会命中旧记录
 - `limit` 为 1 与 `last` 等价，按时间倒序取最新记录
 - 多个条件并存时为 `AND` 关系，只查询满足所有条件的数据
 

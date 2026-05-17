@@ -82,8 +82,8 @@ pub async fn delete_dynamic_summary(
                             .filter(dynamic_monitoring_summary::Column::StorageTime.gte(*start));
                     }
                     ResolvedCondition::StorageTimeTo(end) => {
-                        query = query
-                            .filter(dynamic_monitoring_summary::Column::StorageTime.lte(*end));
+                        query =
+                            query.filter(dynamic_monitoring_summary::Column::StorageTime.lte(*end));
                     }
                 }
             }
@@ -152,8 +152,8 @@ pub async fn delete_dynamic_summary(
                             .filter(dynamic_monitoring_summary::Column::StorageTime.gte(*start));
                     }
                     ResolvedCondition::StorageTimeTo(end) => {
-                        query = query
-                            .filter(dynamic_monitoring_summary::Column::StorageTime.lte(*end));
+                        query =
+                            query.filter(dynamic_monitoring_summary::Column::StorageTime.lte(*end));
                     }
                 }
             }

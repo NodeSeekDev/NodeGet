@@ -56,16 +56,21 @@ impl StaticMonitoringData {
 
         let mut hasher = Sha256::new();
         let mut writer = WriteToDigest(&mut hasher);
-        write_canonical_json(&cpu_val, &mut writer)
-            .map_err(|e| crate::error::NodegetError::Other(format!("canonical write failed: {e}")))?;
-        writer.write_all(b"\n")
-            .map_err(|e| crate::error::NodegetError::Other(format!("canonical write failed: {e}")))?;
-        write_canonical_json(&sys_val, &mut writer)
-            .map_err(|e| crate::error::NodegetError::Other(format!("canonical write failed: {e}")))?;
-        writer.write_all(b"\n")
-            .map_err(|e| crate::error::NodegetError::Other(format!("canonical write failed: {e}")))?;
-        write_canonical_json(&gpu_val, &mut writer)
-            .map_err(|e| crate::error::NodegetError::Other(format!("canonical write failed: {e}")))?;
+        write_canonical_json(&cpu_val, &mut writer).map_err(|e| {
+            crate::error::NodegetError::Other(format!("canonical write failed: {e}"))
+        })?;
+        writer.write_all(b"\n").map_err(|e| {
+            crate::error::NodegetError::Other(format!("canonical write failed: {e}"))
+        })?;
+        write_canonical_json(&sys_val, &mut writer).map_err(|e| {
+            crate::error::NodegetError::Other(format!("canonical write failed: {e}"))
+        })?;
+        writer.write_all(b"\n").map_err(|e| {
+            crate::error::NodegetError::Other(format!("canonical write failed: {e}"))
+        })?;
+        write_canonical_json(&gpu_val, &mut writer).map_err(|e| {
+            crate::error::NodegetError::Other(format!("canonical write failed: {e}"))
+        })?;
 
         let hash = hasher.finalize();
         // 取前 16 字节 (128 bit) 足够去重
@@ -106,7 +111,7 @@ fn write_canonical_json<W: std::io::Write>(
                     w.write_all(b",")?;
                 }
                 serde_json::to_writer(&mut *w, k)?;
-                w.write_all(b":" )?;
+                w.write_all(b":")?;
                 write_canonical_json(map.get(*k).unwrap(), w)?;
             }
             w.write_all(b"}")?;
