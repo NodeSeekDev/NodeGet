@@ -107,9 +107,11 @@ impl RpcServer for TokenRpcImpl {
             target_token_key = target_tk,
             target_username = target_un,
         );
-        async { rpc_exec!(change_password::change_password(token, target_token, new_password).await) }
-            .instrument(span)
-            .await
+        async {
+            rpc_exec!(change_password::change_password(token, target_token, new_password).await)
+        }
+        .instrument(span)
+        .await
     }
 
     async fn roll_token_secret(

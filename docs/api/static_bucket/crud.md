@@ -14,7 +14,8 @@
   "name": "my-site",
   "path": "sites/my-site",
   "is_http_root": false,
-  "cors": true
+  "cors": true,
+  "enable": true
 }
 ```
 
@@ -33,7 +34,8 @@
   "name": "my-site",
   "path": "sites/my-site",
   "is_http_root": false,
-  "cors": true
+  "cors": true,
+  "enable": true
 }
 ```
 
@@ -50,7 +52,8 @@
     "name": "my-site",
     "path": "sites/my-site",
     "is_http_root": false,
-    "cors": true
+    "cors": true,
+    "enable": true
   },
   "id": 1
 }
@@ -67,7 +70,8 @@
     "name": "my-site",
     "path": "sites/my-site",
     "is_http_root": false,
-    "cors": true
+    "cors": true,
+    "enable": true
   }
 }
 ```
@@ -123,7 +127,8 @@
     "name": "my-site",
     "path": "sites/my-site",
     "is_http_root": false,
-    "cors": true
+    "cors": true,
+    "enable": true
   }
 }
 ```
@@ -154,7 +159,8 @@
     "name": "my-site",
     "path": "sites/my-site",
     "is_http_root": true,
-    "cors": true
+    "cors": true,
+    "enable": false
   },
   "id": 1
 }
@@ -171,7 +177,8 @@
     "name": "my-site",
     "path": "sites/my-site",
     "is_http_root": true,
-    "cors": true
+    "cors": true,
+    "enable": false
   }
 }
 ```

@@ -1,3 +1,4 @@
+use super::utils::{find_target_token, verify_supertoken};
 use crate::entity::token;
 use crate::token::cache::TokenCache;
 use crate::token::hash_string;
@@ -5,7 +6,6 @@ use jsonrpsee::core::RpcResult;
 use nodeget_lib::error::NodegetError;
 use sea_orm::{ActiveModelTrait, Set};
 use serde_json::value::RawValue;
-use super::utils::{find_target_token, verify_supertoken};
 use tracing::debug;
 
 /// 修改指定 token 的密码（Super Token 专用）
@@ -69,8 +69,7 @@ pub async fn change_password(
             );
         }
 
-        let response =
-            r#"{"success":true,"message":"Password changed successfully"}"#.to_owned();
+        let response = r#"{"success":true,"message":"Password changed successfully"}"#.to_owned();
         RawValue::from_string(response)
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
     };

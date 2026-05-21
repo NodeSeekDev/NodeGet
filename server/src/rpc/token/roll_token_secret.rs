@@ -1,3 +1,4 @@
+use super::utils::{find_target_token, verify_supertoken};
 use crate::entity::token;
 use crate::token::cache::TokenCache;
 use crate::token::hash_string;
@@ -6,7 +7,6 @@ use nodeget_lib::error::NodegetError;
 use nodeget_lib::utils::generate_random_string;
 use sea_orm::{ActiveModelTrait, Set};
 use serde_json::value::RawValue;
-use super::utils::{find_target_token, verify_supertoken};
 use tracing::debug;
 
 /// 重新生成目标 token 的 secret（Super Token 专用）
@@ -40,10 +40,9 @@ pub async fn roll_token_secret(token: String, target_token: String) -> RpcResult
         let mut active_model: token::ActiveModel = target_model.into();
         active_model.token_hash = Set(new_token_hash);
 
-        let updated = active_model
-            .update(db)
-            .await
-            .map_err(|e| NodegetError::DatabaseError(format!("Failed to update token secret: {e}")))?;
+        let updated = active_model.update(db).await.map_err(|e| {
+            NodegetError::DatabaseError(format!("Failed to update token secret: {e}"))
+        })?;
 
         debug!(
             target: "token",
