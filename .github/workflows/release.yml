@@ -94,7 +94,6 @@ jobs:
             -O - \
             | tar -xz -C "${HOME}/.local/bin"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
-          cross --version
 
       - name: Build binaries
         run: |
