@@ -130,34 +130,6 @@ pub struct DynamicDataQuery {
     pub condition: Vec<QueryCondition>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StaticDataAvgQuery {
-    // 要查询并聚合平均值的字段列表
-    pub fields: Vec<StaticDataQueryField>,
-    // 指定要查询的 Agent UUID
-    pub uuid: uuid::Uuid,
-    // 可选：起始时间戳（毫秒）
-    pub timestamp_from: Option<i64>,
-    // 可选：结束时间戳（毫秒）
-    pub timestamp_to: Option<i64>,
-    // 分段点数
-    pub points: u64,
-}
-
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DynamicDataAvgQuery {
-    // 要查询并聚合平均值的字段列表
-    pub fields: Vec<DynamicDataQueryField>,
-    // 指定要查询的 Agent UUID
-    pub uuid: uuid::Uuid,
-    // 可选：起始时间戳（毫秒）
-    pub timestamp_from: Option<i64>,
-    // 可选：结束时间戳（毫秒）
-    pub timestamp_to: Option<i64>,
-    // 分段点数
-    pub points: u64,
-}
-
 // 静态监控数据响应项结构体
 #[derive(Serialize)]
 pub struct StaticResponseItem {
@@ -286,16 +258,6 @@ impl DynamicSummaryQueryField {
 pub struct DynamicSummaryQuery {
     pub fields: Vec<DynamicSummaryQueryField>,
     pub condition: Vec<QueryCondition>,
-}
-
-// 动态监控摘要平均值查询结构体
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DynamicSummaryAvgQuery {
-    pub fields: Vec<DynamicSummaryQueryField>,
-    pub uuid: uuid::Uuid,
-    pub timestamp_from: Option<i64>,
-    pub timestamp_to: Option<i64>,
-    pub points: u64,
 }
 
 // 动态监控摘要数据响应项结构体

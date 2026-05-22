@@ -2936,7 +2936,7 @@ checksum = "43794a0ace135be66a25d3ae77d41b91615fb68ae937f904090203e81f755b65"
 
 [[package]]
 name = "nodeget-agent"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "anyhow",
  "base64",
@@ -2970,7 +2970,7 @@ dependencies = [
 
 [[package]]
 name = "nodeget-lib"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "anyhow",
  "libc",
@@ -2989,7 +2989,7 @@ dependencies = [
 
 [[package]]
 name = "nodeget-server"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "anyhow",
  "axum",

@@ -1,5 +1,9 @@
 # 部署 Status Show (公共前端)
 
+::: warning
+这是历史版本的Status Show的部署方法，暂时保留给未迁移到[新版主题框架](/dev/theme/)的公开主题页面。
+:::
+
 NodeGet 的不仅是前后端分离，其前端也在正常情况下 (官方想让你这么用的情况下) 分为两个部分:
 
 - Dashboard: 用于持有 SuperToken，以最高权限管理所有设置

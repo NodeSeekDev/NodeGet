@@ -399,7 +399,7 @@ mod tests {
         let cache = MonitoringLastCache::global();
         let uuid = Uuid::new_v4();
         let summary = DynamicMonitoringSummaryData {
-            uuid: uuid.to_string(),
+            uuid,
             time: 1_777_463_543_359,
             cpu_usage: Some(50),
             gpu_usage: None,
@@ -460,7 +460,7 @@ mod tests {
         let cache = MonitoringLastCache::global();
         let uuid = Uuid::new_v4();
         let summary = DynamicMonitoringSummaryData {
-            uuid: uuid.to_string(),
+            uuid,
             time: 1_777_463_543_359,
             cpu_usage: Some(1000),
             gpu_usage: None,
@@ -532,6 +532,7 @@ mod tests {
             id: sea_orm::ActiveValue::NotSet,
             uuid_id: sea_orm::ActiveValue::Set(1i16),
             timestamp: sea_orm::ActiveValue::Set(1_777_463_543_359i64),
+            storage_time: sea_orm::ActiveValue::Set(None),
             cpu_usage: sea_orm::ActiveValue::Set(Some(50i16)),
             gpu_usage: sea_orm::ActiveValue::Set(None),
             used_swap: sea_orm::ActiveValue::Set(Some(0i64)),
