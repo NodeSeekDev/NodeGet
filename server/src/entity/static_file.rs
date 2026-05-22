@@ -12,6 +12,7 @@ pub struct Model {
     pub path: String,
     pub is_http_root: bool,
     pub cors: bool,
+    pub enable: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

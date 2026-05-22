@@ -51,7 +51,19 @@ export const themeZhConfig = {
 					link: '/api/nodeget/crud.md'
 				}]
 			},
-
+            // Agent UUID
+            {
+                text: 'Agent UUID',
+                collapsed: false,
+                items: [{
+                    text: '介绍',
+                    link: '/api/agent_uuid/index.md'
+                },
+                {
+                    text: 'CRUD 操作',
+                    link: '/api/agent_uuid/crud.md'
+                }]
+            },
 			// Monitoring
 			{
 				text: 'Monitoring',
@@ -217,20 +229,7 @@ export const themeZhConfig = {
                     text: 'Bucket File 文件 CRUD',
                     link: '/api/static_bucket_file/crud.md'
                 }]
-			},
-            // Agent UUID
-            {
-                text: 'Agent UUID',
-                collapsed: false,
-                items: [{
-                    text: '介绍',
-                    link: '/api/agent_uuid/index.md'
-                },
-                {
-                    text: 'CRUD 操作',
-                    link: '/api/agent_uuid/crud.md'
-                }]
-            }]
+			}]
 		}]
 	},
 	socialLinks: [{

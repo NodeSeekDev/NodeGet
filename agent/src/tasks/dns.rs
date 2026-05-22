@@ -1,7 +1,7 @@
+use hickory_resolver::TokioAsyncResolver;
 use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
 use hickory_resolver::proto::rr::{RData, RecordType};
 use hickory_resolver::system_conf::read_system_conf;
-use hickory_resolver::TokioAsyncResolver;
 use log::warn;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::task::{DnsRecordResult, DnsRecordType, DnsTask};
@@ -54,9 +54,8 @@ async fn build_resolver(dns_server: Option<&str>) -> Result<TokioAsyncResolver, 
         config.add_name_server(NameServerConfig::new(addr, Protocol::Udp));
         Ok(TokioAsyncResolver::tokio(config, ResolverOpts::default()))
     } else {
-        let (config, opts) = read_system_conf().map_err(|e| {
-            NodegetError::Other(format!("Failed to read system DNS config: {e}"))
-        })?;
+        let (config, opts) = read_system_conf()
+            .map_err(|e| NodegetError::Other(format!("Failed to read system DNS config: {e}")))?;
         Ok(TokioAsyncResolver::tokio(config, opts))
     }
 }

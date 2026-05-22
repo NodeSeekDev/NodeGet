@@ -13,8 +13,8 @@ use tokio::{
     task,
 };
 use tokio_tungstenite::tungstenite::Bytes;
-use tokio_tungstenite::{WebSocketStream, connect_async_tls_with_config};
 use tokio_tungstenite::tungstenite::protocol::Message;
+use tokio_tungstenite::{WebSocketStream, connect_async_tls_with_config};
 use url::Url;
 
 /// PTY result type

@@ -1,13 +1,7 @@
-use sea_orm_migration::{prelude::*, schema::*};
+use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
-
-#[derive(DeriveIden)]
-enum MonitoringUuid {
-    Table,
-    SoftDelete,
-}
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
@@ -15,12 +9,8 @@ impl MigrationTrait for Migration {
         manager
             .alter_table(
                 Table::alter()
-                    .table(MonitoringUuid::Table)
-                    .add_column(
-                        boolean(MonitoringUuid::SoftDelete)
-                            .default(false)
-                            .not_null(),
-                    )
+                    .table(Static::Table)
+                    .add_column(ColumnDef::new(Static::Enable).boolean().default(true))
                     .to_owned(),
             )
             .await
@@ -30,10 +20,17 @@ impl MigrationTrait for Migration {
         manager
             .alter_table(
                 Table::alter()
-                    .table(MonitoringUuid::Table)
-                    .drop_column(MonitoringUuid::SoftDelete)
+                    .table(Static::Table)
+                    .drop_column(Static::Enable)
                     .to_owned(),
             )
             .await
     }
+}
+
+#[derive(DeriveIden)]
+enum Static {
+    #[sea_orm(iden = "static")]
+    Table,
+    Enable,
 }

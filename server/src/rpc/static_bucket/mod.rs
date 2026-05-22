@@ -36,6 +36,7 @@ pub trait Rpc {
         path: String,
         is_http_root: bool,
         cors: bool,
+        enable: Option<bool>,
     ) -> RpcResult<Box<RawValue>>;
 
     #[method(name = "delete")]
@@ -81,10 +82,11 @@ impl RpcServer for StaticBucketRpcImpl {
         path: String,
         is_http_root: bool,
         cors: bool,
+        enable: Option<bool>,
     ) -> RpcResult<Box<RawValue>> {
         let (tk, un) = token_identity(&token);
-        let span = tracing::info_span!(target: "static_bucket", "static-bucket::update", token_key = tk, username = un, name = %name, path = %path, is_http_root = is_http_root, cors = cors);
-        async { rpc_exec!(update::update(token, name, path, is_http_root, cors).await) }
+        let span = tracing::info_span!(target: "static_bucket", "static-bucket::update", token_key = tk, username = un, name = %name, path = %path, is_http_root = is_http_root, cors = cors, enable = ?enable);
+        async { rpc_exec!(update::update(token, name, path, is_http_root, cors, enable).await) }
             .instrument(span)
             .await
     }

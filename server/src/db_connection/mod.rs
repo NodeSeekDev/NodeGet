@@ -1,5 +1,3 @@
-pub mod clean_up;
-
 use crate::{DB, SERVER_CONFIG};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectOptions, ConnectionTrait, Database};
