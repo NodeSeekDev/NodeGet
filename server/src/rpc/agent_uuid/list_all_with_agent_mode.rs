@@ -6,11 +6,18 @@ use nodeget_lib::permission::token_auth::TokenOrAuth;
 use serde_json::value::RawValue;
 use tracing::debug;
 
-pub async fn list_all_agent_uuids(token: String) -> RpcResult<Box<RawValue>> {
+/// Response item for agent-uuid.list_all_with_agent_mode
+#[derive(serde::Serialize)]
+struct AgentUuidWithMode {
+    uuid: uuid::Uuid,
+    soft_delete: bool,
+}
+
+pub async fn list_all_agent_uuids_with_agent_mode(token: String) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
-        debug!(target: "rpc", "list_all_agent_uuids: token parsed");
+        debug!(target: "rpc", "list_all_agent_uuids_with_agent_mode: token parsed");
 
         let is_allowed = check_token_limit(
             &token_or_auth,
@@ -24,13 +31,18 @@ pub async fn list_all_agent_uuids(token: String) -> RpcResult<Box<RawValue>> {
                 "Permission Denied: Missing MonitoringUuid::List permission".to_owned(),
             )));
         }
-        debug!(target: "rpc", "list_all_agent_uuids: permission check passed");
+        debug!(target: "rpc", "list_all_agent_uuids_with_agent_mode: permission check passed");
 
         let uuids = crate::monitoring_uuid_cache::MonitoringUuidCache::global()
-            .list_all()
+            .list_all_with_agent_mode()
             .await;
 
-        let json_str = serde_json::to_string(&uuids)
+        let items: Vec<AgentUuidWithMode> = uuids
+            .into_iter()
+            .map(|(uuid, soft_delete)| AgentUuidWithMode { uuid, soft_delete })
+            .collect();
+
+        let json_str = serde_json::to_string(&items)
             .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
 
         RawValue::from_string(json_str)

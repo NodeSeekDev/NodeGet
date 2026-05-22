@@ -15,7 +15,6 @@ on:
       - "docs/**"
       - "README.md"
 
-
 jobs:
   agent-release:
     name: Build - ${{ matrix.platform.release_for }}
@@ -136,7 +135,7 @@ jobs:
   release-dev:
     name: Release Dev
     needs: [ agent-release, agent-windows, agent-macos ]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -161,7 +160,7 @@ jobs:
   release-main:
     name: Release Main
     needs: [ agent-release, agent-windows, agent-macos ]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -161,7 +161,15 @@ pub async fn handle_dynamic_monitoring_data_report() {
         let dynamic_monitoring_data = DynamicMonitoringData::refresh_and_get().await;
 
         // 每次 tick 都上报摘要数据
-        let summary_data = DynamicMonitoringSummaryData::from(&dynamic_monitoring_data);
+        let select_disk = agent_config.dynamic_summary_select_disk.as_deref();
+        let select_nic = agent_config
+            .dynamic_summary_select_network_interface
+            .as_deref();
+        let summary_data = DynamicMonitoringSummaryData::from_with_filter(
+            &dynamic_monitoring_data,
+            select_disk,
+            select_nic,
+        );
         if let Some(summary_json) = serialize_shared(&summary_data) {
             trace!("Dynamic Monitoring Summary Data: {summary_json}");
 

@@ -143,6 +143,19 @@ impl MonitoringUuidCache {
         uuids
     }
 
+    /// List all UUIDs with their soft-delete status, sorted for stable output.
+    pub async fn list_all_with_agent_mode(&self) -> Vec<(Uuid, bool)> {
+        let guard = self.inner.read().await;
+        let mut result: Vec<(Uuid, bool)> = guard
+            .by_uuid
+            .iter()
+            .map(|(uuid, (_, soft_delete))| (*uuid, *soft_delete))
+            .collect();
+        drop(guard);
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        result
+    }
+
     // ── Write helpers ───────────────────────────────────────────────────
 
     /// Get or insert a `uuid` into the `monitoring_uuid` table.
@@ -183,9 +196,7 @@ impl MonitoringUuidCache {
                 let mut active: monitoring_uuid::ActiveModel = model.into();
                 active.soft_delete = Set(false);
                 active.update(db).await.map_err(|e| {
-                    NodegetError::DatabaseError(format!(
-                        "Failed to resurrect monitoring_uuid: {e}"
-                    ))
+                    NodegetError::DatabaseError(format!("Failed to resurrect monitoring_uuid: {e}"))
                 })?;
                 info!(target: "monitoring_uuid_cache", %uuid, "Resurrected soft-deleted uuid");
             }
@@ -208,16 +219,12 @@ impl MonitoringUuidCache {
             .exec(db)
             .await
             .map_err(|e| {
-                NodegetError::DatabaseError(format!(
-                    "Failed to insert monitoring_uuid: {e}"
-                ))
+                NodegetError::DatabaseError(format!("Failed to insert monitoring_uuid: {e}"))
             })?;
 
         let id = result.last_insert_id as i16;
         Self::reload().await.map_err(|e| {
-            NodegetError::DatabaseError(format!(
-                "Failed to reload cache after insert: {e}"
-            ))
+            NodegetError::DatabaseError(format!("Failed to reload cache after insert: {e}"))
         })?;
         Ok(id)
     }
@@ -252,15 +259,11 @@ impl MonitoringUuidCache {
         let mut active: monitoring_uuid::ActiveModel = model.into();
         active.soft_delete = Set(true);
         active.update(db).await.map_err(|e| {
-            NodegetError::DatabaseError(format!(
-                "Failed to soft_delete monitoring_uuid: {e}"
-            ))
+            NodegetError::DatabaseError(format!("Failed to soft_delete monitoring_uuid: {e}"))
         })?;
 
         Self::reload().await.map_err(|e| {
-            NodegetError::DatabaseError(format!(
-                "Failed to reload cache after soft_delete: {e}"
-            ))
+            NodegetError::DatabaseError(format!("Failed to reload cache after soft_delete: {e}"))
         })?;
 
         info!(target: "monitoring_uuid_cache", %uuid, "Soft-deleted uuid");

@@ -152,6 +152,8 @@
 
 ## List All Agent UUID
 
+**PS: 该功能已被完全替换成 `agent-uuid_list_all`，在新实现中，请不要参考 `nodeget-server` 下的实现
+
 获取 Server 中所有 Agent 的 UUID 列表。
 
 ### 方法

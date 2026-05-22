@@ -43,6 +43,16 @@ ip_provider = "cloudflare"
 # 默认使用 pool.ntp.org
 ntp_server = "pool.ntp.org"
 
+# Disk 选择列表（按 mount_point 匹配），用于 Dynamic Summary 上报
+# 若指定且非空，则仅统计列表中的磁盘；否则回退到默认排除逻辑
+# 默认排除规则会自动过滤掉 tmpfs、devtmpfs、proc 等虚拟/临时文件系统
+# dynamic_summary_select_disk = ["/", "/data"]
+
+# 网卡选择列表（按 interface_name 匹配），用于 Dynamic Summary 上报
+# 若指定且非空，则仅统计列表中的网卡；否则回退到默认排除逻辑
+# 默认排除规则会自动过滤掉 lo、docker0、veth*、tun* 等虚拟网卡
+# dynamic_summary_select_network_interface = ["eth0", "eth1"]
+
 # 服务器列表
 # 可指定多个，以连接多个 Servers
 [[server]]
@@ -130,3 +140,27 @@ server_uuid = "00000000-0000-0000-0000-000000000000"
 token = "test_server2_token"
 ws_url = "ws://nodeget-secondary.example.com:2211/"
 ```
+
+## `dynamic_summary_select_disk` 与 `dynamic_summary_select_network_interface`
+
+这两个字段用于控制 **Dynamic Summary**（动态监控摘要）中磁盘和网卡的统计范围，属于**可选配置**，留空或注释掉时会回退到默认行为。
+
+- **`dynamic_summary_select_disk`**：按磁盘的 `mount_point`（挂载点）进行白名单匹配，例如 `["/", "/data"]` 表示只统计根目录和
+  `/data` 的磁盘数据
+- **`dynamic_summary_select_network_interface`**：按网卡的 `interface_name`（接口名）进行白名单匹配，例如 `["eth0", "eth1"]`
+  表示只统计 `eth0` 和 `eth1` 的网络流量
+
+### 回退行为
+
+- 若字段存在且数组**非空**，则仅统计列表中指定的项，其他项不参与汇总计算
+- 若字段不存在、为空数组，或被注释掉，则回退到默认排除逻辑：
+    - **磁盘**：自动过滤 `tmpfs`、`devtmpfs`、`proc`、`sysfs`、`cgroup` 等虚拟/临时文件系统
+    - **网卡**：自动过滤 `lo`、`docker0`、`veth*`、`tun*`、`br-*` 等虚拟/隧道网卡
+
+### 使用场景
+
+适合需要精确控制 Summary 数据的场景，例如：
+
+- 服务器只有部分磁盘需要监控（如只关注数据盘而排除系统盘）
+- 云服务器有多张网卡，只希望统计特定网卡流量（如只统计公网网卡）
+- 默认排除规则过滤了你实际想监控的项（如自定义命名的虚拟网卡）

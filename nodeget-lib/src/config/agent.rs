@@ -47,6 +47,14 @@ pub struct AgentConfig {
     // NTP 服务器地址，默认使用 pool.ntp.org
     pub ntp_server: Option<String>,
 
+    // Disk 选择列表（按 mount_point 匹配），用于 Dynamic Summary 上报
+    // 若指定且非空，则仅统计列表中的磁盘；否则回退到默认排除逻辑
+    pub dynamic_summary_select_disk: Option<Vec<String>>,
+
+    // 网卡选择列表（按 interface_name 匹配），用于 Dynamic Summary 上报
+    // 若指定且非空，则仅统计列表中的网卡；否则回退到默认排除逻辑
+    pub dynamic_summary_select_network_interface: Option<Vec<String>>,
+
     // 服务器列表
     pub server: Option<Vec<Server>>,
 }

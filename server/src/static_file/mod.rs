@@ -244,6 +244,7 @@ pub async fn update_static(
     new_path: String,
     new_is_http_root: bool,
     new_cors: bool,
+    new_enable: Option<bool>,
 ) -> anyhow::Result<static_entity::Model> {
     let db = get_db()?;
     let name_trimmed = name.trim().to_owned();
@@ -277,6 +278,7 @@ pub async fn update_static(
     active_model.path = Set(new_path_trimmed.clone());
     active_model.is_http_root = Set(new_is_http_root);
     active_model.cors = Set(new_cors);
+    active_model.enable = Set(new_enable);
 
     let updated = active_model.update(db).await.map_err(|e| {
         error!(target: "static", name = %name_trimmed, error = %e, "failed to update static");

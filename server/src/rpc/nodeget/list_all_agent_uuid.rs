@@ -94,13 +94,10 @@ async fn resolve_list_agent_uuid_permission(
 
     for limit in &token_info.token_limit {
         #[allow(deprecated)]
-        let has_list_permission = limit
-            .permissions
-            .iter()
-            .any(|perm| {
-                matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid))
-                    || matches!(perm, Permission::MonitoringUuid(MonitoringUuid::List))
-            });
+        let has_list_permission = limit.permissions.iter().any(|perm| {
+            matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid))
+                || matches!(perm, Permission::MonitoringUuid(MonitoringUuid::List))
+        });
 
         if has_list_permission {
             if limit
@@ -120,13 +117,10 @@ async fn resolve_list_agent_uuid_permission(
 
         // "可操作" = 对该 AgentUuid Scope 至少拥有一种非 list 权限
         #[allow(deprecated)]
-        let has_any_operation_permission = limit
-            .permissions
-            .iter()
-            .any(|perm| {
-                !matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid))
-                    && !matches!(perm, Permission::MonitoringUuid(MonitoringUuid::List))
-            });
+        let has_any_operation_permission = limit.permissions.iter().any(|perm| {
+            !matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid))
+                && !matches!(perm, Permission::MonitoringUuid(MonitoringUuid::List))
+        });
 
         if has_any_operation_permission {
             for scope in &limit.scopes {

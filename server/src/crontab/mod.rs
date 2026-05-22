@@ -3,7 +3,6 @@ mod server_cron;
 mod task;
 
 use crate::DB;
-use crate::db_connection::clean_up::cleanup_expired_data;
 use crate::entity::{crontab, crontab_result};
 use crate::rpc::js_worker::service::enqueue_defined_js_worker_run;
 use cache::CrontabCache;
@@ -194,10 +193,6 @@ async fn run_job_logic(job: Cron) {
             task::crontab_task(job.id, job.name, uuids, task_event_type).await;
         }
 
-        CronType::Server(ServerCronType::CleanUpDatabase) => {
-            info!(target: "crontab", "running cleanup_database job");
-            run_cleanup_database_job(job.id, job.name).await;
-        }
         CronType::Server(ServerCronType::JsWorker(js_script_name, params)) => {
             info!(
                 target: "crontab",
@@ -206,79 +201,6 @@ async fn run_job_logic(job: Cron) {
             );
             run_js_worker_job(job.id, job.name, js_script_name, params).await;
         }
-    }
-}
-
-/// 运行数据库清理任务并记录结果
-async fn run_cleanup_database_job(cron_id: i64, cron_name: String) {
-    info!(target: "crontab", cron_id = cron_id, cron_name = %cron_name, "running database cleanup job");
-    let Some(db) = DB.get() else {
-        error!(target: "crontab", cron_id, cron_name = %cron_name, "DB not initialized for cleanup job");
-        return;
-    };
-
-    // 执行清理
-    let (success, message) = match cleanup_expired_data().await {
-        Ok(result) => {
-            info!(
-                target: "crontab",
-                cron_id,
-                cron_name = %cron_name,
-                static_monitoring = result.static_monitoring,
-                dynamic_monitoring = result.dynamic_monitoring,
-                dynamic_monitoring_summary = result.dynamic_monitoring_summary,
-                task = result.task,
-                crontab_result = result.crontab_result,
-                orphaned_static = result.orphaned_static,
-                orphaned_dynamic = result.orphaned_dynamic,
-                orphaned_dynamic_summary = result.orphaned_dynamic_summary,
-                "database cleanup completed"
-            );
-            let msg = format!(
-                "数据库清理完成。已删除：static_monitoring={}，dynamic_monitoring={}，dynamic_monitoring_summary={}，task={}，crontab_result={}，orphaned_static={}，orphaned_dynamic={}，orphaned_dynamic_summary={}",
-                result.static_monitoring,
-                result.dynamic_monitoring,
-                result.dynamic_monitoring_summary,
-                result.task,
-                result.crontab_result,
-                result.orphaned_static,
-                result.orphaned_dynamic,
-                result.orphaned_dynamic_summary
-            );
-            (true, msg)
-        }
-        Err(e) => {
-            error!(
-                target: "crontab",
-                cron_id,
-                cron_name = %cron_name,
-                error = %e,
-                "database cleanup failed"
-            );
-            let msg = format!("数据库清理失败：{e}");
-            (false, msg)
-        }
-    };
-
-    // 记录执行结果到 crontab_result
-    let crontab_log = crontab_result::ActiveModel {
-        id: ActiveValue::NotSet,
-        cron_id: Set(cron_id),
-        cron_name: Set(cron_name.clone()),
-        relative_id: Set(None),
-        run_time: Set(Some(Utc::now().timestamp_millis())),
-        success: Set(Some(success)),
-        message: Set(Some(message)),
-    };
-
-    if let Err(e) = crontab_result::Entity::insert(crontab_log).exec(db).await {
-        error!(
-            target: "crontab",
-            cron_id,
-            cron_name = %cron_name,
-            error = %e,
-            "failed to save crontab_result for cleanup job"
-        );
     }
 }
 

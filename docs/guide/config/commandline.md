@@ -44,4 +44,4 @@ Options:
   ./nodeget-agent -c config.toml --dry-run
   ```
 
-  `--dry-run` 模式会执行一次静态和动态监控数据采集并打印输出结果，用于在连接 Server 前验证 Agent 的监控功能是否正常工作，输出完成后进程退出。
+`--dry-run` 模式会执行一次静态和动态监控数据采集并打印输出结果，用于在连接 Server 前验证 Agent 的监控功能是否正常工作，输出完成后进程退出。
