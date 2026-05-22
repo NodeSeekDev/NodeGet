@@ -32,11 +32,24 @@ export default [
                 text: 'Docker',
                 link: '/guide/install/docker.md'
             },
+        ]
+    },
+    {
+        text: '公开探主题',
+        link: '/guide/theme/index.md',
+        items: [
             {
-                text: '部署 Status Show (公共前端)',
-                link: '/guide/install/status-show.md'
+                text: '一键安装',
+                link: '/guide/theme/quick-install.md'
             },
-
+            {
+                text: 'cloudflare 部署',
+                link: '/guide/theme/cloudflare.md'
+            },
+            {
+                text: '历史版本',
+                link: '/guide/theme/old-status-show.md'
+            },
         ]
     },
     {

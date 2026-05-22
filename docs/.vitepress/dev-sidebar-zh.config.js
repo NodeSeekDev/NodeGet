@@ -7,6 +7,10 @@ export default [
                 link: '/dev/theme/index.md'
             },
             {
+                text: '分发服务',
+                link: '/dev/theme/distribution.md'
+            },
+            {
                 text: '优秀主题',
                 link: '/dev/theme/awesome-theme.md'
             },
