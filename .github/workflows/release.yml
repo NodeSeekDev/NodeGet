@@ -81,7 +81,7 @@ jobs:
             suffix: linux-aarch64-gnu
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -114,7 +114,7 @@ jobs:
           cp "target/${{ matrix.platform.target }}/minimal/nodeget-server" "dist/nodeget-server-${{ matrix.platform.suffix }}"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-linux-${{ matrix.platform.target }}
           path: dist/*
@@ -127,7 +127,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -148,7 +148,7 @@ jobs:
           Copy-Item target\x86_64-pc-windows-msvc\minimal\nodeget-server.exe dist\nodeget-server-windows-x86_64.exe
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows-x86_64-pc-windows-msvc
           path: dist/*
@@ -161,7 +161,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -182,7 +182,7 @@ jobs:
           cp target/aarch64-apple-darwin/minimal/nodeget-server dist/nodeget-server-macos-aarch64
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-macos-aarch64-apple-darwin
           path: dist/*
@@ -202,14 +202,14 @@ jobs:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist
           merge-multiple: true
 
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: NodeGet ${{ needs.prepare.outputs.tag }}
@@ -234,7 +234,7 @@ jobs:
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check Docker Hub credentials
         shell: bash
@@ -243,13 +243,13 @@ jobs:
           test -n "${DOCKERHUB_TOKEN}"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ env.DOCKERHUB_USERNAME }}
@@ -257,7 +257,7 @@ jobs:
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -265,7 +265,7 @@ jobs:
             type=raw,value=${{ needs.prepare.outputs.tag }}
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
