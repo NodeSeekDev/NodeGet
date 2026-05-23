@@ -1,7 +1,7 @@
 use crate::utils::version::NodeGetVersion;
 
 #[cfg(feature = "for-agent")]
-const ARCH_NAME: [(&str, &str); 24] = [
+const ARCH_NAME: [(&str, &str); 25] = [
     // Linux x86_64
     (
         "x86_64-unknown-linux-musl",
@@ -85,6 +85,7 @@ const ARCH_NAME: [(&str, &str); 24] = [
         "nodeget-agent-windows-aarch64.exe",
     ),
     // macOS
+    ("x86_64-apple-darwin", "nodeget-agent-macos-x86_64"),
     ("aarch64-apple-darwin", "nodeget-agent-macos-aarch64"),
 ];
 

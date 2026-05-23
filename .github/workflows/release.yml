@@ -69,16 +69,28 @@ jobs:
         platform:
           - release_for: x86_64-musl
             target: x86_64-unknown-linux-musl
-            suffix: linux-x86_64-musl
+            packages: [agent, server]
           - release_for: x86_64-gnu
             target: x86_64-unknown-linux-gnu
-            suffix: linux-x86_64-gnu
+            packages: [agent, server]
           - release_for: aarch64-musl
             target: aarch64-unknown-linux-musl
-            suffix: linux-aarch64-musl
+            packages: [agent, server]
           - release_for: aarch64-gnu
             target: aarch64-unknown-linux-gnu
-            suffix: linux-aarch64-gnu
+            packages: [agent, server]
+          - release_for: armv7-musleabihf
+            target: armv7-unknown-linux-musleabihf
+            packages: [agent]
+          - release_for: armv7-gnueabihf
+            target: armv7-unknown-linux-gnueabihf
+            packages: [agent]
+          - release_for: arm-musleabihf
+            target: arm-unknown-linux-musleabihf
+            packages: [agent]
+          - release_for: i686-musl
+            target: i686-unknown-linux-musl
+            packages: [agent]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -101,17 +113,34 @@ jobs:
             | tar -xz -C "${HOME}/.local/bin"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
-      - name: Build binaries
+      - name: Build selected packages
+        env:
+          TARGET: ${{ matrix.platform.target }}
+          BUILD_AGENT: ${{ contains(matrix.platform.packages, 'agent') }}
+          BUILD_SERVER: ${{ contains(matrix.platform.packages, 'server') }}
         run: |
-          cross build --package nodeget-agent --target "${{ matrix.platform.target }}" --profile minimal --locked
-          cross build --package nodeget-server --target "${{ matrix.platform.target }}" --profile minimal --locked
+          if [ "${BUILD_AGENT}" = "true" ]; then
+            cross build --package nodeget-agent --target "${TARGET}" --profile minimal --locked
+          fi
+          if [ "${BUILD_SERVER}" = "true" ]; then
+            cross build --package nodeget-server --target "${TARGET}" --profile minimal --locked
+          fi
 
       - name: Stage artifacts
         shell: bash
+        env:
+          TARGET: ${{ matrix.platform.target }}
+          SUFFIX: linux-${{ matrix.platform.release_for }}
+          BUILD_AGENT: ${{ contains(matrix.platform.packages, 'agent') }}
+          BUILD_SERVER: ${{ contains(matrix.platform.packages, 'server') }}
         run: |
           mkdir -p dist
-          cp "target/${{ matrix.platform.target }}/minimal/nodeget-agent" "dist/nodeget-agent-${{ matrix.platform.suffix }}"
-          cp "target/${{ matrix.platform.target }}/minimal/nodeget-server" "dist/nodeget-server-${{ matrix.platform.suffix }}"
+          if [ "${BUILD_AGENT}" = "true" ]; then
+            cp "target/${TARGET}/minimal/nodeget-agent" "dist/nodeget-agent-${SUFFIX}"
+          fi
+          if [ "${BUILD_SERVER}" = "true" ]; then
+            cp "target/${TARGET}/minimal/nodeget-server" "dist/nodeget-server-${SUFFIX}"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -122,9 +151,19 @@ jobs:
           retention-days: 14
 
   build-windows:
-    name: Windows x86_64
+    name: Windows ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - release_for: x86_64
+            target: x86_64-pc-windows-msvc
+            packages: [agent, server]
+          - release_for: aarch64
+            target: aarch64-pc-windows-msvc
+            packages: [agent]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -132,33 +171,58 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          targets: x86_64-pc-windows-msvc
-          cache-shared-key: release-windows-x86_64-pc-windows-msvc
+          targets: ${{ matrix.platform.target }}
+          cache-shared-key: release-windows-${{ matrix.platform.target }}
 
-      - name: Build binaries
+      - name: Build selected packages
         run: |
-          cargo build --package nodeget-agent --target x86_64-pc-windows-msvc --profile minimal --locked
-          cargo build --package nodeget-server --target x86_64-pc-windows-msvc --profile minimal --locked
+          $target = "${{ matrix.platform.target }}"
+          $buildAgent = "${{ contains(matrix.platform.packages, 'agent') }}" -eq "true"
+          $buildServer = "${{ contains(matrix.platform.packages, 'server') }}" -eq "true"
+          if ($buildAgent) {
+            cargo build --package nodeget-agent --target $target --profile minimal --locked
+          }
+          if ($buildServer) {
+            cargo build --package nodeget-server --target $target --profile minimal --locked
+          }
 
       - name: Stage artifacts
         shell: pwsh
         run: |
+          $target = "${{ matrix.platform.target }}"
+          $suffix = "windows-${{ matrix.platform.release_for }}.exe"
+          $buildAgent = "${{ contains(matrix.platform.packages, 'agent') }}" -eq "true"
+          $buildServer = "${{ contains(matrix.platform.packages, 'server') }}" -eq "true"
           New-Item -ItemType Directory -Force -Path dist
-          Copy-Item target\x86_64-pc-windows-msvc\minimal\nodeget-agent.exe dist\nodeget-agent-windows-x86_64.exe
-          Copy-Item target\x86_64-pc-windows-msvc\minimal\nodeget-server.exe dist\nodeget-server-windows-x86_64.exe
+          if ($buildAgent) {
+            Copy-Item "target\$target\minimal\nodeget-agent.exe" "dist\nodeget-agent-$suffix"
+          }
+          if ($buildServer) {
+            Copy-Item "target\$target\minimal\nodeget-server.exe" "dist\nodeget-server-$suffix"
+          }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: release-windows-x86_64-pc-windows-msvc
+          name: release-windows-${{ matrix.platform.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
 
   build-macos:
-    name: macOS aarch64
+    name: macOS ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - release_for: aarch64
+            target: aarch64-apple-darwin
+            packages: [agent, server]
+          - release_for: x86_64
+            target: x86_64-apple-darwin
+            packages: [agent]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -166,25 +230,42 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          targets: aarch64-apple-darwin
-          cache-shared-key: release-macos-aarch64-apple-darwin
+          targets: ${{ matrix.platform.target }}
+          cache-shared-key: release-macos-${{ matrix.platform.target }}
 
-      - name: Build binaries
+      - name: Build selected packages
+        env:
+          TARGET: ${{ matrix.platform.target }}
+          BUILD_AGENT: ${{ contains(matrix.platform.packages, 'agent') }}
+          BUILD_SERVER: ${{ contains(matrix.platform.packages, 'server') }}
         run: |
-          cargo build --package nodeget-agent --target aarch64-apple-darwin --profile minimal --locked
-          cargo build --package nodeget-server --target aarch64-apple-darwin --profile minimal --locked
+          if [ "${BUILD_AGENT}" = "true" ]; then
+            cargo build --package nodeget-agent --target "${TARGET}" --profile minimal --locked
+          fi
+          if [ "${BUILD_SERVER}" = "true" ]; then
+            cargo build --package nodeget-server --target "${TARGET}" --profile minimal --locked
+          fi
 
       - name: Stage artifacts
         shell: bash
+        env:
+          TARGET: ${{ matrix.platform.target }}
+          SUFFIX: macos-${{ matrix.platform.release_for }}
+          BUILD_AGENT: ${{ contains(matrix.platform.packages, 'agent') }}
+          BUILD_SERVER: ${{ contains(matrix.platform.packages, 'server') }}
         run: |
           mkdir -p dist
-          cp target/aarch64-apple-darwin/minimal/nodeget-agent dist/nodeget-agent-macos-aarch64
-          cp target/aarch64-apple-darwin/minimal/nodeget-server dist/nodeget-server-macos-aarch64
+          if [ "${BUILD_AGENT}" = "true" ]; then
+            cp "target/${TARGET}/minimal/nodeget-agent" "dist/nodeget-agent-${SUFFIX}"
+          fi
+          if [ "${BUILD_SERVER}" = "true" ]; then
+            cp "target/${TARGET}/minimal/nodeget-server" "dist/nodeget-server-${SUFFIX}"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: release-macos-aarch64-apple-darwin
+          name: release-macos-${{ matrix.platform.target }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
