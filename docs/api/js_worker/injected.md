@@ -46,22 +46,11 @@ const res = await execSql(token,
 );
 ```
 
-**SQL 占位符差异：**
-- **SQLite**: 使用 `?`
-- **PostgreSQL**: 使用 `$1`, `$2`, ...
-
 ### `getDatabaseType` 使用说明
 
 ```javascript
 const { data: dbType } = await getDatabaseType(token);
 // dbType: "sqlite" | "postgres"
-```
-
-建议先检测数据库类型再编写适配的 SQL：
-```javascript
-const { data: dbType } = await getDatabaseType(token);
-const placeholder = dbType === "postgres" ? "$1" : "?";
-const res = await execSql(token, `SELECT * FROM users WHERE age > ${placeholder}`, [18]);
 ```
 
 ### runtimeCtx（handler 第三参数）

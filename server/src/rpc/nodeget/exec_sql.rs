@@ -7,7 +7,7 @@ use nodeget_lib::permission::data_structure::{
     NodeGet as NodeGetPermission, Permission, Scope,
 };
 use nodeget_lib::permission::token_auth::TokenOrAuth;
-use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde_json::Value;
 use serde_json::value::RawValue;
 use tracing::{debug, warn};
@@ -60,10 +60,7 @@ pub async fn exec_sql(
 
         let response = if is_select {
             let rows = db.query_all_raw(stmt).await?;
-            let json_rows: Vec<Value> = rows
-                .iter()
-                .filter_map(|r| Value::from_query_result(r, "").ok())
-                .collect();
+            let json_rows: Vec<Value> = rows.iter().map(row_to_json).collect();
 
             serde_json::json!({
                 "success": true,
@@ -176,4 +173,60 @@ fn json_to_sea_value(v: &Value) -> sea_orm::Value {
                 .unwrap_or_else(|_| sea_orm::Value::String(Some(String::from("__invalid_json__"))))
         }
     }
+}
+
+fn row_to_json(r: &sea_orm::QueryResult) -> Value {
+    let columns = r.column_names();
+    let mut map = serde_json::Map::new();
+    for col in &columns {
+        let val = try_column_as_json(r, col);
+        map.insert(col.clone(), val);
+    }
+    Value::Object(map)
+}
+
+fn try_column_as_json(r: &sea_orm::QueryResult, col: &str) -> Value {
+    if let Ok(v) = r.try_get::<Option<String>>("", col) {
+        return match v {
+            Some(s) => Value::String(s),
+            None => Value::Null,
+        };
+    }
+    if let Ok(v) = r.try_get::<Option<i64>>("", col) {
+        return match v {
+            Some(n) => serde_json::json!(n),
+            None => Value::Null,
+        };
+    }
+    if let Ok(v) = r.try_get::<Option<u32>>("", col) {
+        return match v {
+            Some(n) => serde_json::json!(n),
+            None => Value::Null,
+        };
+    }
+    if let Ok(v) = r.try_get::<Option<f64>>("", col) {
+        return match v {
+            Some(n) => serde_json::json!(n),
+            None => Value::Null,
+        };
+    }
+    if let Ok(v) = r.try_get::<Option<bool>>("", col) {
+        return match v {
+            Some(b) => Value::Bool(b),
+            None => Value::Null,
+        };
+    }
+    if let Ok(v) = r.try_get::<Option<Vec<u8>>>("", col) {
+        return match v {
+            Some(bytes) => serde_json::json!(hex::encode(&bytes)),
+            None => Value::Null,
+        };
+    }
+    if let Ok(v) = r.try_get::<Option<serde_json::Value>>("", col) {
+        return match v {
+            Some(j) => j,
+            None => Value::Null,
+        };
+    }
+    Value::Null
 }

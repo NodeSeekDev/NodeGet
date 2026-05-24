@@ -757,15 +757,6 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
 - `data` (array): SELECT 查询返回结果行的 JSON 数组；INSERT/UPDATE/DELETE/DDL 返回空数组 `[]`
 - `row_count` (number): SELECT 返回的行数，或 DML 语句的影响行数
 
-### SQL 占位符差异
-
-不同数据库后端的占位符语法:
-
-- **SQLite**: 使用 `?` 作为占位符
-- **PostgreSQL**: 使用 `$1`, `$2`, ... 作为占位符
-
-建议先调用 `get_database_type` 获取类型后再编写适配的 SQL。
-
 ### 完整示例
 
 **SELECT 查询:**
@@ -777,7 +768,7 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
   "method": "nodeget-server_exec_sql",
   "params": {
     "token": "demo_token",
-    "sql": "SELECT id, name, age FROM users WHERE age > ?",
+    "sql": "SELECT id, name, age FROM users WHERE age > $1",
     "params": [18]
   },
   "id": 1
@@ -809,7 +800,7 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
   "method": "nodeget-server_exec_sql",
   "params": {
     "token": "demo_token",
-    "sql": "INSERT INTO users (name, age) VALUES (?, ?)",
+    "sql": "INSERT INTO users (name, age) VALUES ($1, $2)",
     "params": ["Charlie", 22]
   },
   "id": 2
@@ -838,7 +829,7 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
   "method": "nodeget-server_exec_sql",
   "params": {
     "token": "demo_token",
-    "sql": "UPDATE users SET age = ? WHERE name = ?",
+    "sql": "UPDATE users SET age = $1 WHERE name = $2",
     "params": [23, "Charlie"]
   },
   "id": 3
@@ -867,7 +858,7 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
   "method": "nodeget-server_exec_sql",
   "params": {
     "token": "demo_token",
-    "sql": "DELETE FROM users WHERE id = ?",
+    "sql": "DELETE FROM users WHERE id = $1",
     "params": [1]
   },
   "id": 4
