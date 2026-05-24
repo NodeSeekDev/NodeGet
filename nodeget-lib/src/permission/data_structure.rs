@@ -43,6 +43,8 @@ pub enum Scope {
     JsWorker(String),
     // 静态文件服务 Bucket 作用域，通过 bucket 名称指定
     StaticBucket(String),
+    // 本地数据库作用域，通过数据库名称指定
+    Db(String),
 }
 
 // 权限枚举，定义不同类型的操作权限
@@ -81,6 +83,8 @@ pub enum Permission {
     StaticBucket(StaticBucket),
     // 静态文件服务 Bucket 内文件操作权限（上传/读取/删除/重命名/列出文件）
     StaticBucketFile(StaticBucketFile),
+    // 本地数据库管理权限
+    Db(Db),
 }
 
 // NodeGet 权限枚举
@@ -238,4 +242,16 @@ pub enum StaticBucketFile {
     Write,
     Delete,
     List,
+}
+
+// 本地数据库管理权限枚举
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Db {
+    List,
+    Read,
+    Create,
+    Update,
+    Delete,
+    ExecSql,
 }

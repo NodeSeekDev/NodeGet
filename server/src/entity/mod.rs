@@ -4,6 +4,7 @@ pub mod prelude;
 
 pub mod crontab;
 pub mod crontab_result;
+pub mod db_registry;
 pub mod dynamic_monitoring;
 pub mod dynamic_monitoring_summary;
 pub mod js_result;

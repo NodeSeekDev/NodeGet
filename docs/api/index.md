@@ -19,3 +19,4 @@ outline: deep
 - [Js Result](./js_result/index.md)
 - [Kv](./kv/index.md)
 - [Agent UUID](./agent_uuid/index.md)
+- [Db](./db/index.md)

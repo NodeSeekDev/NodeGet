@@ -6,9 +6,8 @@ use nodeget_lib::monitoring::data_structure::{
     DynamicMonitoringData, DynamicMonitoringSummaryData, StaticMonitoringData,
 };
 use nodeget_lib::monitoring::query::{
-    DynamicDataQuery, DynamicDataQueryField,
-    DynamicSummaryQuery, DynamicSummaryQueryField, QueryCondition,
-    StaticDataQuery, StaticDataQueryField,
+    DynamicDataQuery, DynamicDataQueryField, DynamicSummaryQuery, DynamicSummaryQueryField,
+    QueryCondition, StaticDataQuery, StaticDataQueryField,
 };
 use serde_json::value::RawValue;
 use tracing::Instrument;

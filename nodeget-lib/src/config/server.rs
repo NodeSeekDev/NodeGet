@@ -46,6 +46,9 @@ pub struct ServerConfig {
 
     // 静态文件服务根目录，默认 `./static/`
     pub static_path: Option<String>,
+
+    // 本地 SQLite 数据库存放目录，默认 `./db/`
+    pub db_path: Option<String>,
 }
 
 /// 监控数据缓冲写入配置

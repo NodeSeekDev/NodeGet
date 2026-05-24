@@ -3,9 +3,7 @@ use crate::rpc::token_identity;
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::error::NodegetError;
-use nodeget_lib::permission::data_structure::{
-    NodeGet as NodeGetPermission, Permission, Scope,
-};
+use nodeget_lib::permission::data_structure::{NodeGet as NodeGetPermission, Permission, Scope};
 use nodeget_lib::permission::token_auth::TokenOrAuth;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde_json::Value;
@@ -39,24 +37,30 @@ pub async fn exec_sql(
             .into());
         }
 
-        let db = DB.get().ok_or_else(|| {
-            NodegetError::DatabaseError("Database not initialized".to_owned())
-        })?;
+        let db = DB
+            .get()
+            .ok_or_else(|| NodegetError::DatabaseError("Database not initialized".to_owned()))?;
 
         let db_backend = db.get_database_backend();
         let sea_values = match params {
             Some(Value::Array(arr)) => arr.iter().map(json_to_sea_value).collect(),
             Some(Value::Null) | None => vec![],
             _ => {
-                return Err(NodegetError::InvalidInput("params must be an array".to_owned())
-                    .into());
+                return Err(
+                    NodegetError::InvalidInput("params must be an array".to_owned()).into(),
+                );
             }
         };
 
         let stmt = Statement::from_sql_and_values(db_backend, &sql, sea_values);
 
-        let upper = sql.trim_start_matches(|c| c == ' ' || c == '(' || c == ';').to_uppercase();
-        let is_select = upper.starts_with("SELECT") || upper.starts_with("PRAGMA") || upper.starts_with("EXPLAIN") || upper.starts_with("WITH");
+        let upper = sql
+            .trim_start_matches(|c| c == ' ' || c == '(' || c == ';')
+            .to_uppercase();
+        let is_select = upper.starts_with("SELECT")
+            || upper.starts_with("PRAGMA")
+            || upper.starts_with("EXPLAIN")
+            || upper.starts_with("WITH");
 
         let response = if is_select {
             let rows = db.query_all_raw(stmt).await?;
@@ -118,9 +122,9 @@ pub async fn get_database_type(token: String) -> RpcResult<Box<RawValue>> {
             .into());
         }
 
-        let db = DB.get().ok_or_else(|| {
-            NodegetError::DatabaseError("Database not initialized".to_owned())
-        })?;
+        let db = DB
+            .get()
+            .ok_or_else(|| NodegetError::DatabaseError("Database not initialized".to_owned()))?;
 
         let db_type = match db.get_database_backend() {
             DbBackend::Sqlite => "sqlite",
@@ -167,11 +171,9 @@ fn json_to_sea_value(v: &Value) -> sea_orm::Value {
             }
         }
         Value::String(s) => sea_orm::Value::String(Some(s.clone())),
-        Value::Array(_) | Value::Object(_) => {
-            serde_json::to_string(v)
-                .map(|s| sea_orm::Value::Json(Some(Box::new(serde_json::Value::String(s)))))
-                .unwrap_or_else(|_| sea_orm::Value::String(Some(String::from("__invalid_json__"))))
-        }
+        Value::Array(_) | Value::Object(_) => serde_json::to_string(v)
+            .map(|s| sea_orm::Value::Json(Some(Box::new(serde_json::Value::String(s)))))
+            .unwrap_or_else(|_| sea_orm::Value::String(Some(String::from("__invalid_json__")))),
     }
 }
 

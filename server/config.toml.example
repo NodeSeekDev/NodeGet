@@ -1,4 +1,4 @@
-# WebSocket 监听地址，同时也会监听 Http 服务
+# WebSocket 监听地址，同时也会监听 HTTP 服务
 ws_listener = "0.0.0.0:2211"
 
 # JSON-RPC 最大连接数，默认 100
@@ -18,8 +18,8 @@ enable_unix_socket = false
 # 若 enable_unix_socket = true 且不配置该项，则默认 /var/lib/nodeget.sock
 unix_socket_path = "/var/lib/nodeget.sock"
 
-# Server 的 Uuid，建议设置为 auto_gen 以自动生成，根据系统环境自动生成，可保证数据不冲突（概率极小）
-# 如果不是 auto_gen，请自行确保 Uuid 唯一，否则可能导致数据混乱或 UB
+# Server 的 UUID，建议设置为 auto_gen 以自动生成，根据系统环境自动生成，可保证数据不冲突（概率极小）
+# 如果不是 auto_gen，请自行确保 UUID 唯一，否则可能导致数据混乱或 UB
 server_uuid = "auto_gen"
 
 # TLS 配置（可选）
@@ -27,6 +27,10 @@ server_uuid = "auto_gen"
 # 文件应为 PEM 格式
 # tls_cert = "/path/to/fullchain.pem"
 # tls_key = "/path/to/privkey.pem"
+
+# 静态文件服务根目录，默认 `./static/`
+# 所有 Bucket 的磁盘路径都基于此目录拼接
+# static_path = "./static/"
 
 # 日志配置（可选，整个 [logging] 段不填则使用默认值）
 [logging]
@@ -48,7 +52,7 @@ log_filter = "info"
 # JSON 日志过滤器，语法同 RUST_LOG（可选，默认与 log_filter 相同）
 # 可独立控制写入文件的日志级别，例如文件记录更详细的日志
 # 注意：如果未设置且设置了 RUST_LOG 环境变量，则 RUST_LOG 的值也会作为此项的默认值
-# json_log_filter = "debug,rpc=trace,db=info"
+# json_log_filter = "debug,kv=trace,db=info"
 
 # 内存日志缓冲区容量（条数），默认 500，设为 0 表示禁用内存日志
 # 通过 nodeget-server_log RPC 方法可查询缓冲区内容（需要 SuperToken）
@@ -57,6 +61,9 @@ log_filter = "info"
 # 内存日志过滤器，语法同 RUST_LOG（可选，默认与 log_filter 相同）
 # 注意：如果未设置且设置了 RUST_LOG 环境变量，则 RUST_LOG 的值也会作为此项的默认值
 # memory_log_filter = "info"
+
+# 流式日志订阅（nodeget-server_stream_log）的过滤器不在此处配置，
+# 而是由客户端在订阅时通过 log_filter 参数指定，详见 API 文档
 
 # 监控数据缓冲写入配置（可选，整个 [monitoring_buffer] 段不填则使用默认值）
 # 启用后，Agent 上报的监控数据会先缓存在内存中，按间隔批量写入数据库，减少 DB 压力
@@ -72,10 +79,10 @@ log_filter = "info"
 [database]
 
 # 数据库地址
-# 目前支持 sqlite / pgsql
-# 优先使用 pgsql
-# sqlite 示例: sqlite://nodeget.db?mode=rwc
-# pgsql 示例: postgres://user:pass@host:5432/nodeget
+# 目前支持 SQLite / PostgreSQL
+# 优先使用 PostgreSQL
+# SQLite 示例: sqlite://nodeget.db?mode=rwc
+# PostgreSQL 示例: postgres://user:pass@host:5432/nodeget
 database_url = "postgres://user:pass@host:5432/nodeget"
 
 # 连接超时，单位毫秒，默认 3000

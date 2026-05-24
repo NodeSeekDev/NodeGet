@@ -209,25 +209,38 @@ export const themeZhConfig = {
                     link: '/api/kv/special.md'
                 }]
             },
-            // Static
+             // Static
+             {
+                 text: 'Static',
+                 collapsed: false,
+                 items: [{
+                     text: 'Bucket 配置管理',
+                     link: '/api/static_bucket/index.md'
+                 },
+                 {
+                     text: 'Bucket 配置 CRUD',
+                     link: '/api/static_bucket/crud.md'
+                 },
+                 {
+                     text: 'Bucket File 文件操作',
+                     link: '/api/static_bucket_file/index.md'
+                 },
+                 {
+                     text: 'Bucket File 文件 CRUD',
+                     link: '/api/static_bucket_file/crud.md'
+                 }]
+			},
+            // Db
             {
-                text: 'Static',
+                text: 'Db',
                 collapsed: false,
                 items: [{
-                    text: 'Bucket 配置管理',
-                    link: '/api/static_bucket/index.md'
+                    text: '介绍',
+                    link: '/api/db/index.md'
                 },
                 {
-                    text: 'Bucket 配置 CRUD',
-                    link: '/api/static_bucket/crud.md'
-                },
-                {
-                    text: 'Bucket File 文件操作',
-                    link: '/api/static_bucket_file/index.md'
-                },
-                {
-                    text: 'Bucket File 文件 CRUD',
-                    link: '/api/static_bucket_file/crud.md'
+                    text: 'CRUD 操作',
+                    link: '/api/db/crud.md'
                 }]
 			}]
 		}]

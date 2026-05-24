@@ -24,7 +24,7 @@ enable_unix_socket = false
 unix_socket_path = "/var/lib/nodeget.sock"
 
 # Server 的 Uuid，建议设置为 auto_gen，首次启动时会随机生成并持久化到配置文件
-# 如果不是 auto_gen，请自行确保 Uuid 唯一，否则可能导致数据混乱或 UB
+# 如果不是 auto_gen，请自行确保 UUID 唯一，否则可能导致数据混乱或 UB
 server_uuid = "auto_gen"
 
 # TLS 配置（可选）
@@ -52,22 +52,22 @@ log_filter = "info"
 
 # JSON 格式日志输出文件路径（可选，不设置则不输出 JSON 日志）
 # 适用于日志采集（如 ELK、Loki 等）
-json_log_file = "/var/log/nodeget/server.json"
+# json_log_file = "/var/log/nodeget/server.json"
 
 # JSON 日志过滤器，语法同 RUST_LOG（可选，默认与 log_filter 相同）
 # 可独立控制写入文件的日志级别，例如文件记录更详细的日志
 # 注意：如果未设置且设置了 RUST_LOG 环境变量，则 RUST_LOG 的值也会作为此项的默认值
-json_log_filter = "debug,kv=trace,db=info"
+# json_log_filter = "debug,kv=trace,db=info"
 
 # 内存日志缓冲区容量（条数），默认 500，设为 0 表示禁用内存日志
 # 通过 nodeget-server_log RPC 方法可查询缓冲区内容（需要 SuperToken）
-memory_log_capacity = 500
+# memory_log_capacity = 500
 
 # 内存日志过滤器，语法同 RUST_LOG（可选，默认与 log_filter 相同）
 # 注意：如果未设置且设置了 RUST_LOG 环境变量，则 RUST_LOG 的值也会作为此项的默认值
-memory_log_filter = "info"
+# memory_log_filter = "info"
 
-# 注意：流式日志订阅（nodeget-server_stream_log）的过滤器不在此处配置，
+# 流式日志订阅（nodeget-server_stream_log）的过滤器不在此处配置，
 # 而是由客户端在订阅时通过 log_filter 参数指定，详见 API 文档
 
 # 监控数据缓冲写入配置（可选，整个 [monitoring_buffer] 段不填则使用默认值）
@@ -75,10 +75,10 @@ memory_log_filter = "info"
 [monitoring_buffer]
 
 # 刷新间隔，单位毫秒，默认 500
-flush_interval_ms = 500
+# flush_interval_ms = 500
 
 # 单次最大批量大小，默认 1000
-max_batch_size = 1000
+# max_batch_size = 1000
 
 # 数据库配置
 [database]
@@ -113,10 +113,10 @@ max_connections = 10
 - 仅在非 Windows 平台生效。
 - `enable_unix_socket = true` 时，Server 会在保留原 `ws_listener` 的同时，额外监听 `unix_socket_path`。
 - `unix_socket_path` 未配置时默认 `/var/lib/nodeget.sock`。
-- Unix Socket 与 TCP 共享同一套 Axum 主路由（包括 JSON-RPC HTTP 路由、`/nodeget/worker-route/*`、`/nodeget/static/*` 等）。
+- Unix Socket 与 TCP 共享同一套路由（包括 JSON-RPC HTTP 路由、`/nodeget/worker-route/*`、`/nodeget/static/*` 等）。
 - 启动时会尝试移除已有同名 socket 文件；服务重载/退出时会清理 socket 文件。
 
-示例（通过 Unix Socket 调用 JSON-RPC）：
+**示例（通过 Unix Socket 调用 JSON-RPC）：**
 
 ```bash
 curl --unix-socket /var/lib/nodeget.sock \
@@ -134,11 +134,11 @@ curl --unix-socket /var/lib/nodeget.sock \
 - 证书文件需为 PEM 格式。支持 `fullchain.pem + privkey.pem` 的常见 Nginx 风格。
 - 若两字段均未配置，默认走明文 HTTP/WS。
 
-示例（通过 HTTPS 调用 JSON-RPC）：
+**示例（通过 HTTPS 调用 JSON-RPC）：**
 
 ```bash
-curl --cacert /path/to/fullchain.pem \
+curl -k \
   -H "content-type: application/json" \
-  -X POST https://127.0.0.1:2211/jsonrpc \
+  -X POST https://127.0.0.1:2211/ \
   -d '{"jsonrpc":"2.0","method":"nodeget-server_hello","params":[],"id":1}'
 ```

@@ -224,6 +224,49 @@ pub(crate) fn init_js_runtime_globals(ctx: &Ctx<'_>) -> Result<(), Error> {
             if (resp.error) throw new Error(resp.error.message);
             return resp.result;
         };
+        globalThis.db = {
+            async create(token, name, opts) {
+                const resp = await nodeget("db_create", { token, name, ...opts });
+                if (resp.error) throw new Error(resp.error.message);
+                return resp.result;
+            },
+            async read(token, name) {
+                const resp = await nodeget("db_read", { token, name });
+                if (resp.error) throw new Error(resp.error.message);
+                return resp.result;
+            },
+            async update(token, name, newName) {
+                const resp = await nodeget("db_update", { token, name, new_name: newName });
+                if (resp.error) throw new Error(resp.error.message);
+                return resp.result;
+            },
+            async remove(token, name) {
+                const resp = await nodeget("db_delete", { token, name });
+                if (resp.error) throw new Error(resp.error.message);
+                return resp.result;
+            },
+            async list(token) {
+                const resp = await nodeget("db_list", { token });
+                if (resp.error) throw new Error(resp.error.message);
+                return resp.result;
+            },
+            async execSql(token, name, sql, params) {
+                const resp = await nodeget("db_exec_sql", {
+                    token, name, sql,
+                    params: params !== undefined && params !== null ? params : null
+                });
+                if (resp.error) throw new Error(resp.error.message);
+                return resp.result;
+            },
+            async execTemplating(token, name, sql, params) {
+                const resp = await nodeget("db_exec_templating", {
+                    token, name, sql,
+                    params: params !== undefined && params !== null ? params : null
+                });
+                if (resp.error) throw new Error(resp.error.message);
+                return resp.result;
+            },
+        };
         "#,
     )?;
     Ok(())

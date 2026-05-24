@@ -59,6 +59,10 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
     crate::monitoring_buffer::init(config.monitoring_buffer.as_ref());
     debug!(target: "server", "Monitoring buffer initialized");
 
+    let db_path = config.db_path.clone().unwrap_or_else(|| "./db/".to_owned());
+    crate::db_registry::DbRegistryManager::init(db_path).await;
+    debug!(target: "server", "DB registry manager initialized");
+
     let rpc_module = get_modules();
 
     let (stop_handle, _server_handle) = jsonrpsee::server::stop_channel();

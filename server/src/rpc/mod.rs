@@ -13,6 +13,7 @@ pub mod agent;
 pub mod agent_uuid;
 pub mod crontab;
 pub mod crontab_result;
+pub mod db;
 pub mod js_result;
 pub mod js_worker;
 pub mod kv;
@@ -114,6 +115,7 @@ fn build_modules() -> RpcModule<NodegetServerRpcImpl> {
     use crate::rpc::agent_uuid::AgentUuidRpcServer;
     use crate::rpc::crontab::RpcServer as CrontabRpcServer;
     use crate::rpc::crontab_result::RpcServer as CrontabResultRpcServer;
+    use crate::rpc::db::RpcServer as DbRpcServer;
     use crate::rpc::js_result::RpcServer as JsResultRpcServer;
     use crate::rpc::js_worker::RpcServer as JsWorkerRpcServer;
     use crate::rpc::kv::RpcServer as KvRpcServer;
@@ -169,6 +171,8 @@ fn build_modules() -> RpcModule<NodegetServerRpcImpl> {
     rpc_module
         .merge(static_bucket_file::StaticBucketFileRpcImpl.into_rpc())
         .unwrap();
+
+    rpc_module.merge(db::DbRpcImpl.into_rpc()).unwrap();
 
     rpc_module
 }

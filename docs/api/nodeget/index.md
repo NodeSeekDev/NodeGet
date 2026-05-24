@@ -17,8 +17,10 @@ NodeGet 是本项目的基础服务接口模块，提供服务端状态查询、
 | [database_storage](./crud.md#database-storage)       | 查询数据库各表存储占用         | SuperToken                  |
 | [log](./crud.md#log)                                 | 查询内存日志缓冲区           | SuperToken                  |
 | [stream_log](./crud.md#stream-log)                   | 实时流式日志订阅（WebSocket） | SuperToken                  |
-| [exec_sql](./crud.md#exec-sql)                       | 执行原始 SQL 语句（参数化查询） | `NodeGet::ExecSql`        |
-| [get_database_type](./crud.md#get-database-type)     | 获取数据库后端类型           | `NodeGet::ExecSql`          |
+| [exec_sql](./crud.md#exec-sql)                       | 在主数据库执行原始 SQL      | `NodeGet::ExecSql`          |
+| [get_database_type](./crud.md#get-database-type)     | 获取主数据库后端类型          | `NodeGet::ExecSql`          |
+
+如需对本地 SQLite 数据库执行 SQL 操作，请使用 [Db 命名空间](../db/index.md)。
 
 ## 版本信息结构体
 

@@ -712,7 +712,7 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
 
 ## Exec SQL
 
-执行原始 SQL 语句，支持参数化查询，返回值统一转换为 JSON 格式。
+执行原始 SQL 语句，支持参数化查询，返回值统一转换为 JSON 格式。作用于**主数据库**（由 `database_url` 配置的数据库）。
 
 ### 方法
 
@@ -734,7 +734,6 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
 - Permission: `NodeGet::ExecSql`
 - Scope 行为:
     - `Global` Scope 下拥有该权限: 可执行任意 SQL
-    - `JsWorker(worker_name)` Scope 下拥有该权限: 可执行 SQL，Worker 名自动限制为当前脚本名称
 
 `token` 支持以下格式之一:
 
@@ -757,186 +756,11 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
 - `data` (array): SELECT 查询返回结果行的 JSON 数组；INSERT/UPDATE/DELETE/DDL 返回空数组 `[]`
 - `row_count` (number): SELECT 返回的行数，或 DML 语句的影响行数
 
-### 完整示例
-
-**SELECT 查询:**
-
-请求:
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "nodeget-server_exec_sql",
-  "params": {
-    "token": "demo_token",
-    "sql": "SELECT id, name, age FROM users WHERE age > $1",
-    "params": [18]
-  },
-  "id": 1
-}
-```
-
-响应:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "success": true,
-    "data": [
-      {"id": 1, "name": "Alice", "age": 25},
-      {"id": 2, "name": "Bob", "age": 30}
-    ],
-    "row_count": 2
-  },
-  "id": 1
-}
-```
-
-**INSERT 查询:**
-
-请求:
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "nodeget-server_exec_sql",
-  "params": {
-    "token": "demo_token",
-    "sql": "INSERT INTO users (name, age) VALUES ($1, $2)",
-    "params": ["Charlie", 22]
-  },
-  "id": 2
-}
-```
-
-响应:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "success": true,
-    "data": [],
-    "row_count": 1
-  },
-  "id": 2
-}
-```
-
-**UPDATE 查询:**
-
-请求:
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "nodeget-server_exec_sql",
-  "params": {
-    "token": "demo_token",
-    "sql": "UPDATE users SET age = $1 WHERE name = $2",
-    "params": [23, "Charlie"]
-  },
-  "id": 3
-}
-```
-
-响应:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "success": true,
-    "data": [],
-    "row_count": 1
-  },
-  "id": 3
-}
-```
-
-**DELETE 查询:**
-
-请求:
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "nodeget-server_exec_sql",
-  "params": {
-    "token": "demo_token",
-    "sql": "DELETE FROM users WHERE id = $1",
-    "params": [1]
-  },
-  "id": 4
-}
-```
-
-响应:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "success": true,
-    "data": [],
-    "row_count": 1
-  },
-  "id": 4
-}
-```
-
-**DDL 查询 (CREATE TABLE):**
-
-请求:
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "nodeget-server_exec_sql",
-  "params": {
-    "token": "demo_token",
-    "sql": "CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY, message TEXT)"
-  },
-  "id": 5
-}
-```
-
-响应:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "success": true,
-    "data": [],
-    "row_count": 0
-  },
-  "id": 5
-}
-```
-
-**错误示例 (权限不足):**
-
-响应:
-```json
-{
-  "jsonrpc": "2.0",
-  "error": {
-    "code": 102,
-    "message": "Permission Denied: Requires NodeGet::ExecSql"
-  },
-  "id": 6
-}
-```
-
-**错误示例 (SQL 语法错误):**
-
-响应:
-```json
-{
-  "jsonrpc": "2.0",
-  "error": {
-    "code": -32603,
-    "message": "SQL execution failed: near \"SELEC\": syntax error"
-  },
-  "id": 7
-}
-```
+完整示例请参照上方格式构造 JSON-RPC 请求。如需对本地 SQLite 数据库实例执行 SQL 操作，请使用 [Db 命名空间](../db/index.md)。
 
 ## Get Database Type
 
-获取当前节点使用的数据库后端类型。
+获取当前节点使用的数据库后端类型。作用于**主数据库**（由 `database_url` 配置的数据库）。
 
 ### 方法
 
@@ -953,7 +777,6 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
 - Permission: `NodeGet::ExecSql`
 - Scope 行为:
     - `Global` Scope 下拥有该权限: 可返回数据库类型
-    - `JsWorker(worker_name)` Scope 下拥有该权限: 可返回数据库类型
 
 `token` 支持以下格式之一:
 
@@ -967,40 +790,4 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
 - `"sqlite"`: 当前使用 SQLite 数据库
 - `"postgres"`: 当前使用 PostgreSQL 数据库
 
-### 完整示例
-
-请求:
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "nodeget-server_get_database_type",
-  "params": {
-    "token": "demo_token"
-  },
-  "id": 1
-}
-```
-
-响应:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "success": true,
-    "data": "sqlite"
-  },
-  "id": 1
-}
-```
-
-错误示例 (权限不足):
-```json
-{
-  "jsonrpc": "2.0",
-  "error": {
-    "code": 102,
-    "message": "Permission Denied: Requires NodeGet::ExecSql"
-  },
-  "id": 1
-}
-```
+如需查询由 `db` 命名空间管理的实例数据库类型，请使用 `db` 命名空间的 RPC 方法。
