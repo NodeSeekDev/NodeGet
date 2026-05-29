@@ -56,7 +56,8 @@ pub trait DbBackedCache: Sized + Send + Sync {
     /// 默认实现直接 `*self = Self::build_cache(...)`，适用于
     /// 单一 `RwLock<HashMap>` 结构。若有多个内部字段需要分别
     /// 替换，可覆盖此方法。
-    fn reload_from_models(&self, models: Vec<Self::Model>) {
+    #[allow(clippy::unused_async)]
+    async fn reload_from_models(&self, models: Vec<Self::Model>) {
         // Safety: this uses a "cheat" — create a brand new instance,
         // then use std::mem::replace on self. Since Rust doesn't let
         // us do *self = ... with &self, we use unsafe for the swap.
@@ -131,7 +132,7 @@ macro_rules! make_global_cache {
                 let __models =
                     <$ty as $crate::cache::DbBackedCache>::load_all().await?;
                 let __count = __models.len();
-                __inst.reload_from_models(__models);
+                __inst.reload_from_models(__models).await;
                 tracing::debug!(
                     target: "cache",
                     name = <$ty as $crate::cache::DbBackedCache>::cache_name(),

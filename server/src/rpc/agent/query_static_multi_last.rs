@@ -92,7 +92,7 @@ pub async fn static_data_multi_last_query(
         let mut results: Vec<Option<serde_json::Value>> = vec![None; uuid_id_pairs.len()];
         let mut misses: Vec<(usize, i16)> = Vec::new();
         for (idx, (uuid, uuid_id)) in uuid_id_pairs.iter().enumerate() {
-            match last_cache.get_static_last(uuid, &fields).await {
+            match last_cache.get_static_last(uuid, &fields) {
                 Some(v) => results[idx] = Some(v),
                 None => misses.push((idx, *uuid_id)),
             }

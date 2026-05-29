@@ -41,9 +41,9 @@ impl DbBackedCache for CrontabCache {
         }
     }
 
-    fn reload_from_models(&self, models: Vec<Self::Model>) {
+    async fn reload_from_models(&self, models: Vec<Self::Model>) {
         let by_id = Self::build_maps(models);
-        let mut guard = self.inner.blocking_write();
+        let mut guard = self.inner.write().await;
         guard.by_id = by_id;
         drop(guard);
     }

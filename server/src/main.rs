@@ -51,9 +51,19 @@ pub(crate) static RELOAD_NOTIFY: std::sync::OnceLock<tokio::sync::Notify> =
 //
 // 该函数启动 NodeGet 服务器，初始化配置、日志、数据库连接、超级令牌，
 // 然后设置 RPC 服务和 WebSocket 终端处理器，并最终启动 HTTP 服务器。
-#[tokio::main]
-async fn main() {
+fn main() {
     println!("Starting nodeget-server");
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .global_queue_interval(3)
+        .enable_all()
+        .build()
+        .expect("Failed to build Tokio runtime");
+
+    runtime.block_on(async_main());
+}
+
+async fn async_main() {
     js_runtime::server_runtime::init(tokio::runtime::Handle::current());
 
     let args = ServerArgs::par();

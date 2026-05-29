@@ -39,9 +39,9 @@ impl DbBackedCache for StaticCache {
         }
     }
 
-    fn reload_from_models(&self, models: Vec<Self::Model>) {
+    async fn reload_from_models(&self, models: Vec<Self::Model>) {
         let (by_name, http_root_name) = Self::build_maps(models);
-        let mut guard = self.inner.blocking_write();
+        let mut guard = self.inner.write().await;
         guard.by_name = by_name;
         guard.http_root_name = http_root_name;
         drop(guard);

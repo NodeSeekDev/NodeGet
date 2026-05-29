@@ -1,6 +1,4 @@
 use crate::entity::dynamic_monitoring;
-use crate::rpc::RpcHelper;
-use crate::rpc::agent::AgentRpcImpl;
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
 use nodeget_lib::error::NodegetError;
@@ -45,39 +43,53 @@ pub async fn report_dynamic(
             .await
             .map_err(|e| NodegetError::DatabaseError(format!("UUID cache error: {e}")))?;
 
-        // Update in-memory last-cache (used by multi-last queries, zero DB hit)
-        crate::monitoring_last_cache::MonitoringLastCache::global()
-            .update_dynamic(
-                agent_uuid,
-                dynamic_monitoring_data.time.cast_signed(),
-                &dynamic_monitoring_data,
-            )
-            .await;
+        let timestamp = dynamic_monitoring_data.time.cast_signed();
+
+        let cpu_val = serde_json::to_value(&dynamic_monitoring_data.cpu)
+            .map_err(|e| NodegetError::SerializationError(format!("cpu_data: {e}")))?;
+        let ram_val = serde_json::to_value(&dynamic_monitoring_data.ram)
+            .map_err(|e| NodegetError::SerializationError(format!("ram_data: {e}")))?;
+        let load_val = serde_json::to_value(&dynamic_monitoring_data.load)
+            .map_err(|e| NodegetError::SerializationError(format!("load_data: {e}")))?;
+        let system_val = serde_json::to_value(&dynamic_monitoring_data.system)
+            .map_err(|e| NodegetError::SerializationError(format!("system_data: {e}")))?;
+        let disk_val = serde_json::to_value(&dynamic_monitoring_data.disk)
+            .map_err(|e| NodegetError::SerializationError(format!("disk_data: {e}")))?;
+        let network_val = serde_json::to_value(&dynamic_monitoring_data.network)
+            .map_err(|e| NodegetError::SerializationError(format!("network_data: {e}")))?;
+        let gpu_val = serde_json::to_value(&dynamic_monitoring_data.gpu)
+            .map_err(|e| NodegetError::SerializationError(format!("gpu_data: {e}")))?;
 
         let in_data = dynamic_monitoring::ActiveModel {
             id: ActiveValue::default(),
             uuid_id: Set(uuid_id),
-            timestamp: Set(dynamic_monitoring_data.time.cast_signed()),
+            timestamp: Set(timestamp),
             storage_time: Set(Some(get_local_timestamp_ms_i64()?)),
-            cpu_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.cpu)
-                .map_err(|e| NodegetError::SerializationError(format!("cpu_data: {e}")))?,
-            ram_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.ram)
-                .map_err(|e| NodegetError::SerializationError(format!("ram_data: {e}")))?,
-            load_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.load)
-                .map_err(|e| NodegetError::SerializationError(format!("load_data: {e}")))?,
-            system_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.system)
-                .map_err(|e| NodegetError::SerializationError(format!("system_data: {e}")))?,
-            disk_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.disk)
-                .map_err(|e| NodegetError::SerializationError(format!("disk_data: {e}")))?,
-            network_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.network)
-                .map_err(|e| NodegetError::SerializationError(format!("network_data: {e}")))?,
-            gpu_data: AgentRpcImpl::try_set_json(dynamic_monitoring_data.gpu)
-                .map_err(|e| NodegetError::SerializationError(format!("gpu_data: {e}")))?,
+            cpu_data: Set(cpu_val.clone()),
+            ram_data: Set(ram_val.clone()),
+            load_data: Set(load_val.clone()),
+            system_data: Set(system_val.clone()),
+            disk_data: Set(disk_val.clone()),
+            network_data: Set(network_val.clone()),
+            gpu_data: Set(gpu_val.clone()),
         };
 
         debug!(target: "monitoring", agent_uuid = %dynamic_monitoring_data.uuid, "Received dynamic data, sending to buffer");
 
         crate::monitoring_buffer::get().dynamic_mon.send(in_data);
+
+        let mut obj = serde_json::Map::with_capacity(9);
+        obj.insert("uuid".to_owned(), serde_json::Value::String(agent_uuid.to_string()));
+        obj.insert("timestamp".to_owned(), serde_json::Value::Number(timestamp.into()));
+        obj.insert("cpu".to_owned(), cpu_val);
+        obj.insert("ram".to_owned(), ram_val);
+        obj.insert("load".to_owned(), load_val);
+        obj.insert("system".to_owned(), system_val);
+        obj.insert("disk".to_owned(), disk_val);
+        obj.insert("network".to_owned(), network_val);
+        obj.insert("gpu".to_owned(), gpu_val);
+        crate::monitoring_last_cache::MonitoringLastCache::global()
+            .update_dynamic_prebuilt(agent_uuid, serde_json::Value::Object(obj));
 
         debug!(target: "monitoring", agent_uuid = %dynamic_monitoring_data.uuid, "Dynamic data buffered successfully");
 

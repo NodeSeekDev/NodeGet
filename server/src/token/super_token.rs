@@ -147,17 +147,19 @@ pub async fn check_super_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<bo
 
     match token_or_auth {
         TokenOrAuth::Token(key, secret) => {
-            let key_match = key
+            let key_match: bool = key
                 .as_bytes()
                 .ct_eq(super_entry.model.token_key.as_bytes())
                 .into();
+            if !key_match {
+                return Ok(false);
+            }
             let hash_match = hash_string(secret)
                 .as_bytes()
                 .ct_eq(super_entry.model.token_hash.as_bytes())
                 .into();
-            let is_super = key_match && hash_match;
-            debug!(target: "token", is_super, "Super token check completed (token auth)");
-            Ok(is_super)
+            debug!(target: "token", is_super = hash_match, "Super token check completed (token auth)");
+            Ok(hash_match)
         }
         TokenOrAuth::Auth(username, password) => {
             let username_match = super_entry
@@ -165,15 +167,17 @@ pub async fn check_super_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<bo
                 .username
                 .as_deref()
                 .is_some_and(|u| u.as_bytes().ct_eq(username.as_bytes()).into());
+            if !username_match {
+                return Ok(false);
+            }
             let password_hash = hash_string(password);
             let hash_match = super_entry
                 .model
                 .password_hash
                 .as_deref()
                 .is_some_and(|h| h.as_bytes().ct_eq(password_hash.as_bytes()).into());
-            let is_super = username_match && hash_match;
-            debug!(target: "token", is_super, "Super token check completed (basic auth)");
-            Ok(is_super)
+            debug!(target: "token", is_super = hash_match, "Super token check completed (basic auth)");
+            Ok(hash_match)
         }
     }
 }

@@ -81,10 +81,8 @@ pub async fn report_dynamic_summary(
             .dynamic_summary
             .send(in_data);
 
-        // Update in-memory last-cache (used by multi-last queries, zero DB hit)
         crate::monitoring_last_cache::MonitoringLastCache::global()
-            .update_dynamic_summary(agent_uuid, data.time.cast_signed(), &data)
-            .await;
+            .update_dynamic_summary(agent_uuid, data.time.cast_signed(), &data);
 
         debug!(target: "monitoring", agent_uuid = %data.uuid, "Dynamic summary data buffered successfully");
 

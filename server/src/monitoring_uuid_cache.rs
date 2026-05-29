@@ -58,7 +58,7 @@ impl DbBackedCache for MonitoringUuidCache {
         }
     }
 
-    fn reload_from_models(&self, models: Vec<Self::Model>) {
+    async fn reload_from_models(&self, models: Vec<Self::Model>) {
         let mut by_uuid = HashMap::with_capacity(models.len());
         let mut by_id = HashMap::with_capacity(models.len());
         for model in models {
@@ -66,7 +66,7 @@ impl DbBackedCache for MonitoringUuidCache {
             by_uuid.insert(model.uuid, (id, model.soft_delete));
             by_id.insert(id, (model.uuid, model.soft_delete));
         }
-        let mut guard = self.inner.blocking_write();
+        let mut guard = self.inner.write().await;
         guard.by_uuid = by_uuid;
         guard.by_id = by_id;
         drop(guard);

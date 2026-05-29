@@ -48,9 +48,9 @@ impl DbBackedCache for TokenCache {
         }
     }
 
-    fn reload_from_models(&self, models: Vec<Self::Model>) {
+    async fn reload_from_models(&self, models: Vec<Self::Model>) {
         let (by_key, by_username, super_token) = Self::build_maps(models);
-        let mut guard = self.inner.blocking_write();
+        let mut guard = self.inner.write().await;
         guard.by_key = by_key;
         guard.by_username = by_username;
         guard.super_token = super_token;

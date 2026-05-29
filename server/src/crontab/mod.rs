@@ -82,8 +82,15 @@ pub fn init_crontab_worker() {
     tokio::spawn(async move {
         info!(target: "crontab", "scheduler started");
         loop {
-            sleep(Duration::from_secs(1)).await;
+            let now = Utc::now();
+            let secs = now.timestamp() % 60;
+            let wait = if secs == 0 { 60 } else { 60 - secs as u64 };
+            sleep(Duration::from_secs(wait)).await;
             process_crontab().await;
+            let remaining = 60 - (Utc::now().timestamp() % 60) as u64;
+            if remaining > 0 && remaining < 60 {
+                sleep(Duration::from_secs(remaining)).await;
+            }
         }
     });
 }

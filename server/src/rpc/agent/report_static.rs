@@ -1,5 +1,4 @@
 use crate::entity::static_monitoring;
-use crate::rpc::RpcHelper;
 use crate::rpc::agent::AgentRpcImpl;
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
@@ -45,14 +44,25 @@ pub async fn report_static(
             .await
             .map_err(|e| NodegetError::DatabaseError(format!("UUID cache error: {e}")))?;
 
-        // Update in-memory last-cache (used by multi-last queries, zero DB hit)
+        let timestamp = static_monitoring_data.time.cast_signed();
+
+        let cpu_val = serde_json::to_value(&static_monitoring_data.cpu)
+            .map_err(|e| NodegetError::SerializationError(format!("cpu_data: {e}")))?;
+        let system_val = serde_json::to_value(&static_monitoring_data.system)
+            .map_err(|e| NodegetError::SerializationError(format!("system_data: {e}")))?;
+        let gpu_val = serde_json::to_value(&static_monitoring_data.gpu)
+            .map_err(|e| NodegetError::SerializationError(format!("gpu_data: {e}")))?;
+
+        let mut cache_obj = serde_json::Map::with_capacity(5);
+        cache_obj.insert("uuid".to_owned(), serde_json::Value::String(agent_uuid.to_string()));
+        cache_obj.insert("timestamp".to_owned(), serde_json::Value::Number(timestamp.into()));
+        cache_obj.insert("cpu".to_owned(), cpu_val.clone());
+        cache_obj.insert("system".to_owned(), system_val.clone());
+        cache_obj.insert("gpu".to_owned(), gpu_val.clone());
+        let cache_value = serde_json::Value::Object(cache_obj);
+
         crate::monitoring_last_cache::MonitoringLastCache::global()
-            .update_static(
-                agent_uuid,
-                static_monitoring_data.time.cast_signed(),
-                &static_monitoring_data,
-            )
-            .await;
+            .update_static_prebuilt(agent_uuid, cache_value);
 
         // Fast path: check in-memory hash cache first to avoid DB query
         let hash_cache = crate::static_hash_cache::StaticHashCache::global();
@@ -80,18 +90,8 @@ pub async fn report_static(
             })?;
 
         if exists.is_some() {
-            // Update cache so next time we skip the DB query
             hash_cache
                 .update(uuid_id, static_monitoring_data.data_hash.clone())
-                .await;
-            // Also update last-cache so subsequent multi-last queries can hit the cache
-            // even when the data hash is unchanged (common for static monitoring).
-            crate::monitoring_last_cache::MonitoringLastCache::global()
-                .update_static(
-                    agent_uuid,
-                    static_monitoring_data.time.cast_signed(),
-                    &static_monitoring_data,
-                )
                 .await;
             debug!(target: "monitoring", agent_uuid = %static_monitoring_data.uuid, "Static data hash already exists, skipping");
             return RawValue::from_string(
@@ -100,27 +100,15 @@ pub async fn report_static(
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into());
         }
 
-        // Update in-memory last-cache (used by multi-last queries, zero DB hit)
-        crate::monitoring_last_cache::MonitoringLastCache::global()
-            .update_static(
-                agent_uuid,
-                static_monitoring_data.time.cast_signed(),
-                &static_monitoring_data,
-            )
-            .await;
-
         let data_hash = static_monitoring_data.data_hash;
         let in_data = static_monitoring::ActiveModel {
             id: ActiveValue::default(),
             uuid_id: Set(uuid_id),
-            timestamp: Set(static_monitoring_data.time.cast_signed()),
+            timestamp: Set(timestamp),
             storage_time: Set(Some(get_local_timestamp_ms_i64()?)),
-            cpu_data: AgentRpcImpl::try_set_json(static_monitoring_data.cpu)
-                .map_err(|e| NodegetError::SerializationError(format!("cpu_data: {e}")))?,
-            system_data: AgentRpcImpl::try_set_json(static_monitoring_data.system)
-                .map_err(|e| NodegetError::SerializationError(format!("system_data: {e}")))?,
-            gpu_data: AgentRpcImpl::try_set_json(static_monitoring_data.gpu)
-                .map_err(|e| NodegetError::SerializationError(format!("gpu_data: {e}")))?,
+            cpu_data: Set(cpu_val),
+            system_data: Set(system_val),
+            gpu_data: Set(gpu_val),
             data_hash: Set(data_hash.clone()),
         };
 
@@ -128,7 +116,6 @@ pub async fn report_static(
 
         crate::monitoring_buffer::get().static_mon.send(in_data);
 
-        // Update hash cache after successful buffer
         hash_cache.update(uuid_id, data_hash).await;
 
         debug!(target: "monitoring", agent_uuid = %static_monitoring_data.uuid, "Static data buffered successfully");

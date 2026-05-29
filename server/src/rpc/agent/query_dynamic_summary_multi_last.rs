@@ -113,7 +113,7 @@ pub async fn dynamic_summary_multi_last_query(
         let mut results: Vec<Option<serde_json::Value>> = vec![None; uuid_id_pairs.len()];
         let mut misses: Vec<(usize, i16)> = Vec::new();
         for (idx, (uuid, uuid_id)) in uuid_id_pairs.iter().enumerate() {
-            match last_cache.get_dynamic_summary_last(uuid, &fields).await {
+            match last_cache.get_dynamic_summary_last(uuid, &fields) {
                 Some(v) => {
                     results[idx] = Some(descale_cached_summary(v));
                 }
@@ -427,8 +427,7 @@ mod tests {
         };
 
         cache
-            .update_dynamic_summary(uuid, 1_777_463_543_359, &summary)
-            .await;
+            .update_dynamic_summary(uuid, 1_777_463_543_359, &summary);
         let cached = cache
             .get_dynamic_summary_last(
                 &uuid,
@@ -437,7 +436,6 @@ mod tests {
                     DynamicSummaryQueryField::LoadOne,
                 ],
             )
-            .await
             .expect("cache hit");
 
         let obj = descale_cached_summary(cached)
@@ -488,11 +486,9 @@ mod tests {
         };
 
         cache
-            .update_dynamic_summary(uuid, 1_777_463_543_359, &summary)
-            .await;
+            .update_dynamic_summary(uuid, 1_777_463_543_359, &summary);
         let cached = cache
             .get_dynamic_summary_last(&uuid, &[])
-            .await
             .expect("full cache hit");
 
         let obj = descale_cached_summary(cached)

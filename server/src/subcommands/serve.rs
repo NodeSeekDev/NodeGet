@@ -589,7 +589,15 @@ async fn handle_js_worker_route(
         );
     };
 
-    let body_base64 = base64::engine::general_purpose::STANDARD.encode(&body_bytes);
+    let body_bytes_clone = body_bytes.clone();
+    let body_base64 = tokio::task::spawn_blocking(move || {
+        base64::engine::general_purpose::STANDARD.encode(&body_bytes_clone)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        error!(target: "js_worker", route_name = %route_name, error = %e, "base64 encoding task panicked");
+        base64::engine::general_purpose::STANDARD.encode(&body_bytes)
+    });
     let js_input = JsRouteInput {
         method,
         url,
