@@ -2892,6 +2892,71 @@ dependencies = [
 ]
 
 [[package]]
+name = "ng-agent-deps"
+version = "0.5.0"
+
+[[package]]
+name = "ng-config"
+version = "0.5.0"
+
+[[package]]
+name = "ng-core"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "ng-crontab"
+version = "0.5.0"
+
+[[package]]
+name = "ng-db"
+version = "0.5.0"
+
+[[package]]
+name = "ng-infra"
+version = "0.5.0"
+
+[[package]]
+name = "ng-js-runtime"
+version = "0.5.0"
+
+[[package]]
+name = "ng-js-worker"
+version = "0.5.0"
+
+[[package]]
+name = "ng-kv"
+version = "0.5.0"
+
+[[package]]
+name = "ng-monitoring"
+version = "0.5.0"
+
+[[package]]
+name = "ng-static"
+version = "0.5.0"
+
+[[package]]
+name = "ng-task"
+version = "0.5.0"
+
+[[package]]
+name = "ng-terminal"
+version = "0.5.0"
+
+[[package]]
+name = "ng-token"
+version = "0.5.0"
+
+[[package]]
 name = "nix"
 version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2936,7 +3001,7 @@ checksum = "43794a0ace135be66a25d3ae77d41b91615fb68ae937f904090203e81f755b65"
 
 [[package]]
 name = "nodeget-agent"
-version = "0.4.4"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -2970,7 +3035,7 @@ dependencies = [
 
 [[package]]
 name = "nodeget-lib"
-version = "0.4.4"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -2989,7 +3054,7 @@ dependencies = [
 
 [[package]]
 name = "nodeget-server"
-version = "0.4.4"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",

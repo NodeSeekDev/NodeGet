@@ -1,15 +1,14 @@
 # Session Context
-Updated: 2026-05-30T16:01:51Z
+Updated: 2026-05-30T16:05:24Z
 Session: dfecbf36-8729-4cbd-b959-af8d1ec5b8df
 
 ## Last Assistant Message
-三种方式：
+**Phase 0 完成**。14 个空 crate 骨架已创建，workspace.package 统一版本 0.5.0，`cargo check --workspace` 通过，已推送远程。
 
-1. **逐阶段指令** — 你说 "执行 Phase 0"，我完成后再汇报，你说 "执行 Phase 1"，依此类推。最安全，每阶段你都能检查。
-
-2. **一次性全执行** — 你说 "按计划执行所有阶段"，我一路跑完。风险是中间出问题不好回退。
+下一步是 **Phase 0.5 — jsonrpsee merge POC**，验证多 crate 的 `RpcModule` merge 和同名命名空间分散注册是否可行。继续？
 
 ## Git State
-Branch: dev
-Uncommitted changes: 3
-
+Branch: dev-ref
+Uncommitted changes: 1
+ Cargo.lock | 62 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 59 insertions(+), 3 deletions(-)
