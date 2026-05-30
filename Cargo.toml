@@ -4,8 +4,28 @@ members = [
     "server/migration",
     "agent",
     "nodeget-lib",
+    "crates/ng-core",
+    "crates/ng-db",
+    "crates/ng-infra",
+    "crates/ng-config",
+    "crates/ng-monitoring",
+    "crates/ng-token",
+    "crates/ng-kv",
+    "crates/ng-task",
+    "crates/ng-crontab",
+    "crates/ng-js-runtime",
+    "crates/ng-js-worker",
+    "crates/ng-static",
+    "crates/ng-terminal",
+    "crates/ng-agent-deps",
 ]
 resolver = "2"
+
+[workspace.package]
+version = "0.5.0"
+license = "AGPL-3"
+edition = "2024"
+repository = "https://github.com/NodeSeekDev/NodeGet"
 
 [profile]
 dev = { opt-level = 0, debug = true, debug-assertions = true, overflow-checks = true, lto = false, panic = "unwind", incremental = true, codegen-units = 256, rpath = false }

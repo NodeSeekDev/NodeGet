@@ -1,0 +1,8 @@
+[package]
+name = "ng-core"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
