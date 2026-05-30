@@ -673,7 +673,7 @@ pub struct DynamicDataQuery {
 ```json
 {
   "token": "demo_token",
-  "dynamic_summary_query": {
+    "query": {
     "fields": ["cpu_usage", "used_memory", "total_memory"],
     "condition": [
       { "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd" },
@@ -743,7 +743,7 @@ pub struct DynamicSummaryQuery {
   "method": "agent_query_dynamic_summary",
   "params": {
     "token": "demo_key:demo_secret",
-    "dynamic_summary_query": {
+  "query": {
       "fields": ["cpu_usage", "used_memory", "total_memory"],
       "condition": [
         { "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd" },

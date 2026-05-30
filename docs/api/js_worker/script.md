@@ -62,6 +62,20 @@ async function onRoute(request, env, ctx) {}
 - `env`：来自数据库保存的 `env`
 - `ctx`：与其他入口一致
 
+## per-Worker 运行限制
+
+`js_worker` 表中提供以下可选字段，用于控制单个 Worker 的运行资源。未设置时使用默认值。
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `max_run_time` | `i64` (ms) | `30000`（30 秒） | 单次执行总时长硬上限（毫秒），超时后运行时自动终止 |
+| `max_stack_size` | `i64` (bytes) | `1048576`（1 MiB） | QuickJS C 栈上限（字节），防止栈溢出 |
+| `max_heap_size` | `i64` (bytes) | `8388608`（8 MiB） | QuickJS 堆内存上限（字节），超限时分配失败 |
+
+这些字段在创建/更新 Worker 时通过 `js-worker_create` / `js-worker_update` 设置，设为 `null` 或不传则使用上方默认值。
+
+`inlineCall` 的软超时 `timeout_sec` 会与目标 Worker 的 `max_run_time` 取较小者作为最终生效超时。
+
 ## 返回值约束
 
 - 必须返回可 JSON 序列化的数据（对象/数组/字符串/数字/布尔/null）。

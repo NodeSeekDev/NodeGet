@@ -188,13 +188,13 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET"
-  // SuperToken 字符串
+  // Super Token 字符串
 }
 ```
 
 ### 权限要求
 
-该方法仅允许 **SuperToken** 调用。
+该方法仅允许 **Super Token** 调用。
 
 `token` 支持以下格式之一:
 
@@ -247,7 +247,7 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET",
-  // SuperToken 字符串
+  // Super Token 字符串
   "config_string": "ws_listener = \"0.0.0.0:2211\"\\n..."
   // 完整的 TOML 配置文本
 }
@@ -255,7 +255,7 @@
 
 ### 权限要求
 
-该方法仅允许 **SuperToken** 调用。
+该方法仅允许 **Super Token** 调用。
 
 `token` 支持以下格式之一:
 
@@ -315,13 +315,13 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET"
-  // SuperToken 字符串
+  // Super Token 字符串
 }
 ```
 
 ### 权限要求
 
-该方法仅允许 **SuperToken** 调用。
+该方法仅允许 **Super Token** 调用。
 
 `token` 支持以下格式之一:
 
@@ -391,13 +391,13 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET"
-  // SuperToken 字符串
+  // Super Token 字符串
 }
 ```
 
 ### 权限要求
 
-该方法仅允许 **SuperToken** 调用。
+该方法仅允许 **Super Token** 调用。
 
 `token` 支持以下格式之一:
 
@@ -487,7 +487,7 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET",
-  // SuperToken 字符串
+  // Super Token 字符串
   "log_filter": "info,rpc=debug,db=trace"
   // 日志过滤规则，语法同 RUST_LOG
 }
@@ -503,7 +503,7 @@
 
 ### 权限要求
 
-该方法仅允许 **SuperToken** 调用。
+该方法仅允许 **Super Token** 调用。
 
 `token` 支持以下格式之一:
 
@@ -629,7 +629,7 @@
 
 ### 方法
 
-调用方法名为 `nodeget-server_self_update`，需要传入 super token 和目标版本号 tag（格式 `vX.Y.Z`，支持升级和降级，仅做格式校验）。
+调用方法名为 `nodeget-server_self_update`，需要传入 super token 和目标版本 tag（格式 `vX.Y.Z`，支持升级和降级，仅做格式校验）。
 
 ### 权限要求
 
@@ -653,7 +653,7 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
     "method": "nodeget-server_self_update",
     "params": {
       "token": "<super-token>",
-      "target_version": "v0.0.14"
+      "tag": "v0.0.14"
     },
     "id": 1
   }'

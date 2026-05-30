@@ -152,11 +152,9 @@ impl MonitoringUuidCache {
                 })?;
                 info!(target: "monitoring_uuid_cache", %uuid, "Resurrected soft-deleted uuid");
             }
-            Self::reload().await.map_err(|e| {
-                NodegetError::DatabaseError(format!(
-                    "Failed to reload cache after get_or_insert: {e}"
-                ))
-            })?;
+            let mut guard = recover_write(&self.inner);
+            guard.by_uuid.insert(uuid, (id, false));
+            guard.by_id.insert(id, (uuid, false));
             return Ok(id);
         }
 
@@ -174,9 +172,9 @@ impl MonitoringUuidCache {
             })?;
 
         let id = result.last_insert_id as i16;
-        Self::reload().await.map_err(|e| {
-            NodegetError::DatabaseError(format!("Failed to reload cache after insert: {e}"))
-        })?;
+        let mut guard = recover_write(&self.inner);
+        guard.by_uuid.insert(uuid, (id, false));
+        guard.by_id.insert(id, (uuid, false));
         Ok(id)
     }
 
@@ -203,15 +201,16 @@ impl MonitoringUuidCache {
             return Ok(true);
         }
 
+        let id = model.id as i16;
         let mut active: monitoring_uuid::ActiveModel = model.into();
         active.soft_delete = Set(true);
         active.update(db).await.map_err(|e| {
             NodegetError::DatabaseError(format!("Failed to soft_delete monitoring_uuid: {e}"))
         })?;
 
-        Self::reload().await.map_err(|e| {
-            NodegetError::DatabaseError(format!("Failed to reload cache after soft_delete: {e}"))
-        })?;
+        let mut guard = recover_write(&self.inner);
+        guard.by_uuid.insert(uuid, (id, true));
+        guard.by_id.insert(id, (uuid, true));
 
         info!(target: "monitoring_uuid_cache", %uuid, "Soft-deleted uuid");
         Ok(true)

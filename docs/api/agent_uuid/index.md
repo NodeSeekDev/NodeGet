@@ -34,12 +34,12 @@ pub enum MonitoringUuid {
 }
 ```
 
-> `nodeget-server_list_all_agent_uuid` 与 `nodeget-server_delete_agent_uuid` 已废弃，请迁移至 `agent-uuid.*` 命名空间。
+> `nodeget-server_list_all_agent_uuid` 与 `nodeget-server_delete_agent_uuid` 已废弃，请迁移至 `agent-uuid` 命名空间。
 
 ## 方法列表
 
 | 方法名                                                                       | 描述                      |
 |---------------------------------------------------------------------------|-------------------------|
-| [agent-uuid.list_all](./crud.md#list-all)                                 | 列出所有非软删除的 Agent UUID    |
-| [agent-uuid.list_all_with_agent_mode](./crud.md#list-all-with-agent-mode) | 列出所有 Agent UUID（含软删除状态） |
-| [agent-uuid.delete](./crud.md#delete)                                     | 按 UUID 软删除 Agent        |
+| [agent-uuid_list_all](./crud.md#list-all)                                 | 列出所有非软删除的 Agent UUID    |
+| [agent-uuid_list_all_with_agent_mode](./crud.md#list-all-with-agent-mode) | 列出所有 Agent UUID（含软删除状态） |
+| [agent-uuid_delete](./crud.md#delete)                                     | 按 UUID 软删除 Agent        |

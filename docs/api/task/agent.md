@@ -21,6 +21,7 @@ Http、或主动取消订阅 均不会再接收到来自 Server 的任务
     "jsonrpc": "2.0",
     "method": "task_register_task",
     "params": {
+        "token": "YOUR_TOKEN",
         "uuid": "AGENT_UUID_HERE" // Agent UUID
     },
     "id": 1
@@ -34,6 +35,7 @@ Http、或主动取消订阅 均不会再接收到来自 Server 的任务
     "jsonrpc": "2.0",
     "method": "task_register_task",
     "params": [
+        "YOUR_TOKEN",
         "AGENT_UUID_HERE" // Agent UUID
     ],
     "id": 1 // 该 ID 可自定义，返回值也带统一 ID 用于辨别哪一个请求

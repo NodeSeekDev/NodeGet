@@ -270,7 +270,7 @@ fn get_main_db() -> anyhow::Result<&'static sea_orm::DatabaseConnection> {
 
 pub fn row_to_json(r: &sea_orm::QueryResult) -> serde_json::Value {
     let cols = r.column_names();
-    let mut map = serde_json::Map::new();
+    let mut map = serde_json::Map::with_capacity(cols.len());
     for col in cols {
         let val = try_column_as_json(r, &col);
         map.insert(col.clone(), val);
@@ -301,10 +301,20 @@ fn try_column_as_json(r: &sea_orm::QueryResult, col: &str) -> serde_json::Value 
     if let Ok(v) = r.try_get::<Option<bool>>("", col) {
         return v.map_or(serde_json::Value::Null, serde_json::Value::Bool);
     }
-    if let Ok(Some(json_bytes)) = r.try_get::<Option<Vec<u8>>>("", col) {
-        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&json_bytes) {
-            return v;
-        }
+    if let Ok(v) = r.try_get::<Option<Vec<u8>>>("", col) {
+        return match v {
+            Some(bytes) => {
+                if let Ok(j) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    j
+                } else {
+                    serde_json::Value::String(hex::encode(&bytes))
+                }
+            }
+            None => serde_json::Value::Null,
+        };
+    }
+    if let Ok(v) = r.try_get::<Option<serde_json::Value>>("", col) {
+        return v.unwrap_or(serde_json::Value::Null);
     }
     serde_json::Value::Null
 }
@@ -331,4 +341,19 @@ pub fn json_to_sea_value(json: &serde_json::Value) -> sea_orm::Value {
             sea_orm::Value::Json(Some(Box::new(json.clone())))
         }
     }
+}
+
+pub fn is_read_query(sql: &str) -> bool {
+    let s = sql.trim_start_matches(|c: char| c.is_whitespace() || c == '(' || c == ';');
+    starts_with_ascii_ci(s, "SELECT")
+        || starts_with_ascii_ci(s, "PRAGMA")
+        || starts_with_ascii_ci(s, "EXPLAIN")
+        || starts_with_ascii_ci(s, "WITH")
+}
+
+fn starts_with_ascii_ci(s: &str, prefix: &str) -> bool {
+    s.as_bytes()
+        .iter()
+        .zip(prefix.as_bytes())
+        .all(|(a, b)| a.to_ascii_uppercase() == *b)
 }

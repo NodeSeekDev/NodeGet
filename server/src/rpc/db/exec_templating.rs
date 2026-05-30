@@ -3,7 +3,7 @@
 //! Shares core logic with `exec_sql`, supports parameterized queries
 //! for preventing SQL injection of user-provided values.
 
-use crate::db_registry::{DbExecResult, DbRegistryManager, json_to_sea_value, row_to_json};
+use crate::db_registry::{DbExecResult, DbRegistryManager, is_read_query, json_to_sea_value, row_to_json};
 use crate::rpc::db::auth::check_db_permission;
 use nodeget_lib::error::NodegetError;
 use nodeget_lib::permission::data_structure::Db as DbPermission;
@@ -41,13 +41,7 @@ pub async fn exec_templating(
         let db_backend = db_conn.get_database_backend();
         let stmt = sea_orm::Statement::from_sql_and_values(db_backend, &sql, sea_params);
 
-        let upper = sql
-            .trim_start_matches(|c: char| c.is_whitespace() || c == '(' || c == ';')
-            .to_uppercase();
-        let is_select = upper.starts_with("SELECT")
-            || upper.starts_with("PRAGMA")
-            || upper.starts_with("EXPLAIN")
-            || upper.starts_with("WITH");
+        let is_select = is_read_query(&sql);
 
         let result = if is_select {
             let rows = db_conn.query_all_raw(stmt).await?;

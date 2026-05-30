@@ -78,6 +78,8 @@ pub enum Scope {
     AgentUuid(uuid::Uuid),     // 特定 Agent 作用域，通过 UUID 指定
     KvNamespace(String),       // KvNamespace 作用域，通过名称指定
     JsWorker(String),          // JsWorker 作用域，通过脚本名指定，支持后缀 * 通配
+    StaticBucket(String),      // 静态文件服务 Bucket 作用域，通过 bucket 名称指定
+    Db(String),                // 本地数据库作用域，通过数据库名称指定
 }
 ```
 
@@ -96,8 +98,13 @@ pub enum Permission {
     Kv(Kv),                               // Kv 权限
     Terminal(Terminal),                   // Terminal 权限
     NodeGet(NodeGet),                     // NodeGet 权限
+    MonitoringUuid(MonitoringUuid),       // MonitoringUuid 权限（权威 Agent UUID 管理权限）
     JsWorker(JsWorker),                   // Js Worker 权限
     JsResult(JsResult),                   // Js Result 权限
+    DynamicMonitoringSummary(DynamicMonitoringSummary), // 动态监控摘要权限
+    StaticBucket(StaticBucket),           // 静态文件服务 Bucket 管理权限
+    StaticBucketFile(StaticBucketFile),   // 静态文件服务 Bucket 内文件操作权限
+    Db(Db),                               // 本地数据库管理权限
 }
 
 // 静态监控权限枚举
@@ -184,6 +191,16 @@ pub enum Terminal {
 pub enum NodeGet {
     ListAllAgentUuid, // 列出所有 Agent Uuid
     GetRtPool,        // 查看 JS Runtime 池信息
+    DeleteAgentUuid,  // 删除 Agent Uuid
+    ExecSql,          // 执行 SQL
+}
+
+// MonitoringUuid 权限枚举（权威 Agent UUID 管理权限）
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitoringUuid {
+    List,   // 列出 Agent UUID
+    Delete, // 删除 Agent UUID
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +220,46 @@ pub enum JsWorker {
 pub enum JsResult {
     Read(String),   // 读取权限，支持后缀 * 通配
     Delete(String), // 删除权限，支持后缀 * 通配
+}
+
+// 动态监控摘要权限枚举
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DynamicMonitoringSummary {
+    Read,   // 读取权限
+    Write,  // 写入权限
+    Delete, // 删除权限
+}
+
+// 静态文件服务 Bucket 管理权限枚举
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StaticBucket {
+    Read,   // 读取权限
+    Write,  // 写入权限
+    Delete, // 删除权限
+}
+
+// 静态文件服务 Bucket 内文件操作权限枚举
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StaticBucketFile {
+    Read,   // 读取权限
+    Write,  // 写入权限
+    Delete, // 删除权限
+    List,   // 列出文件权限
+}
+
+// 本地数据库管理权限枚举
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Db {
+    List,    // 列出数据库
+    Read,    // 读取权限
+    Create,  // 创建权限
+    Update,  // 更新权限
+    Delete,  // 删除权限
+    ExecSql, // 执行 SQL
 }
 ```
 

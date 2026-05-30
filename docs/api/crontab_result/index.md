@@ -60,31 +60,7 @@ pub enum CrontabResultQueryCondition {
 下面是一些解析的示例:
 
 ```json
-{
-    "id": 1
-}
-
-{
-    "cron_name": "cleanup_database"
-}
-
-{
-    "run_time_from_to": [1700000000000, 1800000000000]
-}
-
-{
-    "run_time_from": 1700000000000
-}
-
-{
-    "is_success": null
-}
-
-{
-    "limit": 100 // 依照 run_time 最新的 100 条
-}
-
-"last" // 对就是一个 `last`，无其他东西
+"is_success"
 ```
 
 #### 注意事项

@@ -62,7 +62,7 @@ export default {
 
 ## 工程化
 
-NodeGet Worker 暂时并不提供 `import` 支持，如果需要（多文件）模块化机制，可以在本地项目打包。
+NodeGet Worker 基于 ES Module 运行，支持 `export default` 语法，但暂不支持 `import` 语句加载外部模块。如果需要（多文件）模块化机制，可以在本地项目打包。
 
 推荐使用 `esbuild` 打包，建议不要开启最小化，保持打包后代码的可读性。
 

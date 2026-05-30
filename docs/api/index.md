@@ -20,3 +20,6 @@ outline: deep
 - [Kv](./kv/index.md)
 - [Agent UUID](./agent_uuid/index.md)
 - [Db](./db/index.md)
+- [Static Bucket](./static_bucket/index.md)
+- [Static Bucket File](./static_bucket_file/index.md)
+- [Crontab Result](./crontab_result/index.md)

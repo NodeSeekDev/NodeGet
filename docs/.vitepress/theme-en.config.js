@@ -7,14 +7,6 @@ export const themeEnConfig = {
     ],
     sidebar: [
         {
-            text: 'Configuration Guide',
-            items: [
-                { text: 'Overview', link: '/en/guide/config/index.md' },
-                { text: 'Server Configuration', link: '/en/guide/config/server.md' },
-                { text: 'Agent Configuration', link: '/en/guide/config/agent.md' }
-            ]
-        },
-        {
             text: 'API Documentation',
             items: [
                 { text: 'Overview', link: '/en/api/index.md' },

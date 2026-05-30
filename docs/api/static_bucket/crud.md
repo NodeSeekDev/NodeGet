@@ -245,13 +245,13 @@
 
 ```json
 {
-  "token": "demo_super_token" // SuperToken
+  "token": "demo_super_token" // Super Token
 }
 ```
 
 ### 权限要求
 
-只有 **SuperToken** 可以调用该方法。普通 Token 会返回权限错误。
+只有 **Super Token** 可以调用该方法。普通 Token 会返回权限错误。
 
 数据来源为内存缓存，不会访问数据库或磁盘。
 

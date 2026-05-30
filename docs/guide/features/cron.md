@@ -9,14 +9,15 @@
 - Agent 任务，展开包括：
     - ICMP Ping / TCP Ping / HTTP Ping
     - HTTP Request
+    - DNS 查询
     - WebShell
     - Exec（执行命令）
     - 读取配置
     - 写入配置
     - 获取 IP
-- Server 任务，展开包括：
-    - 执行数据清理
-    - 执行某个 Js Worker 的 `onCron` 函数
+    - 获取版本信息
+    - 自更新
+- Server 任务：仅支持 Js Worker 形式（`JsWorker(String, Value)`），即执行某个 Js Worker 的 `onCron` 函数。如需数据清理等预设行为，应通过 Js Worker 的 `onCron` 实现。
 
 如果你需要某个复杂的预设行为定期执行，比如定期查看域名是否过期，如果过期发送 Telegram 通知，或者定期总结服务器的异常，定期检查
 IP 质量并报告等等。

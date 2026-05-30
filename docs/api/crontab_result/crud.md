@@ -83,9 +83,7 @@
         {
           "run_time_from_to": [1700000000000, 1800000000000]
         },
-        {
-          "is_success": null
-        }
+        "is_success"
       ]
     }
   },
@@ -106,12 +104,7 @@
         {
           "cron_name": "backup_database"
         },
-        {
-          "is_failure": null
-        },
-        {
-          "limit": 10
-        }
+        "is_failure"
       ]
     }
   },
@@ -267,9 +260,7 @@
     "token": "demo_token",
     "query": {
       "condition": [
-        {
-          "is_failure": null
-        }
+        "is_failure"
       ]
     }
   },

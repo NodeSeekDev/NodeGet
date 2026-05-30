@@ -45,10 +45,10 @@ pub enum TaskEventType {
     Ping(String),       // 可能为域名，需解析
     TcpPing(String),    // 可能为域名，需解析
     HttpPing(url::Url), // Url, Method, Body
-    HttpRequest(HttpRequestTask), // 通用 HTTP 请求
-
     WebShell(WebShellTask), // Websocket URL + terminal_id
     Execute(ExecuteTask), // 结构化命令执行
+    HttpRequest(HttpRequestTask), // 通用 HTTP 请求
+    Dns(DnsTask),       // DNS 查询任务
     ReadConfig,         // 读取本地 config.toml
     EditConfig(String), // 编辑本地 config.toml（完整 TOML 字符串）
 
@@ -171,10 +171,10 @@ pub enum TaskEventResult {
     Ping(f64),     // 延迟
     TcpPing(f64),  // 延迟
     HttpPing(f64), // 延迟
-    HttpRequest(HttpRequestTaskResult), // HTTP 请求结果
-
     WebShell(bool),  // Is Connected
     Execute(String), // 命令输出
+    HttpRequest(HttpRequestTaskResult), // HTTP 请求结果
+    Dns(Vec<DnsRecordResult>), // DNS 查询结果
     ReadConfig(String), // 当前 config.toml 原文
     EditConfig(bool),   // 是否成功写入
 
@@ -251,6 +251,7 @@ pub struct HttpRequestTaskResult {
 DNS 查询任务。
 
 ```rust
+#[serde(rename_all = "snake_case")]
 pub enum DnsRecordType {
     A,
     Aaaa,

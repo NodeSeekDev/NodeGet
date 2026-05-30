@@ -1,4 +1,5 @@
 use crate::DB;
+use crate::db_registry::{is_read_query, json_to_sea_value, row_to_json};
 use crate::rpc::token_identity;
 use crate::token::get::check_token_limit;
 use jsonrpsee::core::RpcResult;
@@ -54,13 +55,7 @@ pub async fn exec_sql(
 
         let stmt = Statement::from_sql_and_values(db_backend, &sql, sea_values);
 
-        let upper = sql
-            .trim_start_matches(|c| c == ' ' || c == '(' || c == ';')
-            .to_uppercase();
-        let is_select = upper.starts_with("SELECT")
-            || upper.starts_with("PRAGMA")
-            || upper.starts_with("EXPLAIN")
-            || upper.starts_with("WITH");
+        let is_select = is_read_query(&sql);
 
         let response = if is_select {
             let rows = db.query_all_raw(stmt).await?;
@@ -155,80 +150,4 @@ pub async fn get_database_type(token: String) -> RpcResult<Box<RawValue>> {
             ))
         }
     }
-}
-
-fn json_to_sea_value(v: &Value) -> sea_orm::Value {
-    match v {
-        Value::Null => sea_orm::Value::Json(None),
-        Value::Bool(b) => sea_orm::Value::Bool(Some(*b)),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                sea_orm::Value::BigInt(Some(i))
-            } else if let Some(f) = n.as_f64() {
-                sea_orm::Value::Double(Some(f))
-            } else {
-                sea_orm::Value::Json(Some(Box::new(serde_json::Value::String(n.to_string()))))
-            }
-        }
-        Value::String(s) => sea_orm::Value::String(Some(s.clone())),
-        Value::Array(_) | Value::Object(_) => serde_json::to_string(v)
-            .map(|s| sea_orm::Value::Json(Some(Box::new(serde_json::Value::String(s)))))
-            .unwrap_or_else(|_| sea_orm::Value::String(Some(String::from("__invalid_json__")))),
-    }
-}
-
-fn row_to_json(r: &sea_orm::QueryResult) -> Value {
-    let columns = r.column_names();
-    let mut map = serde_json::Map::new();
-    for col in &columns {
-        let val = try_column_as_json(r, col);
-        map.insert(col.clone(), val);
-    }
-    Value::Object(map)
-}
-
-fn try_column_as_json(r: &sea_orm::QueryResult, col: &str) -> Value {
-    if let Ok(v) = r.try_get::<Option<String>>("", col) {
-        return match v {
-            Some(s) => Value::String(s),
-            None => Value::Null,
-        };
-    }
-    if let Ok(v) = r.try_get::<Option<i64>>("", col) {
-        return match v {
-            Some(n) => serde_json::json!(n),
-            None => Value::Null,
-        };
-    }
-    if let Ok(v) = r.try_get::<Option<u32>>("", col) {
-        return match v {
-            Some(n) => serde_json::json!(n),
-            None => Value::Null,
-        };
-    }
-    if let Ok(v) = r.try_get::<Option<f64>>("", col) {
-        return match v {
-            Some(n) => serde_json::json!(n),
-            None => Value::Null,
-        };
-    }
-    if let Ok(v) = r.try_get::<Option<bool>>("", col) {
-        return match v {
-            Some(b) => Value::Bool(b),
-            None => Value::Null,
-        };
-    }
-    if let Ok(v) = r.try_get::<Option<Vec<u8>>>("", col) {
-        return match v {
-            Some(bytes) => serde_json::json!(hex::encode(&bytes)),
-            None => Value::Null,
-        };
-    }
-    if let Ok(v) = r.try_get::<Option<serde_json::Value>>("", col) {
-        return match v {
-            Some(j) => j,
-            None => Value::Null,
-        };
-    }
-    Value::Null
 }

@@ -19,6 +19,7 @@ NodeGet 是本项目的基础服务接口模块，提供服务端状态查询、
 | [stream_log](./crud.md#stream-log)                   | 实时流式日志订阅（WebSocket） | SuperToken                  |
 | [exec_sql](./crud.md#exec-sql)                       | 在主数据库执行原始 SQL       | `NodeGet::ExecSql`          |
 | [get_database_type](./crud.md#get-database-type)     | 获取主数据库后端类型          | `NodeGet::ExecSql`          |
+| [self_update](./crud.md#self-update)                 | 触发自更新                  | SuperToken                  |
 
 如需对本地 SQLite 数据库执行 SQL 操作，请使用 [Db 命名空间](../db/index.md)。
 
