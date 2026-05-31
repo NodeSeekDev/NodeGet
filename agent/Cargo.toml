@@ -4,8 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-# Library For NodeGet
-nodeget-lib = { path = "../nodeget-lib", features = ["for-agent"] }
+# Internal crates
+ng-core = { workspace = true, features = ["for-agent"] }
+ng-config = { workspace = true }
+ng-task = { workspace = true }
+ng-monitoring = { workspace = true }
 
 # Error handling
 anyhow = "1.0"

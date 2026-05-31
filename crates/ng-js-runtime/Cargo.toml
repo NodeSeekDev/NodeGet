@@ -8,20 +8,20 @@ repository.workspace = true
 [features]
 default = []
 server = [
-    "rquickjs",
-    "llrt_fetch",
-    "llrt_buffer",
-    "llrt_stream_web",
-    "llrt_url",
-    "llrt_util",
-    "llrt_timers",
-    "uuid",
-    "tokio",
-    "tracing",
-    "anyhow",
-    "ng-db",
+    "dep:rquickjs",
+    "dep:llrt_fetch",
+    "dep:llrt_buffer",
+    "dep:llrt_stream_web",
+    "dep:llrt_url",
+    "dep:llrt_util",
+    "dep:llrt_timers",
+    "dep:uuid",
+    "dep:tokio",
+    "dep:tracing",
+    "dep:anyhow",
+    "dep:ng-db",
     "ng-infra/server",
-    "futures-util",
+    "dep:futures-util",
 ]
 
 [dependencies]

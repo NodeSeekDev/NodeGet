@@ -25,6 +25,8 @@ server = [
     "ng-core/for-server",
     "ng-token/server",
     "ng-task/server",
+    "ng-js-runtime/server",
+    "ng-js-worker/server",
 ]
 
 [dependencies]

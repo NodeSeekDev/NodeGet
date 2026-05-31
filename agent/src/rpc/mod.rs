@@ -6,9 +6,9 @@ pub mod multi_server;
 use crate::config_access::get_agent_config;
 use crate::rpc::multi_server::subscribe_to;
 use log::{error, info, warn};
-use nodeget_lib::config::agent::AgentConfig;
-use nodeget_lib::task::TaskEvent;
-use nodeget_lib::utils::JsonError;
+use ng_config::config::agent::AgentConfig;
+use ng_task::TaskEvent;
+use ng_core::utils::JsonError;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::task::JoinSet;
@@ -109,6 +109,14 @@ pub async fn handle_error_message() {
             let mut per_message_tasks = JoinSet::new();
 
             loop {
+                while let Some(join_result) = per_message_tasks.try_join_next() {
+                    if let Err(e) = join_result {
+                        if !e.is_cancelled() {
+                            warn!("[{}] Error handler task failed: {e}", server.name);
+                        }
+                    }
+                }
+
                 let message = match rx.recv().await {
                     Ok(msg) => msg,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {

@@ -3,8 +3,8 @@ use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, Resol
 use hickory_resolver::proto::rr::{RData, RecordType};
 use hickory_resolver::system_conf::read_system_conf;
 use log::warn;
-use nodeget_lib::error::NodegetError;
-use nodeget_lib::task::{DnsRecordResult, DnsRecordType, DnsTask};
+use ng_core::error::NodegetError;
+use ng_task::{DnsRecordResult, DnsRecordType, DnsTask};
 use std::net::SocketAddr;
 use std::time::Instant;
 

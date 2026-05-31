@@ -1,7 +1,7 @@
 use crate::config_access::get_agent_config;
 use log::error;
-use nodeget_lib::error::NodegetError;
-use nodeget_lib::task::ExecuteTask;
+use ng_core::error::NodegetError;
+use ng_task::ExecuteTask;
 use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;

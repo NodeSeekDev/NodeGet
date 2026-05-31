@@ -1,6 +1,6 @@
 use crate::AGENT_CONFIG;
 use log::trace;
-use nodeget_lib::config::agent::IpProvider;
+use ng_config::config::agent::IpProvider;
 use reqwest::Client;
 use reqwest::header::USER_AGENT;
 use serde_json::Value;

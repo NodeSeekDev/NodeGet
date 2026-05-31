@@ -25,6 +25,7 @@ server = [
     "ng-db/server",
     "ng-infra/server",
     "ng-task/server",
+    "ng-token/server",
 ]
 
 [dependencies]

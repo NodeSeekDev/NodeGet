@@ -2,12 +2,12 @@ use crate::monitoring::gpu::{DynamicDataFromGpu, StaticDataFromGpu};
 use crate::monitoring::network_connections::calc_connections;
 use crate::monitoring::system_impls::{DynamicDataFromSystem, StaticDataFromSystem};
 use crate::monitoring::{refresh_global_disk, refresh_global_network};
-use nodeget_lib::monitoring::data_structure::DiskKind::{Hdd, Ssd, Unknown};
-use nodeget_lib::monitoring::data_structure::{
+use ng_monitoring::data_structure::DiskKind::{Hdd, Ssd, Unknown};
+use ng_monitoring::data_structure::{
     DynamicMonitoringData, DynamicNetworkData, DynamicPerDiskData, DynamicPerNetworkInterfaceData,
     StaticMonitoringData,
 };
-use nodeget_lib::utils::get_local_timestamp_ms;
+use ng_core::utils::get_local_timestamp_ms;
 use sysinfo::DiskKind;
 
 // 监控数据获取 trait，定义了刷新和获取监控数据的方法

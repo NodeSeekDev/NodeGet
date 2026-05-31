@@ -308,7 +308,7 @@ impl RpcServer for NodegetServerRpcImpl {
 
                 // 1. Check if update needed
                 let (current_version, target_version, should_update) =
-                    nodeget_lib::self_update::check_if_update_needed(&tag);
+                    ng_core::self_update::check_if_update_needed(&tag);
 
                 if !should_update {
                     tracing::info!(
@@ -328,7 +328,7 @@ impl RpcServer for NodegetServerRpcImpl {
                 );
 
                 // 3. Get download URL
-                let url = nodeget_lib::self_update::get_server_url(&tag).ok_or_else(|| {
+                let url = ng_core::self_update::get_server_url(&tag).ok_or_else(|| {
                     ng_core::error::NodegetError::Other(format!("Failed to get download URL for tag: {tag}"))
                 })?;
 
@@ -368,7 +368,7 @@ impl RpcServer for NodegetServerRpcImpl {
                 tracing::info!(target: "server", size = bytes.len(), "Update downloaded");
 
                 // 5. Replace binary
-                if !nodeget_lib::self_update::replace_binary(bytes.to_vec()) {
+                if !ng_core::self_update::replace_binary(bytes.to_vec()) {
                     return Err(ng_core::error::NodegetError::Other("Failed to replace binary".to_owned()).into());
                 }
 
@@ -376,7 +376,7 @@ impl RpcServer for NodegetServerRpcImpl {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    let current = nodeget_lib::self_update::canonical_exe_path().ok_or_else(|| {
+                    let current = ng_core::self_update::canonical_exe_path().ok_or_else(|| {
                         ng_core::error::NodegetError::Other("Failed to get canonical exe path".to_owned())
                     })?;
                     let perms = std::fs::Permissions::from_mode(0o755);
@@ -393,11 +393,11 @@ impl RpcServer for NodegetServerRpcImpl {
                     tracing::info!(target: "server", "Restarting server...");
                     #[cfg(target_os = "windows")]
                     {
-                        nodeget_lib::self_update::restart_process();
+                        ng_core::self_update::restart_process();
                     }
                     #[cfg(not(target_os = "windows"))]
                     {
-                        nodeget_lib::self_update::restart_process_with_exec_v();
+                        ng_core::self_update::restart_process_with_exec_v();
                     }
                 });
 

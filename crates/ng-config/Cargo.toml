@@ -7,7 +7,7 @@ repository.workspace = true
 
 [features]
 default = []
-server = ["dep:jsonrpsee", "dep:ng-token", "ng-core/for-server"]
+server = ["dep:jsonrpsee", "dep:ng-token", "ng-token/server", "ng-core/for-server"]
 
 [dependencies]
 # Internal

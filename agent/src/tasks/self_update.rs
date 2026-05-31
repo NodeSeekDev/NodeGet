@@ -1,4 +1,4 @@
-use nodeget_lib::self_update::{
+use ng_core::self_update::{
     canonical_exe_path, check_if_update_needed, get_url, replace_binary,
 };
 

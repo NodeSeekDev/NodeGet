@@ -1,137 +1,44 @@
 use crate::utils::version::NodeGetVersion;
 
 #[cfg(feature = "for-agent")]
-const ARCH_NAME: [(&str, &str); 25] = [
-    // Linux x86_64
-    (
-        "x86_64-unknown-linux-musl",
-        "nodeget-agent-linux-x86_64-musl",
-    ),
+const ARCH_NAME: [(&str, &str); 24] = [
+    ("x86_64-unknown-linux-musl", "nodeget-agent-linux-x86_64-musl"),
     ("x86_64-unknown-linux-gnu", "nodeget-agent-linux-x86_64-gnu"),
-    // Linux i686
     ("i686-unknown-linux-gnu", "nodeget-agent-linux-i686-gnu"),
     ("i686-unknown-linux-musl", "nodeget-agent-linux-i686-musl"),
-    // Linux aarch64
-    (
-        "aarch64-unknown-linux-gnu",
-        "nodeget-agent-linux-aarch64-gnu",
-    ),
-    (
-        "aarch64-unknown-linux-musl",
-        "nodeget-agent-linux-aarch64-musl",
-    ),
-    // Linux arm
-    (
-        "arm-unknown-linux-gnueabi",
-        "nodeget-agent-linux-arm-gnueabi",
-    ),
-    (
-        "arm-unknown-linux-gnueabihf",
-        "nodeget-agent-linux-arm-gnueabihf",
-    ),
-    (
-        "arm-unknown-linux-musleabi",
-        "nodeget-agent-linux-arm-musleabi",
-    ),
-    (
-        "arm-unknown-linux-musleabihf",
-        "nodeget-agent-linux-arm-musleabihf",
-    ),
-    // Linux armv7
-    (
-        "armv7-unknown-linux-gnueabi",
-        "nodeget-agent-linux-armv7-gnueabi",
-    ),
-    (
-        "armv7-unknown-linux-gnueabihf",
-        "nodeget-agent-linux-armv7-gnueabihf",
-    ),
-    (
-        "armv7-unknown-linux-musleabi",
-        "nodeget-agent-linux-armv7-musleabi",
-    ),
-    (
-        "armv7-unknown-linux-musleabihf",
-        "nodeget-agent-linux-armv7-musleabihf",
-    ),
-    // Linux thumbv7neon
-    (
-        "thumbv7neon-unknown-linux-gnueabihf",
-        "nodeget-agent-linux-thumbv7neon-gnueabihf",
-    ),
-    // Linux riscv64 / powerpc / s390x / sparc64
-    (
-        "riscv64gc-unknown-linux-gnu",
-        "nodeget-agent-linux-riscv64gc-gnu",
-    ),
-    (
-        "powerpc64-unknown-linux-gnu",
-        "nodeget-agent-linux-powerpc64-gnu",
-    ),
-    (
-        "powerpc64le-unknown-linux-gnu",
-        "nodeget-agent-linux-powerpc64le-gnu",
-    ),
+    ("aarch64-unknown-linux-gnu", "nodeget-agent-linux-aarch64-gnu"),
+    ("aarch64-unknown-linux-musl", "nodeget-agent-linux-aarch64-musl"),
+    ("arm-unknown-linux-gnueabi", "nodeget-agent-linux-arm-gnueabi"),
+    ("arm-unknown-linux-gnueabihf", "nodeget-agent-linux-arm-gnueabihf"),
+    ("arm-unknown-linux-musleabi", "nodeget-agent-linux-arm-musleabi"),
+    ("arm-unknown-linux-musleabihf", "nodeget-agent-linux-arm-musleabihf"),
+    ("armv7-unknown-linux-gnueabi", "nodeget-agent-linux-armv7-gnueabi"),
+    ("armv7-unknown-linux-gnueabihf", "nodeget-agent-linux-armv7-gnueabihf"),
+    ("armv7-unknown-linux-musleabi", "nodeget-agent-linux-armv7-musleabi"),
+    ("armv7-unknown-linux-musleabihf", "nodeget-agent-linux-armv7-musleabihf"),
+    ("thumbv7neon-unknown-linux-gnueabihf", "nodeget-agent-linux-thumbv7neon-gnueabihf"),
+    ("riscv64gc-unknown-linux-gnu", "nodeget-agent-linux-riscv64gc-gnu"),
+    ("powerpc64-unknown-linux-gnu", "nodeget-agent-linux-powerpc64-gnu"),
+    ("powerpc64le-unknown-linux-gnu", "nodeget-agent-linux-powerpc64le-gnu"),
     ("s390x-unknown-linux-gnu", "nodeget-agent-linux-s390x-gnu"),
-    (
-        "sparc64-unknown-linux-gnu",
-        "nodeget-agent-linux-sparc64-gnu",
-    ),
-    // Windows
+    ("sparc64-unknown-linux-gnu", "nodeget-agent-linux-sparc64-gnu"),
     ("x86_64-pc-windows-msvc", "nodeget-agent-windows-x86_64.exe"),
     ("i686-pc-windows-msvc", "nodeget-agent-windows-i686.exe"),
-    (
-        "aarch64-pc-windows-msvc",
-        "nodeget-agent-windows-aarch64.exe",
-    ),
-    // macOS
-    ("x86_64-apple-darwin", "nodeget-agent-macos-x86_64"),
+    ("aarch64-pc-windows-msvc", "nodeget-agent-windows-aarch64.exe"),
     ("aarch64-apple-darwin", "nodeget-agent-macos-aarch64"),
 ];
 
 #[cfg(feature = "for-server")]
 const SERVER_ARCH_NAME: [(&str, &str); 10] = [
-    // Linux x86_64
-    (
-        "x86_64-unknown-linux-musl",
-        "nodeget-server-linux-x86_64-musl",
-    ),
-    (
-        "x86_64-unknown-linux-gnu",
-        "nodeget-server-linux-x86_64-gnu",
-    ),
-    // Linux aarch64
-    (
-        "aarch64-unknown-linux-gnu",
-        "nodeget-server-linux-aarch64-gnu",
-    ),
-    (
-        "aarch64-unknown-linux-musl",
-        "nodeget-server-linux-aarch64-musl",
-    ),
-    // Linux armv7
-    (
-        "armv7-unknown-linux-gnueabi",
-        "nodeget-server-linux-armv7-gnueabi",
-    ),
-    (
-        "armv7-unknown-linux-gnueabihf",
-        "nodeget-server-linux-armv7-gnueabihf",
-    ),
-    (
-        "armv7-unknown-linux-musleabi",
-        "nodeget-server-linux-armv7-musleabi",
-    ),
-    (
-        "armv7-unknown-linux-musleabihf",
-        "nodeget-server-linux-armv7-musleabihf",
-    ),
-    // Windows
-    (
-        "x86_64-pc-windows-msvc",
-        "nodeget-server-windows-x86_64.exe",
-    ),
-    // macOS
+    ("x86_64-unknown-linux-musl", "nodeget-server-linux-x86_64-musl"),
+    ("x86_64-unknown-linux-gnu", "nodeget-server-linux-x86_64-gnu"),
+    ("aarch64-unknown-linux-gnu", "nodeget-server-linux-aarch64-gnu"),
+    ("aarch64-unknown-linux-musl", "nodeget-server-linux-aarch64-musl"),
+    ("armv7-unknown-linux-gnueabi", "nodeget-server-linux-armv7-gnueabi"),
+    ("armv7-unknown-linux-gnueabihf", "nodeget-server-linux-armv7-gnueabihf"),
+    ("armv7-unknown-linux-musleabi", "nodeget-server-linux-armv7-musleabi"),
+    ("armv7-unknown-linux-musleabihf", "nodeget-server-linux-armv7-musleabihf"),
+    ("x86_64-pc-windows-msvc", "nodeget-server-windows-x86_64.exe"),
     ("aarch64-apple-darwin", "nodeget-server-macos-aarch64"),
 ];
 
@@ -148,7 +55,7 @@ fn should_update(target: (u32, u32, u32), current: (u32, u32, u32)) -> bool {
     target != current
 }
 
-/// 获取当前进程对应的“原”二进制路径：
+/// 获取当前进程对应的"原"二进制路径：
 /// 如果 current_exe() 因为之前的 self_update rename 而指向 .old / .old.old …
 /// 则把所有末尾的 .old extension 剥掉，确保始终指向用户真正启动的那个文件。
 pub fn canonical_exe_path() -> Option<std::path::PathBuf> {
@@ -227,7 +134,6 @@ pub fn replace_binary(binary: Vec<u8>) -> bool {
     }
 
     if std::fs::write(&current, &binary).is_err() {
-        // Try to restore backup
         if let Err(e) = std::fs::rename(&backup, &current) {
             tracing::error!(error = %e, "Failed to restore backup during rollback");
         }
@@ -237,7 +143,7 @@ pub fn replace_binary(binary: Vec<u8>) -> bool {
     true
 }
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), any(feature = "for-agent", feature = "for-server")))]
 pub fn restart_process() -> ! {
     let current = canonical_exe_path().unwrap_or_else(|| {
         tracing::error!("Failed to get canonical exe path");
@@ -245,7 +151,7 @@ pub fn restart_process() -> ! {
     });
 
     let mut args = std::env::args();
-    let _ = args.next(); // skip program name
+    let _ = args.next();
 
     tracing::info!("Restarting agent: {}", current.display());
 
@@ -258,7 +164,12 @@ pub fn restart_process() -> ! {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, any(feature = "for-agent", feature = "for-server")))]
+pub fn restart_process() -> ! {
+    restart_process_with_exec_v()
+}
+
+#[cfg(all(unix, any(feature = "for-agent", feature = "for-server")))]
 pub fn restart_process_with_exec_v() -> ! {
     use std::ffi::CString;
     use std::os::raw::c_char;
@@ -271,21 +182,17 @@ pub fn restart_process_with_exec_v() -> ! {
 
     let path = CString::new(current.to_str().unwrap()).unwrap();
 
-    // 每个参数转成独立的 CString，Vec 保活指针
     let c_args: Vec<CString> = std::env::args().map(|s| CString::new(s).unwrap()).collect();
 
     let mut ptrs: Vec<*const c_char> = c_args.iter().map(|c| c.as_ptr()).collect();
-    ptrs.push(ptr::null()); // argv 以 NULL 结尾
+    ptrs.push(ptr::null());
 
     tracing::info!("Starting execv...");
 
-    // SAFETY: `path` 和 `ptrs` 均来自有效的 CString 和已 NULL 结尾的 argv 数组，
-    // 满足 `execv(const char *pathname, char *const argv[])` 的 C 契约。
     unsafe {
         libc::execv(path.as_ptr(), ptrs.as_ptr());
     }
 
-    // execv 只在失败时返回
     tracing::error!("execv failed: {}", std::io::Error::last_os_error());
     std::process::exit(1);
 }

@@ -1,9 +1,7 @@
 [workspace]
 members = [
     "server",
-    "server/migration",
     "agent",
-    "nodeget-lib",
     "crates/ng-core",
     "crates/ng-db",
     "crates/ng-infra",
@@ -17,7 +15,6 @@ members = [
     "crates/ng-js-worker",
     "crates/ng-static",
     "crates/ng-terminal",
-    "crates/ng-agent-deps",
     "crates/ng-db/migration",
 ]
 resolver = "2"
@@ -79,8 +76,6 @@ ng-js-runtime = { path = "crates/ng-js-runtime" }
 ng-js-worker = { path = "crates/ng-js-worker" }
 ng-static = { path = "crates/ng-static" }
 ng-terminal = { path = "crates/ng-terminal" }
-ng-agent-deps = { path = "crates/ng-agent-deps" }
-migration = { path = "server/migration" }
 ng-migration = { path = "crates/ng-db/migration" }
 
 [profile]

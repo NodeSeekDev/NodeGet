@@ -5,11 +5,6 @@ license.workspace = true
 edition.workspace = true
 repository.workspace = true
 
-[features]
-default = []
-for-server = []
-for-agent = []
-
 [dependencies]
 thiserror = { workspace = true }
 anyhow = { workspace = true }
@@ -18,3 +13,11 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
 tracing = { workspace = true }
+
+# for-server / for-agent feature dependencies
+libc = { version = "0.2.175", default-features = false, optional = true }
+
+[features]
+default = []
+for-server = ["dep:libc"]
+for-agent = ["dep:libc"]

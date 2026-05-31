@@ -54,8 +54,5 @@ tracing-subscriber = { workspace = true }
 # JS Worker 路由处理
 base64 = { workspace = true }
 
-# 保留 nodeget-lib 用于 self_update 等尚未迁移的功能
-nodeget-lib = { path = "../nodeget-lib", features = ["for-server"] }
-
 [features]
 default = []

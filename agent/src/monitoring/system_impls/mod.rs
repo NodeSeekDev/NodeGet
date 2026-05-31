@@ -1,7 +1,7 @@
 // 系统监控相关功能
 
 use crate::monitoring::refresh_global_system;
-use nodeget_lib::monitoring::data_structure::{
+use ng_monitoring::data_structure::{
     DynamicCPUData, DynamicLoadData, DynamicPerCpuCoreData, DynamicRamData, DynamicSystemData,
     StaticCPUData, StaticPerCpuCoreData, StaticSystemData,
 };

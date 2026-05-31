@@ -1,4 +1,4 @@
-use nodeget_lib::error::NodegetError;
+use ng_core::error::NodegetError;
 use reqwest::Client;
 use std::sync::OnceLock;
 use tokio::sync::OnceCell;

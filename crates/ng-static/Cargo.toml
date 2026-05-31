@@ -20,6 +20,7 @@ server = [
     "dep:axum",
     "dep:dav-server",
     "dep:ng-config",
+    "ng-config/server",
     "ng-infra/server",
     "ng-db/server",
 ]
