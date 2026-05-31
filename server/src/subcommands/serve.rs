@@ -99,6 +99,10 @@ pub async fn run(config: &ServerConfig) {
     ng_terminal::set_token_checker(Box::new(TerminalTokenChecker));
     debug!(target: "server", "ng-terminal token checker registered");
 
+    // ng-js-runtime: 注册 JsWorkerService (inline_call + nodeget RPC dispatch)
+    ng_js_runtime::js_worker_service::set_js_worker_service(Box::new(JsWorkerServiceImpl));
+    debug!(target: "server", "ng-js-runtime JsWorkerService registered");
+
     let rpc_module = get_modules();
 
     let (stop_handle, _server_handle) = jsonrpsee::server::stop_channel();
@@ -1011,5 +1015,53 @@ impl ng_terminal::TokenPermissionChecker for TerminalTokenChecker {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>> {
         let token_or_auth = token_or_auth.clone();
         Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
+    }
+}
+
+struct JsWorkerServiceImpl;
+
+impl ng_js_runtime::js_worker_service::JsWorkerService for JsWorkerServiceImpl {
+    fn run_inline_call_and_record_result(
+        &self,
+        js_script_name: String,
+        params: serde_json::Value,
+        timeout_sec: Option<f64>,
+        inline_caller: Option<String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<serde_json::Value>> + Send>> {
+        Box::pin(async move {
+            ng_js_worker::service::run_inline_call_and_record_result(
+                js_script_name, params, timeout_sec, inline_caller,
+            )
+            .await
+        })
+    }
+
+    fn get_rpc_module(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Box<dyn ng_js_runtime::js_worker_service::RawJsonDispatcher + Send>> + Send>> {
+        Box::pin(async move {
+            let module = crate::rpc_nodeget::get_modules();
+            Box::new(RpcModuleDispatcher(module)) as Box<dyn ng_js_runtime::js_worker_service::RawJsonDispatcher + Send>
+        })
+    }
+}
+
+struct RpcModuleDispatcher(jsonrpsee::RpcModule<()>);
+
+impl ng_js_runtime::js_worker_service::RawJsonDispatcher for RpcModuleDispatcher {
+    fn raw_json_request(
+        &self,
+        json: &str,
+        buf_size: usize,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<(String, ())>> + Send + '_>> {
+        let json = json.to_owned();
+        let module = self.0.clone();
+        Box::pin(async move {
+            let (resp, _stream) = module
+                .raw_json_request(&json, buf_size)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            Ok((resp.to_string(), ()))
+        })
     }
 }
