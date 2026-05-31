@@ -1,0 +1,24 @@
+[package]
+name = "ng-db"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+server = ["dep:jsonrpsee", "dep:tokio", "dep:hex", "dep:tracing", "sea-orm/with-json", "sea-orm/with-uuid", "dep:ng_db_migration"]
+
+[dependencies]
+ng-core = { workspace = true }
+sea-orm = { workspace = true, default-features = false, features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres", "macros"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+
+# server feature dependencies
+jsonrpsee = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+ng_db_migration = { package = "ng-migration", path = "migration", optional = true }

@@ -4,6 +4,8 @@
 
 调用者可以通过 `js-result_query` 查询 JsResult 执行结果。
 
+> **默认 LIMIT**：若 `condition` 中未指定 `limit` 或 `last`，查询默认限制返回 1,000 条记录。显式指定 `limit` 可覆盖此默认值。
+
 ### 方法
 
 调用方法名为 `js-result_query`，需要提供以下参数：

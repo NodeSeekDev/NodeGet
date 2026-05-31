@@ -25,12 +25,10 @@
 返回 `Vec<Uuid>` 的 JSON 数组，每个元素为一个 UUID 字符串，按字母顺序排序。
 
 ```json
-{
-  "uuids" [
+[
   "a1b2c3d4-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
   "e8583352-39e8-5a5b-b66c-e450689088fd"
 ]
-}
 ```
 
 返回结果来源于 `monitoring_uuid_cache` 中的权威缓存，已过滤掉被软删除的记录。
@@ -42,7 +40,7 @@
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "agent-uuid.list_all",
+  "method": "agent-uuid_list_all",
   "params": {
     "token": "demo_token"
   },
@@ -115,7 +113,7 @@
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "agent-uuid.delete",
+  "method": "agent-uuid_delete",
   "params": {
     "token": "demo_token",
     "agent_uuid": "e8583352-39e8-5a5b-b66c-e450689088fd"
@@ -154,7 +152,7 @@
 
 - 软删除仅设置 `monitoring_uuid` 表中的 `soft_delete` 字段为 `true`，不会物理删除任何数据
 - 不会级联删除该 Agent 关联的监控数据、任务记录等历史数据
-- 被软删除的 UUID 在后续 `agent-uuid.list_all` 调用中不再出现
+- 被软删除的 UUID 在后续 `agent-uuid_list_all` 调用中不再出现
 - 若该 Agent 后续重新上报数据，其 UUID 可能再次出现在列表中（取决于具体业务逻辑）
 
 ---
@@ -199,7 +197,7 @@
 - `uuid`: Agent 的 UUID
 - `soft_delete`: `true` 表示该 Agent 已被软删除，`false` 表示活跃状态
 
-与 `agent-uuid.list_all` 的区别在于：此方法返回**所有** UUID（包括已软删除的），并明确标注每个 UUID 的状态。
+与 `agent-uuid_list_all` 的区别在于：此方法返回**所有** UUID（包括已软删除的），并明确标注每个 UUID 的状态。
 
 ### 完整示例
 

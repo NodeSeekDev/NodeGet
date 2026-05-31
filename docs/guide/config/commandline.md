@@ -13,6 +13,7 @@ Commands:
     init              Initialize database and super token, then exit.
     roll-super-token  Rotate the super token (id = 1) after interactive confirmation, then exit.
     get-uuid          Print server UUID from config and exit.
+    version           Print version and exit.
 
 ./nodeget-server serve -h
 Usage: nodeget-server serve --config <CONFIG>

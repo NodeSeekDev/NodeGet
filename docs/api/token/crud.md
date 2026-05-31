@@ -11,14 +11,14 @@
 ```json
 {
   "token": "demo_token",            // 需要查询的 Token
-  "supertoken": "SUPER_TOKEN"       // 可选，SuperToken，启用后允许 token 传入 username / token_key
+  "supertoken": "SUPER_TOKEN"       // 可选，Super Token，启用后允许 token 传入 username / token_key
 }
 ```
 
 - `token`: 需要查询的 Token，支持 `token_key:token_secret` 或 `username|password` 格式
-- `supertoken`（可选）: SuperToken，启用后允许 `token` 传入 `username` / `token_key` 简写查询
+- `supertoken`（可选）: Super Token，启用后允许 `token` 传入 `username` / `token_key` 简写查询
 
-当你持有 SuperToken 时，可以用简写查询指定 Token：
+当你持有 Super Token 时，可以用简写查询指定 Token：
 
 ```json
 {
@@ -132,7 +132,7 @@
 }
 ```
 
-使用 SuperToken 简写查询:
+使用 Super Token 简写查询:
 
 ```json
 {
@@ -148,7 +148,7 @@
 
 ## Create Token
 
-只有 SuperToken 有权限创建 Token。
+只有 Super Token 有权限创建 Token。
 
 ### 方法
 
@@ -156,7 +156,7 @@
 
 ```json
 {
-  "father_token": "demo_super_token", // 父 Token，必须为 SuperToken
+  "father_token": "demo_super_token", // 父 Token，必须为 Super Token
   "token_creation": {                 // TokenCreationRequest 结构体
     "username": "GM",                 // 可选，用户名
     "password": "ILoveRust1",         // 可选，密码
@@ -179,7 +179,7 @@ pub struct TokenCreationRequest {
     pub password: Option<String>,      // 可选，密码
     pub timestamp_from: Option<i64>,   // 可选，有效期起始，毫秒时间戳
     pub timestamp_to: Option<i64>,     // 可选，有效期结束，毫秒时间戳
-    pub version: Option<u8>,           // 可选，版本号，暂时固定为 1
+    pub version: Option<i32>,           // 可选，版本号，暂时固定为 1
     pub token_limit: Vec<Limit>,       // 权限列表
 }
 ```
@@ -191,7 +191,7 @@ pub struct TokenCreationRequest {
 
 ### 权限要求
 
-只有 **SuperToken** 可以创建 Token。
+只有 **Super Token** 可以创建 Token。
 
 普通 Token 会返回权限错误。
 
@@ -267,7 +267,7 @@ pub struct TokenCreationRequest {
 
 ```json
 {
-  "token": "demo_super_token",                    // SuperToken
+  "token": "demo_super_token",                    // Super Token
   "target_token": "target_token_key_or_username"   // 目标 Token 的 token_key 或 username
 }
 ```
@@ -283,14 +283,14 @@ pub struct TokenCreationRequest {
 
 ### 权限要求
 
-只有 **SuperToken** 可以删除 Token。
+只有 **Super Token** 可以删除 Token。
 
 普通 Token 会返回权限错误。
 
 安全保护:
 
-- **SuperToken 不可删除**
-- 当 `target_token` 命中 SuperToken 的 `token_key` 或 `username` 时，服务端会拒绝请求并返回权限错误。
+- **Super Token 不可删除**
+- 当 `target_token` 命中 Super Token 的 `token_key` 或 `username` 时，服务端会拒绝请求并返回权限错误。
 
 注意事项:
 
@@ -330,7 +330,7 @@ pub struct TokenCreationRequest {
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "message": "Token n0kB8lSAykFd9Egu deleted successfully by SuperToken",
+    "message": "Token n0kB8lSAykFd9Egu deleted successfully by Super Token",
     "rows_affected": 1,
     "matched_by": "token_key"
   }
@@ -347,7 +347,7 @@ pub struct TokenCreationRequest {
 
 ```json
 {
-  "token": "demo_super_token",                    // SuperToken
+  "token": "demo_super_token",                    // Super Token
   "target_token": "target_token_key_or_username",  // 目标 Token 的 token_key 或 username
   "limit": [                                       // 新的权限列表，会覆盖原有 token_limit
     {
@@ -377,7 +377,7 @@ pub struct TokenCreationRequest {
 
 ### 权限要求
 
-只有 **SuperToken** 可以调用该方法。
+只有 **Super Token** 可以调用该方法。
 
 普通 Token 会返回权限错误。
 
@@ -448,13 +448,13 @@ pub struct TokenCreationRequest {
 
 ```json
 {
-  "token": "demo_super_token" // SuperToken
+  "token": "demo_super_token" // Super Token
 }
 ```
 
 ### 权限要求
 
-只有 **SuperToken** 可以调用该方法。
+只有 **Super Token** 可以调用该方法。
 
 普通 Token 会返回权限错误。
 
@@ -471,7 +471,7 @@ pub struct TokenCreationRequest {
       "timestamp_from": null,               // 有效期起始
       "timestamp_to": null,                 // 有效期结束
       "token_limit": [],                    // 权限列表
-      "username": "root"                    // 用户名，SuperToken 固定为 root
+      "username": "root"                    // 用户名，Super Token 固定为 root
     },
     {
       "version": 1,
@@ -490,11 +490,9 @@ pub struct TokenCreationRequest {
           ]
         }
       ],
-          "username": "gm"
-        }
-      ]
+      "username": "gm"
     }
-  }
+  ]
 }
 ```
 
@@ -508,7 +506,7 @@ pub struct TokenCreationRequest {
 
 ```json
 {
-  "token": "demo_super_token",                    // SuperToken，用于鉴权
+  "token": "demo_super_token",                    // Super Token，用于鉴权
   "target_token": "target_token_key_or_username",   // 目标 Token 的 token_key 或 username
   "new_password": "new_password_here"               // 新密码，不少于 6 个字符
 }
@@ -525,7 +523,7 @@ pub struct TokenCreationRequest {
 
 ### 权限要求
 
-只有 **SuperToken** 可以调用该方法。
+只有 **Super Token** 可以调用该方法。
 
 普通 Token 会返回权限错误。
 
@@ -585,7 +583,7 @@ pub struct TokenCreationRequest {
 
 ```json
 {
-  "token": "demo_super_token",                    // SuperToken，用于鉴权
+  "token": "demo_super_token",                    // Super Token，用于鉴权
   "target_token": "target_token_key_or_username"   // 目标 Token 的 token_key 或 username
 }
 ```
@@ -601,7 +599,7 @@ pub struct TokenCreationRequest {
 
 ### 权限要求
 
-只有 **SuperToken** 可以调用该方法。
+只有 **Super Token** 可以调用该方法。
 
 普通 Token 会返回权限错误。
 
@@ -609,7 +607,7 @@ pub struct TokenCreationRequest {
 
 - 当 `target_token` 为空时，返回 `InvalidInput` 错误
 - 当目标 Token 不存在时，返回 `NotFound` 错误
-- SuperToken 的 Secret 也可以被重新生成（请妥善保管新生成的 Secret）
+- Super Token 的 Secret 也可以被重新生成（请妥善保管新生成的 Secret）
 - 修改后会自动刷新 Token 缓存，无需重启 Server
 
 ### 返回值
@@ -652,63 +650,4 @@ pub struct TokenCreationRequest {
 }
 ```
 
-```
 
-注意事项:
-
-`token_secret` 和 `password` 不会在该接口中返回。
-
-### 完整示例
-
-请求:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "token_list_all_tokens",
-  "params": {
-    "token": "ROOT_KEY:ROOT_SECRET"
-  },
-  "id": 1
-}
-```
-
-响应:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "tokens": [
-      {
-        "version": 1,
-        "token_key": "n0kB8lSAykFd9Egu",
-        "timestamp_from": null,
-        "timestamp_to": null,
-        "token_limit": [],
-        "username": "root"
-      },
-      {
-        "version": 1,
-        "token_key": "demo_child_key",
-        "timestamp_from": 1735689600000,
-        "timestamp_to": 1767225600000,
-        "token_limit": [
-          {
-            "scopes": [
-              "global"
-            ],
-            "permissions": [
-              {
-                "task": "listen"
-              }
-            ]
-          }
-        ],
-        "username": "gm"
-      }
-    ]
-  }
-}
-```

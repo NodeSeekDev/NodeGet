@@ -43,7 +43,7 @@ pub enum Db {
 }
 ```
 
-授权 Scope 为 `Scope::Global`（即权限对所有数据库实例生效）。
+授权 Scope 为 `Scope::Db(name)`（即权限仅对指定数据库实例生效）。只有 `db_list` 方法使用 `Scope::Global` + `Db::List` 权限。
 
 ---
 
@@ -57,10 +57,10 @@ pub enum Db {
 {
   "jsonrpc": "2.0",
   "method": "db_create",
-  "params": [
-    "TOKEN",
-    "my_database"
-  ],
+  "params": {
+    "token": "ADMIN:SECRET",
+    "name": "my_database"
+  },
   "id": 1
 }
 ```
@@ -101,10 +101,10 @@ pub enum Db {
 {
   "jsonrpc": "2.0",
   "method": "db_read",
-  "params": [
-    "TOKEN",
-    "my_database"
-  ],
+  "params": {
+    "token": "TOKEN",
+    "name": "my_database"
+  },
   "id": 1
 }
 ```
@@ -146,11 +146,11 @@ pub enum Db {
 {
   "jsonrpc": "2.0",
   "method": "db_update",
-  "params": [
-    "TOKEN",
-    "old_name",
-    "new_name"
-  ],
+  "params": {
+    "token": "TOKEN",
+    "name": "old_name",
+    "new_name": "new_name"
+  },
   "id": 1
 }
 ```
@@ -179,7 +179,7 @@ pub enum Db {
 | 102 | Permission Denied   |
 | 105 | Database not found  |
 | 108 | new_name 已存在        |
-| 112 | I/O error (重命名文件失败) |
+| 101 | I/O error (重命名文件失败) |
 
 ---
 
@@ -193,10 +193,10 @@ pub enum Db {
 {
   "jsonrpc": "2.0",
   "method": "db_delete",
-  "params": [
-    "TOKEN",
-    "my_database"
-  ],
+  "params": {
+    "token": "TOKEN",
+    "name": "my_database"
+  },
   "id": 1
 }
 ```
@@ -232,9 +232,9 @@ pub enum Db {
 {
   "jsonrpc": "2.0",
   "method": "db_list",
-  "params": [
-    "TOKEN"
-  ],
+  "params": {
+    "token": "TOKEN"
+  },
   "id": 1
 }
 ```
@@ -277,11 +277,11 @@ pub enum Db {
 |-------------------|-------------|------------------------|
 | `id`              | i64         | db_registry 表中的主键 ID   |
 | `name`            | String      | 数据库名称                  |
-| `file_path`       | String      | SQLite 文件在磁盘上的绝对路径     |
+| `file_path`       | String      | SQLite 文件在磁盘上的路径（相对于工作目录） |
 | `db_connections`  | `Option<i32>` | 当前活跃连接数                |
 | `max_lifetime_ms` | `Option<i64>` | 连接空闲超时时间（毫秒），null=永不超时 |
 | `created_at`      | i64         | 创建时间戳（毫秒）              |
-| `is_active`       | bool        | 是否正在连接池中（可立即使用）        |
+| `is_active`       | bool        | 是否正在连接池中：创建后为 true，`get_conn()` 连接成功后为 true，超过 `max_lifetime_ms` 未被访问变为 false，为 false 时下次调用会自动重建启动连接池 |
 
 ---
 
@@ -293,7 +293,7 @@ SELECT / PRAGMA / EXPLAIN / WITH 语句自动返回结果行，其余语句（IN
 
 ### 注意事项
 
-- SQL 类型判断使用 `trim_start_matches` + `to_uppercase` 后检查前缀
+- SQL 类型判断使用 `trim_start_matches` + `starts_with_ascii_ci` 后检查前缀
 - 多语句（含 `;`）**不被禁止**，由数据库引擎自行处理
 - 参数化查询防止 SQL 注入
 - 使用 `$1`, `$2`... 格式的命名参数（SQLite 和 PostgreSQL 均支持）
@@ -304,14 +304,12 @@ SELECT / PRAGMA / EXPLAIN / WITH 语句自动返回结果行，其余语句（IN
 {
   "jsonrpc": "2.0",
   "method": "db_exec_sql",
-  "params": [
-    "TOKEN",
-    "my_database",
-    "SELECT * FROM users WHERE age > $1",
-    [
-      18
-    ]
-  ],
+  "params": {
+    "token": "TOKEN",
+    "name": "my_database",
+    "sql": "SELECT * FROM users WHERE age > $1",
+    "params": [18]
+  },
   "id": 1
 }
 ```
@@ -359,12 +357,12 @@ SELECT / PRAGMA / EXPLAIN / WITH 语句自动返回结果行，其余语句（IN
 
 **参数说明:**
 
-| 位置 | 类型              | 说明                            |
-|----|-----------------|-------------------------------|
-| 0  | String          | Token 字符串                     |
-| 1  | String          | 目标数据库名称                       |
-| 2  | String          | SQL 语句（支持 `$1, $2` 占位符）       |
-| 3  | `array` / `null` | 参数数组，对应 `$1, $2`...。可传 `null` |
+| 参数    | 类型              | 说明                            |
+|-------|-----------------|-------------------------------|
+| token | String          | Token 字符串                     |
+| name  | String          | 目标数据库名称                       |
+| sql   | String          | SQL 语句（支持 `$1, $2` 占位符）       |
+| params | `array` / `null` | 参数数组，对应 `$1, $2`...。可传 `null` |
 
 **JSON 参数类型映射到 SeaORM Value:**
 
@@ -390,7 +388,7 @@ SELECT / PRAGMA / EXPLAIN / WITH 语句自动返回结果行，其余语句（IN
 
 ## Exec Templating
 
-参数化 SQL 执行。与 `exec_sql` 功能相同，但要求 `params` 必须为数组（不能为 `null`）。
+参数化 SQL 执行。与 `exec_sql` 功能相同，支持 `params` 为数组或 `null`（null 视为空数组）。
 
 这是推荐的接口，用于确保所有用户输入都通过参数化查询传入，防止 SQL 注入。
 
@@ -400,14 +398,12 @@ SELECT / PRAGMA / EXPLAIN / WITH 语句自动返回结果行，其余语句（IN
 {
   "jsonrpc": "2.0",
   "method": "db_exec_templating",
-  "params": [
-    "TOKEN",
-    "my_database",
-    "SELECT * FROM users WHERE name = $1",
-    [
-      "Alice"
-    ]
-  ],
+  "params": {
+    "token": "TOKEN",
+    "name": "my_database",
+    "sql": "SELECT * FROM users WHERE name = $1",
+    "params": ["Alice"]
+  },
   "id": 1
 }
 ```

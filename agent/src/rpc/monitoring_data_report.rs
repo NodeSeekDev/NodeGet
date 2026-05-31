@@ -2,8 +2,8 @@ use crate::config_access::get_agent_config;
 use crate::monitoring::impls::Monitor;
 use crate::rpc::multi_server::send_to;
 use log::{error, trace, warn};
-use nodeget_lib::config::agent::AgentConfig;
-use nodeget_lib::monitoring::data_structure::{
+use ng_config::config::agent::AgentConfig;
+use ng_monitoring::data_structure::{
     DynamicMonitoringData, DynamicMonitoringSummaryData, StaticMonitoringData,
 };
 use serde::Serialize;

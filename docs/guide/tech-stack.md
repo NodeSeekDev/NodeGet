@@ -5,6 +5,7 @@
 - Rust
 - SQLite / PostgreSQL
 - QuickJS (for js runtime)
+- WebDAV (dav-server)
 
 ## 前端（Dashboard）
 

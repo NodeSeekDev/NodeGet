@@ -1,7 +1,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use nodeget_lib::error::NodegetError;
-use nodeget_lib::task::{HttpRequestTask, HttpRequestTaskResult};
+use ng_core::error::NodegetError;
+use ng_task::{HttpRequestTask, HttpRequestTaskResult};
 use reqwest::{Client, Method};
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

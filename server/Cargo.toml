@@ -1,7 +1,7 @@
 [package]
 name = "nodeget-server"
-version = "0.4.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 description = "Next-generation server monitoring and management tools"
 license = "AGPL-3"
 readme = "../README.md"
@@ -9,60 +9,50 @@ repository = "https://github.com/NodeSeekDev/NodeGet"
 categories = ["asynchronous", "command-line-utilities", "network-programming", "os"]
 
 [dependencies]
-# 本地
-nodeget-lib = { path = "../nodeget-lib", features = ["for-server"] }
-migration = { path = "migration" }
+# ng-* 内部 crate（server feature）
+ng-core = { workspace = true, features = ["for-server"] }
+ng-db = { workspace = true, features = ["server"] }
+ng-infra = { workspace = true, features = ["server"] }
+ng-config = { workspace = true, features = ["server"] }
+ng-token = { workspace = true, features = ["server"] }
+ng-kv = { workspace = true, features = ["server"] }
+ng-task = { workspace = true, features = ["server"] }
+ng-monitoring = { workspace = true, features = ["server"] }
+ng-static = { workspace = true, features = ["server"] }
+ng-js-runtime = { workspace = true, features = ["server"] }
+ng-js-worker = { workspace = true, features = ["server"] }
+ng-crontab = { workspace = true, features = ["server"] }
+ng-terminal = { workspace = true, features = ["server"] }
 
 # 基础运行时
-tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
-chrono = { version = "0.4.43", default-features = false, features = ["now", "std"] }
-uuid = { version = "1.19.0", default-features = false, features = ["v4"] }
-futures-util = "0.3.31"
-sha2 = "0.11.0"
-subtle = "2.6.1"
-hex = "0.4.3"
-base64 = "0.22.1"
-cron = "0.16.0"
-anyhow = "1.0.100"
+tokio = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }
 
 # 数据库
-sea-orm = { version = "2.0.0-rc.38", default-features = false, features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres", "macros", "with-json", "with-uuid"] }
+sea-orm = { workspace = true }
 
 # Server
-#jsonrpsee = { version = "0.26.0", default-features = false, features = ["server", "macros"] }
-jsonrpsee = { git = "https://github.com/infinitefield/jsonrpsee.git", default-features = false, features = ["server", "macros"] }
-axum = { version = "0.8.8", default-features = false, features = ["tokio", "ws", "http1", "query"] }
-axum-server = { version = "0.8", features = ["tls-rustls"] }
-rustls = "0.23"
-tower = { version = "0.5.3", default-features = false }
+jsonrpsee = { workspace = true }
+axum = { workspace = true }
+axum-server = { workspace = true }
+rustls = { workspace = true }
+tower = { workspace = true }
 
 # 解析
-serde = "1.0.228"
-serde_json = "1.0.149"
-toml = { version = "1.1.2", default-features = false, features = ["std", "serde", "parse"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # HTTP Client
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
-
-# WebDAV
-dav-server = { version = "0.11.0", default-features = false, features = ["localfs"] }
+reqwest = { workspace = true }
 
 # 日志
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "chrono", "tracing-log"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
-# JS Runtime
-rquickjs = { version = "0.11", git = "https://github.com/delskayn/rquickjs.git", default-features = false, features = ["futures"] }
-llrt_fetch = { git = "https://github.com/awslabs/llrt.git", default-features = false, features = ["http1", "compression-rust", "webpki-roots", "tls-ring"] }
-llrt_buffer = { git = "https://github.com/awslabs/llrt.git", default-features = false }
-llrt_timers = { git = "https://github.com/awslabs/llrt.git", default-features = false }
-llrt_url = { git = "https://github.com/awslabs/llrt.git", default-features = false }
-llrt_stream_web = { git = "https://github.com/awslabs/llrt.git", default-features = false }
-llrt_util = { git = "https://github.com/awslabs/llrt.git", default-features = false }
-
-[target.'cfg(target_arch = "arm")'.dependencies]
-rquickjs = { version = "0.11", git = "https://github.com/delskayn/rquickjs.git", default-features = false, features = ["futures", "bindgen"] }
+# JS Worker 路由处理
+base64 = { workspace = true }
 
 [features]
 default = []
-

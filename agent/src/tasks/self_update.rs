@@ -1,6 +1,4 @@
-use nodeget_lib::self_update::{
-    canonical_exe_path, check_if_update_needed, get_url, replace_binary,
-};
+use ng_core::self_update::{canonical_exe_path, check_if_update_needed, get_url, replace_binary};
 
 pub async fn self_update(tag: &str) -> bool {
     // 之前这里 `canonical_exe_path` 返回 None 时直接 `std::process::exit(1)`，

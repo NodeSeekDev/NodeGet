@@ -1,6 +1,6 @@
 use tracing::info;
 
-use crate::token::super_token::generate_super_token;
+use ng_token::super_token::generate_super_token;
 
 pub mod get_uuid;
 pub mod init;

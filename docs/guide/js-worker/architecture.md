@@ -13,11 +13,14 @@ NodeGet Worker 是 NodeGet 嵌入的 JS 运行时（Runtime），其基础来自
 - `fetch`/`Request`/`Response`/`Headers`/`FormData`
 - `atob`/`btoa`/`TextEncoder`/`TextDecoder`
 - `URL`/`URLSearchParams`
-- `setTimeout`/`clearTimeout`/`setInterval`
+- `setTimeout`/`clearTimeout`/`setInterval`/`clearInterval`/`setImmediate`/`queueMicrotask`
+- `Buffer`/`Blob`/`File`
+- `ReadableStream`/`WritableStream`/`TransformStream`
+- `util` 模块
 
 关于 NodeGet Worker 的详细能力扩展说明，可以参考 [API](/api/js_worker/injected)。
 
-此外，我们扩展了更多的调用入口，比如 `onCall` / `onCron` / `onHttp` / `onInlineCall`，使其能够和 NodeGet 项目无缝结合。
+此外，我们扩展了更多的调用入口，比如 `onCall` / `onCron` / `onRoute` / `onInlineCall`，使其能够和 NodeGet 项目无缝结合。
 
 ```
 export default {

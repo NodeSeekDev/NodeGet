@@ -4,6 +4,8 @@
 
 调用者可以通过 `crontab-result_query` 查询执行结果记录。
 
+> **默认 LIMIT**：若 `condition` 中未指定 `limit` 或 `last`，查询默认限制返回 1,000 条记录。显式指定 `limit` 可覆盖此默认值。
+
 ### 方法
 
 调用方法名为 `crontab-result_query`，需要提供以下参数：
@@ -83,9 +85,7 @@
         {
           "run_time_from_to": [1700000000000, 1800000000000]
         },
-        {
-          "is_success": null
-        }
+        "is_success"
       ]
     }
   },
@@ -106,12 +106,7 @@
         {
           "cron_name": "backup_database"
         },
-        {
-          "is_failure": null
-        },
-        {
-          "limit": 10
-        }
+        "is_failure"
       ]
     }
   },
@@ -267,9 +262,7 @@
     "token": "demo_token",
     "query": {
       "condition": [
-        {
-          "is_failure": null
-        }
+        "is_failure"
       ]
     }
   },

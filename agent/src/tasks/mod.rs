@@ -3,10 +3,10 @@ use crate::rpc::multi_server::{send_to, subscribe_to};
 use crate::rpc::{JsonRpcTask, wrap_json_into_rpc_with_id_1};
 use crate::{AGENT_ARGS, RELOAD_NOTIFY};
 use log::{error, info, warn};
-use nodeget_lib::config::agent::AgentConfig;
-use nodeget_lib::error::NodegetError;
-use nodeget_lib::task::{TaskEventResponse, TaskEventResult, TaskEventType};
-use nodeget_lib::utils::get_local_timestamp_ms;
+use ng_config::config::agent::AgentConfig;
+use ng_core::error::NodegetError;
+use ng_core::utils::get_local_timestamp_ms;
+use ng_task::{TaskEventResponse, TaskEventResult, TaskEventType};
 use std::time::Duration;
 use tokio::task::JoinSet;
 use tokio::{fs, time};
@@ -38,13 +38,13 @@ mod pty;
 pub mod self_update;
 
 // 检查服务器是否允许执行特定任务
-fn is_task_allowed(server: &nodeget_lib::config::agent::Server, task_type: &TaskEventType) -> bool {
+fn is_task_allowed(server: &ng_config::config::agent::Server, task_type: &TaskEventType) -> bool {
     // 若指定了 allow_task_type（非空），则以此列表为准，忽略所有单独的 allow_* 开关
-    if let Some(ref allowed) = server.allow_task_type {
-        if !allowed.is_empty() {
-            let task_name = task_type.task_name();
-            return allowed.iter().any(|t| t == task_name);
-        }
+    if let Some(ref allowed) = server.allow_task_type
+        && !allowed.is_empty()
+    {
+        let task_name = task_type.task_name();
+        return allowed.iter().any(|t| t == task_name);
     }
 
     // 未指定 allow_task_type 或为空时，回退到原有的布尔开关
@@ -156,7 +156,7 @@ async fn execute_task(
             .map_err(|e| NodegetError::Other(format!("{e}")).into()),
 
         TaskEventType::Version => {
-            let version = nodeget_lib::utils::version::NodeGetVersion::get();
+            let version = ng_core::utils::version::NodeGetVersion::get();
             Ok(TaskEventResult::Version(version))
         }
 
@@ -409,11 +409,11 @@ pub async fn handle_task() {
                         time::sleep(Duration::from_millis(300)).await;
                         #[cfg(target_os = "windows")]
                         {
-                            nodeget_lib::self_update::restart_process();
+                            ng_core::self_update::restart_process();
                         }
                         #[cfg(not(target_os = "windows"))]
                         {
-                            nodeget_lib::self_update::restart_process_with_exec_v();
+                            ng_core::self_update::restart_process_with_exec_v();
                         }
                     }
                 });

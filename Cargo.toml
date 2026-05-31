@@ -1,11 +1,82 @@
 [workspace]
 members = [
     "server",
-    "server/migration",
     "agent",
-    "nodeget-lib",
+    "crates/ng-core",
+    "crates/ng-db",
+    "crates/ng-infra",
+    "crates/ng-config",
+    "crates/ng-monitoring",
+    "crates/ng-token",
+    "crates/ng-kv",
+    "crates/ng-task",
+    "crates/ng-crontab",
+    "crates/ng-js-runtime",
+    "crates/ng-js-worker",
+    "crates/ng-static",
+    "crates/ng-terminal",
+    "crates/ng-db/migration",
 ]
 resolver = "2"
+
+[workspace.package]
+version = "0.5.0"
+license = "AGPL-3"
+edition = "2024"
+repository = "https://github.com/NodeSeekDev/NodeGet"
+
+[workspace.dependencies]
+serde = { version = "1.0", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["std", "raw_value"] }
+tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+anyhow = { version = "1.0", default-features = false }
+jsonrpsee = { git = "https://github.com/infinitefield/jsonrpsee.git", default-features = false, features = ["server", "macros"] }
+axum = { version = "0.8.8", default-features = false, features = ["tokio", "ws", "http1", "query"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+uuid = { version = "1.19.0", default-features = false, features = ["std", "serde", "v4", "v5", "fast-rng"] }
+thiserror = { version = "2.0.18", default-features = false }
+rand = { version = "0.9", default-features = false, features = ["std", "thread_rng"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+sha2 = { version = "0.11.0", default-features = false }
+toml = { version = "1.1.2", default-features = false, features = ["std", "serde", "parse"] }
+url = { version = "2.5.8", default-features = false, features = ["std", "serde"] }
+base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
+hex = { version = "0.4.3", default-features = false, features = ["std"] }
+subtle = { version = "2.6.1", default-features = false }
+palc = { version = "0.0.2", default-features = false, features = ["help"] }
+chrono = { version = "0.4.43", default-features = false, features = ["now", "std"] }
+futures-util = { version = "0.3.31", default-features = false }
+sea-orm = { version = "2.0.0-rc.38", default-features = false, features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres", "macros", "with-json", "with-uuid"] }
+cron = { version = "0.16.0", default-features = false }
+dav-server = { version = "0.11.0", default-features = false, features = ["localfs"] }
+rquickjs = { git = "https://github.com/delskayn/rquickjs.git", default-features = false, features = ["futures"] }
+llrt_fetch = { git = "https://github.com/awslabs/llrt.git", default-features = false, features = ["http1", "compression-rust", "webpki-roots", "tls-ring"] }
+llrt_buffer = { git = "https://github.com/awslabs/llrt.git", default-features = false }
+llrt_timers = { git = "https://github.com/awslabs/llrt.git", default-features = false }
+llrt_url = { git = "https://github.com/awslabs/llrt.git", default-features = false }
+llrt_stream_web = { git = "https://github.com/awslabs/llrt.git", default-features = false }
+llrt_util = { git = "https://github.com/awslabs/llrt.git", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "json", "fmt", "chrono", "tracing-log"] }
+log = { version = "0.4.29", default-features = false, features = ["std"] }
+rustls = "0.23"
+tower = { version = "0.5.3", default-features = false }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+
+# Internal crates
+ng-core = { path = "crates/ng-core" }
+ng-db = { path = "crates/ng-db" }
+ng-infra = { path = "crates/ng-infra" }
+ng-config = { path = "crates/ng-config" }
+ng-monitoring = { path = "crates/ng-monitoring" }
+ng-token = { path = "crates/ng-token" }
+ng-kv = { path = "crates/ng-kv" }
+ng-task = { path = "crates/ng-task" }
+ng-crontab = { path = "crates/ng-crontab" }
+ng-js-runtime = { path = "crates/ng-js-runtime" }
+ng-js-worker = { path = "crates/ng-js-worker" }
+ng-static = { path = "crates/ng-static" }
+ng-terminal = { path = "crates/ng-terminal" }
+ng-migration = { path = "crates/ng-db/migration" }
 
 [profile]
 dev = { opt-level = 0, debug = true, debug-assertions = true, overflow-checks = true, lto = false, panic = "unwind", incremental = true, codegen-units = 256, rpath = false }

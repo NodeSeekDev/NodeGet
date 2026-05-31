@@ -1,0 +1,23 @@
+[package]
+name = "ng-core"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+tracing = { workspace = true }
+
+# for-server / for-agent feature dependencies
+libc = { version = "0.2.175", default-features = false, optional = true }
+
+[features]
+default = []
+for-server = ["dep:libc"]
+for-agent = ["dep:libc"]

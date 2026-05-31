@@ -1,7 +1,7 @@
 use crate::AGENT_CONFIG;
 use futures_util::{SinkExt, StreamExt};
 use log::{error, info};
-use nodeget_lib::error::NodegetError;
+use ng_core::error::NodegetError;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

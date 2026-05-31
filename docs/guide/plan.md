@@ -4,9 +4,9 @@ NodeGet 有更多的开发计划，未来会持续更新
 
 欢迎感兴趣的开发者 fork & pr，为项目贡献代码
 
-## 文件系统
+## 文件系统 ✅ 已实现
 
-计划支持一组 WebDAV 改造后的文件系统 API
+已实现一组基于 WebDAV 改造的文件系统 API，详见 [Db 命名空间](../api/db/index.md)
 
 ## More Hooks
 

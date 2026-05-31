@@ -1,5 +1,5 @@
 use crate::monitoring::get_global_gpu;
-use nodeget_lib::monitoring::data_structure::{DynamicGpuData, StaticGpuData};
+use ng_monitoring::data_structure::{DynamicGpuData, StaticGpuData};
 use nvml_wrapper::enum_wrappers::device::{Clock, TemperatureSensor};
 use tokio::sync::{Mutex, MutexGuard, OnceCell};
 

@@ -44,11 +44,13 @@ ws(s)://HOST(:PORT)/terminal?agent_uuid={agent_uuid}&terminal_id={terminal_id}&t
 
 `terminal_id` 必须与创建 `web_shell` Task 时提交的 `terminal_id` 一致
 
-同一个 Agent 下，若本地已经存在相同 `terminal_id` 的终端连接，Agent 会拒绝新任务并上报任务错误，避免会话互相覆盖
+同一个 Agent 下，若本地已经存在相同 `terminal_id` 的终端连接，Server 会拒绝该连接并返回错误码 108，避免会话互相覆盖
 
 ## 权限要求
 
-Terminal 功能需要对应 Agent 作用域下的 `Terminal::Connect` 权限
+Terminal 功能需要 `AgentUuid` 或 `Global` 作用域下的 `Terminal::Connect` 权限
+
+Terminal 连接仅限于 `WebShell` 类型的任务，且该任务必须尚未完成（结果未上传）。非 WebShell 任务或已完成的任务将被拒绝。
 
 ## 注意事项
 

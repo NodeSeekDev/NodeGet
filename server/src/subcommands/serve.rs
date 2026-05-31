@@ -1,67 +1,111 @@
-use crate::entity::js_worker;
-use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::{extract::Path, http::StatusCode};
 use base64::Engine as _;
-use dav_server::{DavHandler, fakels::FakeLs, localfs::LocalFs};
-use nodeget_lib::js_runtime::RunType;
+use ng_config::config::server::ServerConfig;
+use ng_config::get_reload_notify;
+use ng_core::permission::data_structure::{Permission, Scope};
+use ng_core::permission::token_auth::TokenOrAuth;
+use ng_db::entity::js_worker;
+use ng_js_runtime::RunType;
+use ng_js_runtime::RuntimeLimits;
+use ng_js_runtime::runtime_pool;
+use ng_static::cache::StaticCache;
+use ng_static::ops::{get_static_path, resolve_safe_file_path};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use tower::Service;
 use tracing::{debug, error, info, warn};
 
-use crate::RELOAD_NOTIFY;
-use crate::crontab::init_crontab_worker;
-use crate::js_runtime::runtime_pool;
-use crate::rpc::get_modules;
+use crate::rpc_nodeget::get_modules;
 use crate::rpc_timing::RpcTimingMiddleware;
 
-pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
+pub async fn run(config: &ServerConfig) {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     super::init_or_skip_super_token().await;
     debug!(target: "server", "Super token initialization completed");
 
-    crate::token::cache::TokenCache::init()
+    // ── 初始化各缓存 ──────────────────────────────────────────────
+    ng_token::TokenCache::init()
         .await
         .expect("Failed to initialize token cache");
     debug!(target: "server", "Token cache initialized");
 
-    crate::monitoring_uuid_cache::MonitoringUuidCache::init()
+    // 注册 auth checker（TokenAuthChecker → ng-infra 全局）
+    ng_token::register_auth_checker();
+    debug!(target: "server", "Auth checker registered");
+
+    ng_monitoring::monitoring_uuid_cache::MonitoringUuidCache::init()
         .await
         .expect("Failed to initialize monitoring UUID cache");
     debug!(target: "server", "Monitoring UUID cache initialized");
 
-    crate::static_hash_cache::StaticHashCache::init();
+    ng_monitoring::static_hash_cache::StaticHashCache::init();
     debug!(target: "server", "Static hash cache initialized");
 
-    crate::monitoring_last_cache::MonitoringLastCache::init();
+    ng_monitoring::monitoring_last_cache::MonitoringLastCache::init();
     debug!(target: "server", "Monitoring last cache initialized");
 
-    crate::static_file::cache::StaticCache::init()
+    ng_static::StaticCache::init()
         .await
         .expect("Failed to initialize static cache");
     debug!(target: "server", "Static cache initialized");
 
-    crate::crontab::cache::CrontabCache::init()
+    ng_crontab::CrontabCache::init()
         .await
         .expect("Failed to initialize crontab cache");
     debug!(target: "server", "Crontab cache initialized");
 
-    let terminal_state = crate::terminal::TerminalState {
-        sessions: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-    };
-
     runtime_pool::init_global_pool();
     debug!(target: "server", "JS runtime pool initialized");
 
-    crate::monitoring_buffer::init(config.monitoring_buffer.as_ref());
+    ng_monitoring::monitoring_buffer::init(config.monitoring_buffer.as_ref());
     debug!(target: "server", "Monitoring buffer initialized");
 
     let db_path = config.db_path.clone().unwrap_or_else(|| "./db/".to_owned());
-    crate::db_registry::DbRegistryManager::init(db_path).await;
+    ng_db::DbRegistryManager::init(db_path).await;
     debug!(target: "server", "DB registry manager initialized");
+
+    // ── 注入 trait providers ──────────────────────────────────────
+    // ng-config: 注册 super token 验证函数
+    ng_config::server_rpc::register_check_super_token(|token_or_auth| {
+        Box::pin(async move { ng_token::check_super_token(token_or_auth).await })
+    });
+    debug!(target: "server", "ng-config check_super_token registered");
+
+    // ng-db: 注册 auth provider
+    ng_db::rpc::set_auth_provider(std::sync::Arc::new(ServerAuthProvider));
+    debug!(target: "server", "ng-db auth provider registered");
+
+    // ng-kv: 注册 token permission checker
+    ng_kv::set_token_checker(Box::new(KvTokenChecker));
+    debug!(target: "server", "ng-kv token checker registered");
+
+    // ng-static: 注册 token permission checker
+    ng_static::auth::set_token_checker(Box::new(StaticTokenChecker));
+    debug!(target: "server", "ng-static token checker registered");
+
+    // ng-task: 注册 auth provider + monitoring UUID provider
+    ng_task::set_auth_provider(std::sync::Arc::new(TaskAuthProvider));
+    ng_task::set_monitoring_uuid_provider(std::sync::Arc::new(TaskMonitoringUuidProvider));
+    debug!(target: "server", "ng-task providers registered");
+
+    // ng-js-worker: 注册 token permission checker
+    ng_js_worker::set_token_checker(Box::new(JsWorkerTokenChecker));
+    debug!(target: "server", "ng-js-worker token checker registered");
+
+    // ng-terminal: 注册 token permission checker
+    ng_terminal::set_token_checker(Box::new(TerminalTokenChecker));
+    debug!(target: "server", "ng-terminal token checker registered");
+
+    // ng-js-runtime: 注册 JsWorkerService (inline_call + nodeget RPC dispatch)
+    ng_js_runtime::js_worker_service::set_js_worker_service(Box::new(JsWorkerServiceImpl));
+    debug!(target: "server", "ng-js-runtime JsWorkerService registered");
+
+    // ng-crontab: 注册 JsWorkerScheduler (cron 触发 JS Worker 任务)
+    ng_crontab::task::set_js_worker_scheduler(std::sync::Arc::new(CronJsWorkerScheduler));
+    debug!(target: "server", "ng-crontab JsWorkerScheduler registered");
 
     let rpc_module = get_modules();
 
@@ -91,6 +135,9 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
     let jsonrpc_service_for_rpc = jsonrpc_service_for_root.clone();
     let landing_html_for_rpc = landing_html.clone();
 
+    // 使用 ng-static::router::router() 提供静态文件和 WebDAV 路由
+    let static_router = ng_static::router::router();
+
     let app =
         axum::Router::new()
             .route(
@@ -104,13 +151,14 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
                         }
 
                         if req.method() == axum::http::Method::GET {
-                            let cache = crate::static_file::cache::StaticCache::global();
-                            if let Some(model) = cache.get_http_root().await {
-                                if model.enable != Some(false) {
-                                    let path = req.uri().path().to_owned();
-                                    let method = req.method().clone();
-                                    return serve_static_file(&model.path, &path, model.cors, &method).await;
-                                }
+                            let cache = StaticCache::global();
+                            if let Some(model) = cache.get_http_root()
+                                && model.enable != Some(false)
+                            {
+                                let path = req.uri().path().to_owned();
+                                let method = req.method().clone();
+                                return serve_static_file(&model.path, &path, model.cors, &method)
+                                    .await;
                             }
                             return axum::response::Response::builder()
                                 .status(StatusCode::OK)
@@ -137,13 +185,14 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
                         }
 
                         if req.method() == axum::http::Method::GET {
-                            let cache = crate::static_file::cache::StaticCache::global();
-                            if let Some(model) = cache.get_http_root().await {
-                                if model.enable != Some(false) {
-                                    let path = req.uri().path().to_owned();
-                                    let method = req.method().clone();
-                                    return serve_static_file(&model.path, &path, model.cors, &method).await;
-                                }
+                            let cache = StaticCache::global();
+                            if let Some(model) = cache.get_http_root()
+                                && model.enable != Some(false)
+                            {
+                                let path = req.uri().path().to_owned();
+                                let method = req.method().clone();
+                                return serve_static_file(&model.path, &path, model.cors, &method)
+                                    .await;
                             }
                             return axum::response::Response::builder()
                                 .status(StatusCode::OK)
@@ -159,65 +208,8 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
                     }
                 }),
             )
-            .route(
-                "/nodeget/static/{name}",
-                any(
-                    |Path(name): Path<String>, req: axum::extract::Request| async move {
-                        let cache = crate::static_file::cache::StaticCache::global();
-                        let Some(model) = cache.get_by_name(&name).await else {
-                            return build_http_error(StatusCode::NOT_FOUND, "Static not found");
-                        };
-                        // enable == Some(false) 视为不存在，返回 404
-                        if model.enable != Some(false) {
-                            if req.method() == axum::http::Method::OPTIONS && model.cors {
-                                return axum::http::Response::builder()
-                                    .status(StatusCode::NO_CONTENT)
-                                    .header(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                                    .header(axum::http::header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS")
-                                    .header(axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
-                                    .body(jsonrpsee::server::HttpBody::default())
-                                    .expect("Failed to build CORS response");
-                            }
-                            let method = req.method().clone();
-                            serve_static_file(&model.path, "/", model.cors, &method).await
-                        } else {
-                            build_http_error(StatusCode::NOT_FOUND, "Static not found")
-                        }
-                    },
-                ),
-            )
-            .route(
-                "/nodeget/static/{name}/{*path}",
-                any(
-                    |Path((name, path)): Path<(String, String)>,
-                     req: axum::extract::Request| async move {
-                        let cache = crate::static_file::cache::StaticCache::global();
-                        let Some(model) = cache.get_by_name(&name).await else {
-                            return build_http_error(StatusCode::NOT_FOUND, "Static not found");
-                        };
-                        // enable == Some(false) 视为不存在，返回 404
-                        if model.enable != Some(false) {
-                            // 处理 OPTIONS 预检请求
-                            if req.method() == axum::http::Method::OPTIONS && model.cors {
-                                return axum::http::Response::builder()
-                                    .status(StatusCode::NO_CONTENT)
-                                    .header(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                                    .header(axum::http::header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS")
-                                    .header(axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
-                                    .body(jsonrpsee::server::HttpBody::default())
-                                    .expect("Failed to build CORS response");
-                            }
-                            let file_path = if path.is_empty() { "/".to_string() } else { path };
-                            let method = req.method().clone();
-                            serve_static_file(&model.path, &file_path, model.cors, &method).await
-                        } else {
-                            build_http_error(StatusCode::NOT_FOUND, "Static not found")
-                        }
-                    },
-                ),
-            )
-            // WebDAV routes for static bucket file management
-            .route("/nodeget/static-webdav/{*path}", any(static_webdav_handler))
+            // 合并 ng-static 的静态文件和 WebDAV 路由
+            .merge(static_router)
             .route(
                 "/worker-route/{route_name}",
                 any(
@@ -270,16 +262,16 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
                     },
                 ),
             )
-            .route("/terminal", any(crate::terminal::terminal_ws_handler))
-            .with_state(terminal_state)
+            // Terminal WebSocket 路由（独立 state）
+            .merge(ng_terminal::router())
             .fallback(any(move |req: axum::extract::Request| {
                 let mut rpc_service = jsonrpc_service.clone();
                 async move {
                     if is_websocket_upgrade(req.headers()) {
                         return rpc_service.call(req).await.unwrap();
                     }
-                    let cache = crate::static_file::cache::StaticCache::global();
-                    if let Some(model) = cache.get_http_root().await {
+                    let cache = StaticCache::global();
+                    if let Some(model) = cache.get_http_root() {
                         let path = req.uri().path().to_owned();
                         let method = req.method().clone();
                         return serve_static_file(&model.path, &path, model.cors, &method).await;
@@ -288,7 +280,7 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
                 }
             }));
 
-    init_crontab_worker();
+    ng_crontab::init_crontab_worker();
     debug!(target: "server", "Crontab worker initialized");
 
     #[cfg(not(target_os = "windows"))]
@@ -340,7 +332,7 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
         tokio::select! {
             result = &mut serve_future => {
                 result.unwrap();
-                crate::monitoring_buffer::flush_and_shutdown().await;
+                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
                 let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
                 #[cfg(not(target_os = "windows"))]
                 if let Some(task) = unix_server_task.take() {
@@ -349,12 +341,11 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
                 #[cfg(not(target_os = "windows"))]
                 cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
             }
-            () = RELOAD_NOTIFY
-                .get()
+            () = get_reload_notify()
                 .expect("Reload notify not initialized")
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping TLS server...");
-                crate::monitoring_buffer::flush_and_shutdown().await;
+                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
                 let stop_handle = stop_handle.clone();
                 tokio::spawn(async move {
                     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
@@ -384,7 +375,7 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
         tokio::select! {
             result = &mut serve_future => {
                 result.unwrap();
-                crate::monitoring_buffer::flush_and_shutdown().await;
+                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
                 #[cfg(not(target_os = "windows"))]
                 if let Some(task) = unix_server_task.take() {
                     task.abort();
@@ -392,12 +383,11 @@ pub async fn run(config: &nodeget_lib::config::server::ServerConfig) {
                 #[cfg(not(target_os = "windows"))]
                 cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
             }
-            () = RELOAD_NOTIFY
-                .get()
+            () = get_reload_notify()
                 .expect("Reload notify not initialized")
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping server for restart...");
-                crate::monitoring_buffer::flush_and_shutdown().await;
+                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
                 let stop_handle = stop_handle.clone();
                 tokio::spawn(async move {
                     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
@@ -549,7 +539,7 @@ async fn handle_js_worker_route(
         }
     };
 
-    let db = if let Some(db) = crate::DB.get() {
+    let db = if let Some(db) = ng_db::get_db() {
         db.clone()
     } else {
         error!(target: "js_worker", route_name = %route_name, "DB not initialized for route request");
@@ -589,7 +579,14 @@ async fn handle_js_worker_route(
         );
     };
 
-    let body_base64 = base64::engine::general_purpose::STANDARD.encode(&body_bytes);
+    let body_base64 = tokio::task::spawn_blocking(move || {
+        base64::engine::general_purpose::STANDARD.encode(&body_bytes)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        error!(target: "js_worker", route_name = %route_name, error = %e, "base64 encoding task panicked");
+        String::new()
+    });
     let js_input = JsRouteInput {
         method,
         url,
@@ -608,7 +605,7 @@ async fn handle_js_worker_route(
     };
 
     let env = model.env.unwrap_or_else(|| serde_json::json!({}));
-    let limits = crate::js_runtime::RuntimeLimits::from_model(
+    let limits = RuntimeLimits::from_model(
         model.max_run_time,
         model.max_stack_size,
         model.max_heap_size,
@@ -723,18 +720,17 @@ async fn serve_static_file(
             .expect("Failed to build 405 response");
     }
 
-    let static_path = crate::static_file::get_static_path();
+    let static_path = get_static_path();
     let file_path = if path.is_empty() || path == "/" {
         "index.html"
     } else {
         path.trim_start_matches('/')
     };
 
-    let resolved =
-        match crate::static_file::resolve_safe_file_path(&static_path, sub_path, file_path) {
-            Ok(p) => p,
-            Err(e) => return build_static_error(StatusCode::BAD_REQUEST, format!("{e}"), cors),
-        };
+    let resolved = match resolve_safe_file_path(&static_path, sub_path, file_path) {
+        Ok(p) => p,
+        Err(e) => return build_static_error(StatusCode::BAD_REQUEST, format!("{e}"), cors),
+    };
 
     let data = match tokio::fs::read(&resolved).await {
         Ok(d) => d,
@@ -775,170 +771,6 @@ async fn serve_static_file(
     builder
         .body(body)
         .unwrap_or_else(|e| build_http_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))
-}
-
-/// WebDAV handler for static buckets.
-///
-/// Route: `/nodeget/static-webdav/{name}[/{*path}]`
-/// Auth: HTTP Basic Auth (username=tokenkey/username, password=tokensecret/password).
-/// Permission: requires **all** `StaticBucketFile` permissions (Read/Write/Delete/List)
-///             on the requested bucket scope.
-async fn static_webdav_handler(req: axum::extract::Request) -> axum::response::Response {
-    let method = req.method().clone();
-    let uri_path = req.uri().path().to_owned();
-
-    // 从 URI path 解析 bucket name，避免 Axum 多段路由 Path 提取器数量不匹配
-    let relative = uri_path
-        .strip_prefix("/nodeget/static-webdav/")
-        .unwrap_or_else(|| uri_path.trim_start_matches('/'));
-    let (name, _rest) = relative.split_once('/').unwrap_or((relative, ""));
-    let name = name.trim_end_matches('/');
-
-    if name.is_empty() {
-        warn!(target: "webdav", method = %method, uri = %uri_path, "missing bucket name in webdav url");
-        return build_webdav_error(StatusCode::NOT_FOUND, "Missing bucket name in WebDAV URL");
-    }
-
-    debug!(target: "webdav", method = %method, uri = %uri_path, bucket = %name, "webdav request received");
-
-    // 1. Look up bucket
-    let cache = crate::static_file::cache::StaticCache::global();
-    let Some(model) = cache.get_by_name(name).await else {
-        warn!(target: "webdav", method = %method, uri = %uri_path, bucket = %name, "bucket not found");
-        return build_webdav_error(StatusCode::NOT_FOUND, "Static bucket not found");
-    };
-    debug!(target: "webdav", bucket = %name, path = %model.path, cors = model.cors, "bucket resolved");
-
-    // 2. Extract Basic Auth
-    let Some(auth_header) = req.headers().get(axum::http::header::AUTHORIZATION) else {
-        warn!(target: "webdav", bucket = %name, method = %method, "missing authorization header");
-        return build_webdav_auth_required();
-    };
-    let auth_str = match auth_header.to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            warn!(target: "webdav", bucket = %name, "invalid authorization header encoding");
-            return build_webdav_auth_required();
-        }
-    };
-    if !auth_str.starts_with("Basic ") {
-        warn!(target: "webdav", bucket = %name, "authorization header not basic");
-        return build_webdav_auth_required();
-    }
-    let credentials = match base64::engine::general_purpose::STANDARD.decode(&auth_str[6..]) {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(s) => s,
-            Err(_) => {
-                warn!(target: "webdav", bucket = %name, "invalid base64 or non-utf8 credentials");
-                return build_webdav_auth_required();
-            }
-        },
-        Err(_) => {
-            warn!(target: "webdav", bucket = %name, "invalid base64 in authorization header");
-            return build_webdav_auth_required();
-        }
-    };
-    let (username, password) = credentials.split_once(':').unwrap_or((&credentials, ""));
-
-    // 3. Validate token
-    let full_token = format!("{username}:{password}");
-    let token_or_auth = match nodeget_lib::permission::token_auth::TokenOrAuth::from_full_token(
-        &full_token,
-    ) {
-        Ok(t) => t,
-        Err(_) => {
-            let full_auth = format!("{username}|{password}");
-            match nodeget_lib::permission::token_auth::TokenOrAuth::from_full_token(&full_auth) {
-                Ok(t) => t,
-                Err(_) => {
-                    warn!(target: "webdav", bucket = %name, username = %username, "token/auth parse failed");
-                    return build_webdav_auth_required();
-                }
-            }
-        }
-    };
-    debug!(target: "webdav", bucket = %name, username = %username, "token parsed successfully");
-
-    // 4. Check all StaticBucketFile permissions
-    let permissions = vec![
-        nodeget_lib::permission::data_structure::Permission::StaticBucketFile(
-            nodeget_lib::permission::data_structure::StaticBucketFile::Read,
-        ),
-        nodeget_lib::permission::data_structure::Permission::StaticBucketFile(
-            nodeget_lib::permission::data_structure::StaticBucketFile::Write,
-        ),
-        nodeget_lib::permission::data_structure::Permission::StaticBucketFile(
-            nodeget_lib::permission::data_structure::StaticBucketFile::Delete,
-        ),
-        nodeget_lib::permission::data_structure::Permission::StaticBucketFile(
-            nodeget_lib::permission::data_structure::StaticBucketFile::List,
-        ),
-    ];
-    let is_allowed = match crate::token::get::check_token_limit(
-        &token_or_auth,
-        vec![nodeget_lib::permission::data_structure::Scope::StaticBucket(name.to_string())],
-        permissions,
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            error!(target: "webdav", bucket = %name, username = %username, error = %e, "permission check failed internally");
-            false
-        }
-    };
-
-    if !is_allowed {
-        warn!(target: "webdav", bucket = %name, username = %username, "insufficient permissions");
-        return build_webdav_error(
-            StatusCode::FORBIDDEN,
-            "Forbidden: insufficient StaticBucketFile permissions",
-        );
-    }
-    debug!(target: "webdav", bucket = %name, username = %username, "all permissions granted");
-
-    // 5. Serve via WebDAV
-    let static_path = crate::static_file::get_static_path();
-    let disk_path = std::path::PathBuf::from(&static_path).join(&model.path);
-
-    info!(target: "webdav", bucket = %name, username = %username, disk_path = %disk_path.display(), method = %method, "serving webdav request");
-
-    let dav = DavHandler::builder()
-        .filesystem(LocalFs::new(&disk_path, false, false, false))
-        .locksystem(FakeLs::new())
-        .strip_prefix(format!("/nodeget/static-webdav/{}", name))
-        .build_handler();
-
-    let resp = dav.handle(req).await.into_response();
-    let status = resp.status();
-    if status.is_success() || status.is_redirection() || status == StatusCode::NOT_MODIFIED {
-        debug!(target: "webdav", bucket = %name, username = %username, status = %status, "webdav request completed");
-    } else {
-        warn!(target: "webdav", bucket = %name, username = %username, status = %status, "webdav request returned non-success status");
-    }
-    resp
-}
-
-fn build_webdav_auth_required() -> axum::response::Response {
-    axum::http::Response::builder()
-        .status(StatusCode::UNAUTHORIZED)
-        .header(
-            axum::http::header::WWW_AUTHENTICATE,
-            "Basic realm=\"NodeGet Static WebDAV\"",
-        )
-        .body(axum::body::Body::from("Authentication required"))
-        .expect("Failed to build response")
-}
-
-fn build_webdav_error(status: StatusCode, message: impl Into<String>) -> axum::response::Response {
-    axum::http::Response::builder()
-        .status(status)
-        .header(
-            axum::http::header::CONTENT_TYPE,
-            "text/plain; charset=utf-8",
-        )
-        .body(axum::body::Body::from(message.into()))
-        .expect("Failed to build response")
 }
 
 fn build_http_error(
@@ -1002,5 +834,318 @@ async fn cleanup_unix_socket_file(path: Option<&str>) {
         Err(e) => {
             tracing::warn!(target: "server", path = %path, error = %e, "Failed to remove unix socket file");
         }
+    }
+}
+
+// ── Trait implementations for dependency injection ──────────────────
+
+/// ng-db auth provider: delegates to `ng_token::check_token_limit` / `check_super_token`
+struct ServerAuthProvider;
+
+impl ng_db::rpc::AuthProvider for ServerAuthProvider {
+    fn check_token_limit(
+        &self,
+        token_or_auth: &TokenOrAuth,
+        scopes: Vec<Scope>,
+        permissions: Vec<Permission>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>> {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(
+            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
+        )
+    }
+
+    fn check_super_token(
+        &self,
+        token_or_auth: &TokenOrAuth,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>> {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
+    }
+}
+
+/// ng-kv token permission checker: delegates to `ng_token::check_token_limit` / `check_super_token` / `get_token`
+struct KvTokenChecker;
+
+impl ng_kv::TokenPermissionChecker for KvTokenChecker {
+    fn check_token_limit(
+        &self,
+        token_or_auth: &TokenOrAuth,
+        scopes: Vec<Scope>,
+        permissions: Vec<Permission>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+    {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(
+            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
+        )
+    }
+
+    fn check_super_token(
+        &self,
+        token_or_auth: &TokenOrAuth,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+    {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
+    }
+
+    fn get_token(
+        &self,
+        token_or_auth: &TokenOrAuth,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = anyhow::Result<ng_core::permission::data_structure::Token>,
+                > + Send
+                + '_,
+        >,
+    > {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(async move { ng_token::get_token(&token_or_auth).await })
+    }
+}
+
+/// ng-static token permission checker: delegates to `ng_token::check_token_limit` / `check_super_token`
+struct StaticTokenChecker;
+
+impl ng_static::auth::TokenPermissionChecker for StaticTokenChecker {
+    fn check_token_limit(
+        &self,
+        token_or_auth: &TokenOrAuth,
+        scopes: Vec<Scope>,
+        permissions: Vec<Permission>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+    {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(
+            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
+        )
+    }
+
+    fn check_super_token(
+        &self,
+        token_or_auth: &TokenOrAuth,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+    {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
+    }
+}
+
+/// ng-task auth provider: delegates to `ng_token::check_token_limit` / `check_super_token` / `get_token`
+struct TaskAuthProvider;
+
+impl ng_task::TaskAuthProvider for TaskAuthProvider {
+    fn check_token_limit(
+        &self,
+        token_or_auth: &TokenOrAuth,
+        scopes: Vec<Scope>,
+        permissions: Vec<Permission>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>> {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(
+            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
+        )
+    }
+
+    fn check_super_token(
+        &self,
+        token_or_auth: &TokenOrAuth,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>> {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
+    }
+
+    fn get_token(
+        &self,
+        token_or_auth: &TokenOrAuth,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = anyhow::Result<ng_core::permission::data_structure::Token>,
+                > + Send,
+        >,
+    > {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(async move { ng_token::get_token(&token_or_auth).await })
+    }
+}
+
+/// ng-task monitoring UUID provider: delegates to `ng_monitoring::MonitoringUuidCache`
+struct TaskMonitoringUuidProvider;
+
+impl ng_task::MonitoringUuidProvider for TaskMonitoringUuidProvider {
+    fn get_or_insert(
+        &self,
+        uuid: uuid::Uuid,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<i16, ng_core::error::NodegetError>> + Send>,
+    > {
+        Box::pin(async move {
+            ng_monitoring::monitoring_uuid_cache::MonitoringUuidCache::global()
+                .get_or_insert(uuid)
+                .await
+        })
+    }
+
+    fn reload(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>> {
+        Box::pin(ng_monitoring::monitoring_uuid_cache::MonitoringUuidCache::reload())
+    }
+}
+
+/// ng-js-worker token permission checker: delegates to `ng_token::check_token_limit` / `check_super_token` / `get_token`
+struct JsWorkerTokenChecker;
+
+impl ng_js_worker::TokenPermissionChecker for JsWorkerTokenChecker {
+    fn check_token_limit(
+        &self,
+        token_or_auth: &TokenOrAuth,
+        scopes: Vec<Scope>,
+        permissions: Vec<Permission>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+    {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(
+            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
+        )
+    }
+
+    fn check_super_token(
+        &self,
+        token_or_auth: &TokenOrAuth,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+    {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
+    }
+
+    fn get_token(
+        &self,
+        token_or_auth: &TokenOrAuth,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = anyhow::Result<ng_core::permission::data_structure::Token>,
+                > + Send
+                + '_,
+        >,
+    > {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(async move { ng_token::get_token(&token_or_auth).await })
+    }
+}
+
+/// ng-terminal token permission checker: delegates to `ng_token::check_token_limit` / `check_super_token`
+struct TerminalTokenChecker;
+
+impl ng_terminal::TokenPermissionChecker for TerminalTokenChecker {
+    fn check_token_limit(
+        &self,
+        token_or_auth: &TokenOrAuth,
+        scopes: Vec<Scope>,
+        permissions: Vec<Permission>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+    {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(
+            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
+        )
+    }
+
+    fn check_super_token(
+        &self,
+        token_or_auth: &TokenOrAuth,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+    {
+        let token_or_auth = token_or_auth.clone();
+        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
+    }
+}
+
+struct JsWorkerServiceImpl;
+
+impl ng_js_runtime::js_worker_service::JsWorkerService for JsWorkerServiceImpl {
+    fn run_inline_call_and_record_result(
+        &self,
+        js_script_name: String,
+        params: serde_json::Value,
+        timeout_sec: Option<f64>,
+        inline_caller: Option<String>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<serde_json::Value>> + Send>,
+    > {
+        Box::pin(async move {
+            ng_js_worker::service::run_inline_call_and_record_result(
+                js_script_name,
+                params,
+                timeout_sec,
+                inline_caller,
+            )
+            .await
+        })
+    }
+
+    fn get_rpc_module(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Box<dyn ng_js_runtime::js_worker_service::RawJsonDispatcher + Send>,
+                > + Send,
+        >,
+    > {
+        Box::pin(async move {
+            let module = crate::rpc_nodeget::get_modules();
+            Box::new(RpcModuleDispatcher(module))
+                as Box<dyn ng_js_runtime::js_worker_service::RawJsonDispatcher + Send>
+        })
+    }
+}
+
+struct RpcModuleDispatcher(jsonrpsee::RpcModule<()>);
+
+impl ng_js_runtime::js_worker_service::RawJsonDispatcher for RpcModuleDispatcher {
+    fn raw_json_request(
+        &self,
+        json: &str,
+        buf_size: usize,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<(String, ())>> + Send + '_>,
+    > {
+        let json = json.to_owned();
+        let module = self.0.clone();
+        Box::pin(async move {
+            let (resp, _stream) = module
+                .raw_json_request(&json, buf_size)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            Ok((resp.to_string(), ()))
+        })
+    }
+}
+
+/// ng-crontab `JsWorkerScheduler`: delegates to `ng_js_worker::service::enqueue_defined_js_worker_run`
+struct CronJsWorkerScheduler;
+
+impl ng_crontab::task::JsWorkerScheduler for CronJsWorkerScheduler {
+    fn enqueue_run(
+        &self,
+        worker_name: String,
+        run_type: ng_js_runtime::RunType,
+        params: serde_json::Value,
+        env_override: Option<serde_json::Value>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<i64>> + Send>> {
+        Box::pin(async move {
+            ng_js_worker::service::enqueue_defined_js_worker_run(
+                worker_name,
+                run_type,
+                params,
+                env_override,
+            )
+            .await
+        })
     }
 }

@@ -19,6 +19,7 @@ NodeGet 是本项目的基础服务接口模块，提供服务端状态查询、
 | [stream_log](./crud.md#stream-log)                   | 实时流式日志订阅（WebSocket） | SuperToken                  |
 | [exec_sql](./crud.md#exec-sql)                       | 在主数据库执行原始 SQL       | `NodeGet::ExecSql`          |
 | [get_database_type](./crud.md#get-database-type)     | 获取主数据库后端类型          | `NodeGet::ExecSql`          |
+| [self_update](./crud.md#self-update)                 | 触发自更新                  | SuperToken                  |
 
 如需对本地 SQLite 数据库执行 SQL 操作，请使用 [Db 命名空间](../db/index.md)。
 
@@ -70,11 +71,7 @@ NodeGet 是本项目的基础服务接口模块，提供服务端状态查询、
 }
 ```
 
-该方法从以下三个表中获取所有不同的 Agent UUID:
-
-1. `static_monitoring` - 静态监控数据表
-2. `dynamic_monitoring` - 动态监控数据表
-3. `task` - 任务数据表
+该方法从 `monitoring_uuid` 缓存中获取所有 Agent UUID，该缓存是 Agent UUID 的权威数据源。
 
 返回的 UUID 列表是去重后按字母顺序排序的
 
@@ -91,12 +88,16 @@ NodeGet 是本项目的基础服务接口模块，提供服务端状态查询、
     // crontab_result 表大小（字节）
     "dynamic_monitoring": 16384,
     // dynamic_monitoring 表大小（字节）
+    "dynamic_monitoring_summary": 4096,
+    // dynamic_monitoring_summary 表大小（字节）
     "js_result": 4096,
     // js_result 表大小（字节）
     "js_worker": 4096,
     // js_worker 表大小（字节）
     "kv": 8192,
     // kv 表大小（字节）
+    "monitoring_uuid": 4096,
+    // monitoring_uuid 表大小（字节）
     "static_monitoring": 8192,
     // static_monitoring 表大小（字节）
     "task": 4096,
@@ -104,7 +105,7 @@ NodeGet 是本项目的基础服务接口模块，提供服务端状态查询、
     "token": 4096
     // token 表大小（字节）
   },
-  "total": 61440
+  "total": 69632
   // 所有表大小之和（字节）
 }
 ```
@@ -113,17 +114,19 @@ NodeGet 是本项目的基础服务接口模块，提供服务端状态查询、
 
 `total` 字段为所有表存储大小之和
 
-查询范围包含以下 9 张业务表（不含 `seaql_migrations`）:
+查询范围包含以下 11 张业务表（不含 `seaql_migrations`）:
 
 1. `static_monitoring` - 静态监控数据表
 2. `dynamic_monitoring` - 动态监控数据表
-3. `task` - 任务数据表
-4. `token` - 令牌数据表
-5. `kv` - 键值存储表
-6. `crontab` - 定时任务表
-7. `crontab_result` - 定时任务结果表
-8. `js_worker` - JS Worker 表
-9. `js_result` - JS 执行结果表
+3. `dynamic_monitoring_summary` - 动态监控摘要表
+4. `task` - 任务数据表
+5. `token` - 令牌数据表
+6. `kv` - 键值存储表
+7. `monitoring_uuid` - Agent UUID 缓存表
+8. `crontab` - 定时任务表
+9. `crontab_result` - 定时任务结果表
+10. `js_worker` - JS Worker 表
+11. `js_result` - JS 执行结果表
 
 不同数据库后端的查询方式:
 
@@ -202,7 +205,7 @@ NodeGet 是本项目的基础服务接口模块，提供服务端状态查询、
 
 `hello` / `version` / `uuid` 三个方法不需要任何鉴权，可直接调用
 
-`list_all_agent_uuid` 需要 Token 拥有 `NodeGet::ListAllAgentUuid` 权限，返回结果受 Scope 限制
+`list_all_agent_uuid` 需要 Token 拥有 `NodeGet::ListAllAgentUuid` 或 `MonitoringUuid::List` 权限（后者推荐），返回结果受 Scope 限制
 
 `read_config` / `edit_config` / `database_storage` / `log` / `stream_log` 仅允许 **SuperToken** 调用，`token` 支持
 `token_key:token_secret` 或 `username|password`

@@ -1,0 +1,36 @@
+[package]
+name = "ng-task"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+server = [
+    "dep:jsonrpsee",
+    "dep:tokio",
+    "dep:sea-orm",
+    "dep:tracing",
+    "dep:futures-util",
+    "dep:ng-db",
+    "dep:anyhow",
+    "ng-core/for-server",
+    "ng-db/server",
+]
+
+[dependencies]
+ng-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true, default-features = false, features = ["std", "serde"] }
+uuid = { workspace = true, default-features = false, features = ["std", "serde", "v4", "v5", "fast-rng"] }
+
+# server feature dependencies
+jsonrpsee = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+sea-orm = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+ng-db = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }

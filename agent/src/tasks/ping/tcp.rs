@@ -1,5 +1,5 @@
 use log::error;
-use nodeget_lib::error::NodegetError;
+use ng_core::error::NodegetError;
 use std::hint::black_box;
 use tokio::net::{TcpStream, lookup_host};
 use tokio::time::timeout;

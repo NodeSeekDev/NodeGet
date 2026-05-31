@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use tracing::info;
 
-use crate::token::super_token::roll_super_token;
+use ng_token::super_token::roll_super_token;
 
 pub async fn run() {
     let should_continue = prompt_yes_or_no(

@@ -16,11 +16,11 @@ use crate::rpc::monitoring_data_report::{
 };
 use crate::tasks::handle_task;
 use log::{Level, info};
-use nodeget_lib::args_parse::agent::AgentArgs;
-use nodeget_lib::config::agent::AgentConfig;
-use nodeget_lib::error::NodegetError;
-use nodeget_lib::utils::set_ntp_offset_ms;
-use nodeget_lib::utils::version::NodeGetVersion;
+use ng_config::args_parse::agent::AgentArgs;
+use ng_config::config::agent::AgentConfig;
+use ng_core::error::NodegetError;
+use ng_core::utils::set_ntp_offset_ms;
+use ng_core::utils::version::NodeGetVersion;
 use std::process::exit;
 use std::str::FromStr;
 use std::sync::{LazyLock, OnceLock, RwLock};

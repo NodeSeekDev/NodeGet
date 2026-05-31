@@ -1,0 +1,44 @@
+[package]
+name = "ng-monitoring"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+server = [
+    "dep:ng-infra",
+    "dep:ng-db",
+    "dep:ng-token",
+    "dep:ng-config",
+    "dep:jsonrpsee",
+    "dep:sea-orm",
+    "dep:tokio",
+    "dep:futures-util",
+    "dep:tracing",
+    "dep:anyhow",
+    "ng-core/for-server",
+    "ng-infra/server",
+    "ng-db/server",
+    "ng-token/server",
+]
+
+[dependencies]
+ng-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, default-features = false, features = ["std", "serde", "v4", "v5", "fast-rng"] }
+sha2 = { workspace = true }
+
+# server feature dependencies
+ng-infra = { workspace = true, optional = true }
+ng-db = { workspace = true, optional = true }
+ng-token = { workspace = true, optional = true }
+ng-config = { workspace = true, optional = true }
+jsonrpsee = { workspace = true, optional = true }
+sea-orm = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }

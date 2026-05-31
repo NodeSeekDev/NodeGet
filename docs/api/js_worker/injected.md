@@ -10,6 +10,15 @@
     - `nodeget(json)` — 传入完整的 JSON-RPC 请求（string 或 object），返回解析后的 JS 对象
     - `nodeget(method, params)` — 快捷方式，自动构造 `{ jsonrpc: "2.0", method, params, id: randomUUID() }`
     - `nodeget(method, params, id)` — 同上，但指定请求 id
+- `globalThis.db` — 内置数据库实例操作对象，提供以下异步方法：
+    - `db.create(token, name, opts?)` — 创建数据库实例，`opts` 可含 `description` 等字段，调用 `db_create`
+    - `db.read(token, name)` — 读取数据库实例信息，调用 `db_read`
+    - `db.update(token, name, newName)` — 重命名数据库实例（`newName` 映射为 `new_name`），调用 `db_update`
+    - `db.remove(token, name)` — 删除数据库实例，调用 `db_delete`
+    - `db.list(token)` — 列出所有数据库实例，调用 `db_list`
+    - `db.execSql(token, name, sql, params?)` — 在指定实例上执行 SQL，调用 `db_exec_sql`
+    - `db.execTemplating(token, name, sql, params?)` — 在指定实例上执行模板 SQL，调用 `db_exec_templating`
+    所有方法内部通过 `nodeget()` 发起 JSON-RPC 调用，返回 `result`；遇 `error` 时抛出异常
 - `globalThis.inlineCall(js_worker_name, params, timeout_sec?)` — 调用其他 JS Worker。`timeout_sec`
   为可选的软超时（秒，正有限数），最终生效超时取 `timeout_sec` 与目标 Worker `max_run_time` 中较小者；不传时仅受目标 Worker
   `max_run_time` 约束。

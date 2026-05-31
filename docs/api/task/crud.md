@@ -192,7 +192,7 @@ SelfUpdate 任务触发 Agent 从 `https://install.nodeget.com/` 下载对应架
 语义说明：
 
 1. `token`、`target_uuid`、`task_type` 的含义与 `task_create_task` 完全一致。
-2. `timeout_ms` 为等待 Agent 返回结果的最大时间（毫秒）。超时后返回错误，但任务本身仍然存在于数据库中（Agent 后续仍可上传结果）。
+2. `timeout_ms` 为等待 Agent 返回结果的最大时间（毫秒）。最大值 300000（5 分钟），超出部分会被静默截断。超时后返回错误，但任务本身仍然存在于数据库中（Agent 后续仍可上传结果）。
 3. 内部流程：创建任务 → 发送给 Agent → 等待 Agent 上传结果 → 返回完整结果。
 
 ### 权限要求
@@ -334,6 +334,8 @@ SelfUpdate 任务触发 Agent 从 `https://install.nodeget.com/` 下载对应架
 1. `condition` 使用 Task 总览中的 `TaskQueryCondition` 结构体。
 2. `cron_source` 为可选字段：若该任务由 crontab 创建，则为对应的 cron `name`；否则为 `null`。
 3. 多个条件并存时为 `AND`，即只返回满足所有条件的记录。
+
+> **默认 LIMIT**：若 `condition` 中未指定 `limit` 或 `last`，查询默认限制返回 10,000 条记录。显式指定 `limit` 可覆盖此默认值。
 
 ### 权限要求
 
@@ -492,5 +494,117 @@ SelfUpdate 任务触发 Agent 从 `https://install.nodeget.com/` 下载对应架
     "deleted": 12,
     "condition_count": 3
   }
+}
+```
+
+## Upload Task Result
+
+Agent 通过 `task_upload_task_result` 上传任务执行结果。此方法通常由 Agent 端调用，而不是由控制端直接调用。
+
+### 方法
+
+调用方法名为 `task_upload_task_result`，需要提供以下参数：
+
+```json
+{
+  "token": "AGENT_TASK_TOKEN",
+  "task_response": {
+    "task_id": 4,
+    "agent_uuid": "AGENT_UUID_HERE",
+    "task_token": "AGENT_TASK_TOKEN",
+    "timestamp": 1769341269012,
+    "success": true,
+    "error_message": null,
+    "task_event_result": {
+      // 任务执行结果数据，结构取决于任务类型
+    }
+  }
+}
+```
+
+语义说明：
+
+1. `task_response.task_id` 为任务数据库记录的唯一 ID。
+2. `task_response.agent_uuid` 为执行该任务的 Agent UUID。
+3. `task_response.task_token` 为任务创建时生成的验证 Token。
+4. `task_response.timestamp` 为任务执行完成时间戳（毫秒）。
+5. `task_response.success` 为布尔值，表示执行是否成功。
+6. `task_response.error_message` 为可选字符串，当 `success` 为 `false` 时包含错误信息。
+7. `task_response.task_event_result` 为可选对象，包含任务的具体执行结果。
+
+### 权限要求
+
+- SuperToken 可直接调用，无需权限预检。
+- 普通 Token 需具备目标 Agent UUID Scope 下的 `Task::Write(task_type)` 权限（`task_type` 为原始任务类型名称）。
+- 服务端会在写入时校验 `task_id`、`agent_uuid` 和 `task_token` 是否匹配，防止伪造。
+- 每条任务结果只能上传一次，重复上传会返回错误。
+
+### 返回值
+
+成功时返回任务 ID：
+
+```json
+{
+  "id": 4
+}
+```
+
+### 错误码
+
+| 代码  | 说明                                     |
+|-----|----------------------------------------|
+| 102 | Permission Denied                      |
+| 103 | Database error (写入失败)                    |
+| 108 | Invalid input (任务已完成，结果已上传)             |
+| 105 | NotFound (任务验证失败：无效的 ID、UUID 或 Token) |
+
+### 完整示例
+
+请求:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "task_upload_task_result",
+  "params": {
+    "token": "AGENT_TASK_TOKEN",
+    "task_response": {
+      "task_id": 4,
+      "agent_uuid": "42e89a61-39de-4569-b6ef-e86bc3ed8f82",
+      "task_token": "aBcDeFgHiJ",
+      "timestamp": 1769341269012,
+      "success": true,
+      "error_message": null,
+      "task_event_result": {
+        "ping": 12.5
+      }
+    }
+  },
+  "id": 1
+}
+```
+
+响应:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "id": 4
+  }
+}
+```
+
+重复上传错误示例:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": 108,
+    "message": "Invalid input: Task result has already been uploaded"
+  },
+  "id": 1
 }
 ```

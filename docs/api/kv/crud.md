@@ -449,7 +449,6 @@
 
 ```json
 {
-  "id": 1,
   "namespace": "kv_test",
   "kv": {}
 }
@@ -480,7 +479,6 @@
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "id": 1,
     "namespace": "kv_test",
     "kv": {}
   }

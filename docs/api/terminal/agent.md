@@ -32,7 +32,7 @@ struct HeartBeat {
 ```json
 {
     "type": "xx",
-    "timestamp": 123
+    "timestamp": "1769344168646"
 }
 ```
 

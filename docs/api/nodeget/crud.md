@@ -166,74 +166,16 @@
 }
 ```
 
-## List All Agent UUID
+## List All Agent UUID  ⛔ 已废弃
 
-**PS: 该功能已被完全替换成 `agent-uuid_list_all`，在新实现中，请不要参考 `nodeget-server` 下的实现
-
-获取 Server 中所有 Agent 的 UUID 列表。
-
-### 方法
-
-调用方法名为 `nodeget-server_list_all_agent_uuid`，需要提供以下参数：
-
-```json
-{
-  "token": "demo_token"
-  // Token 字符串
-}
-```
+> **注意**: 该功能已被 `agent-uuid_list_all` 完全替代。请使用 [agent-uuid 命名空间](../agent_uuid/crud.md)。
+>
+> 以下文档保留仅作历史参考，不再推荐调用此方法。
 
 ### 权限要求
 
-- Permission: `NodeGet::ListAllAgentUuid`
-- Scope 行为:
-    - `Global` Scope 下拥有该权限: 返回系统内所有 Agent UUID
-    - `AgentUuid(xxx)` Scope 下拥有该权限: 可参与返回 `xxx`
-    - 最终返回结果会再过滤为"当前 token 在该 `AgentUuid` 下至少有一种可操作权限（任一非 `NodeGet::ListAllAgentUuid`
-      权限）"的 UUID
-
-### 返回值
-
-返回包含 `uuids` 字段的对象，其值为 `Vec<Uuid>` 数组。
-
-该方法会从以下四个来源获取所有不同的 Agent UUID:
-
-1. `static_monitoring` - 静态监控数据表（查询 `uuid_id` 后映射为 UUID）
-2. `dynamic_monitoring` - 动态监控数据表（查询 `uuid_id` 后映射为 UUID）
-3. `dynamic_monitoring_summary` - 动态监控摘要数据表（查询 `uuid_id` 后映射为 UUID）
-4. `task` - 任务数据表（直接查询 UUID）
-
-返回的 UUID 列表是去重后按字母顺序排序的。
-
-### 完整示例
-
-请求:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "nodeget-server_list_all_agent_uuid",
-  "params": {
-    "token": "demo_token"
-  },
-  "id": 1
-}
-```
-
-响应:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "uuids": [
-      "e8583352-39e8-5a5b-b66c-e450689088fd",
-      "a1b2c3d4-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
-    ]
-  },
-  "id": 1
-}
-```
+原 `nodeget-server_list_all_agent_uuid` 需要 `NodeGet::ListAllAgentUuid` 权限，
+已迁移至 `agent-uuid_list_all`（需要 `MonitoringUuid::List` 权限）。
 
 ## Read Config
 
@@ -246,13 +188,13 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET"
-  // SuperToken 字符串
+  // Super Token 字符串
 }
 ```
 
 ### 权限要求
 
-该方法仅允许 **SuperToken** 调用。
+该方法仅允许 **Super Token** 调用。
 
 `token` 支持以下格式之一:
 
@@ -262,6 +204,11 @@
 ### 返回值
 
 返回配置文件在磁盘上的原始文本内容，为 String 类型。
+
+### 注意事项
+
+- 配置文件路径必须位于当前工作目录内
+- 配置文件必须是普通文件（不支持目录、符号链接等）
 
 ### 完整示例
 
@@ -300,7 +247,7 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET",
-  // SuperToken 字符串
+  // Super Token 字符串
   "config_string": "ws_listener = \"0.0.0.0:2211\"\\n..."
   // 完整的 TOML 配置文本
 }
@@ -308,7 +255,7 @@
 
 ### 权限要求
 
-该方法仅允许 **SuperToken** 调用。
+该方法仅允许 **Super Token** 调用。
 
 `token` 支持以下格式之一:
 
@@ -324,6 +271,11 @@
 - 服务端会先校验 `config_string` 是否是可解析的 Server TOML 配置
 - 校验通过后写入配置文件
 - 写入成功后触发配置重载流程
+
+### 注意事项
+
+- 配置文件路径必须位于当前工作目录内
+- 配置文件必须是普通文件（不支持目录、符号链接等）
 
 ### 完整示例
 
@@ -363,13 +315,13 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET"
-  // SuperToken 字符串
+  // Super Token 字符串
 }
 ```
 
 ### 权限要求
 
-该方法仅允许 **SuperToken** 调用。
+该方法仅允许 **Super Token** 调用。
 
 `token` 支持以下格式之一:
 
@@ -383,7 +335,7 @@
 - `tables`: 各表名到存储大小（字节）的映射，按表名字母顺序排列
 - `total`: 所有表存储大小之和（字节）
 
-查询范围为 9 张业务表，不含 `seaql_migrations`。
+查询范围为 11 张业务表，不含 `seaql_migrations`。
 
 不同数据库后端的查询方式不同:
 
@@ -415,14 +367,16 @@
       "crontab": 4096,
       "crontab_result": 8192,
       "dynamic_monitoring": 16384,
+      "dynamic_monitoring_summary": 4096,
       "js_result": 4096,
       "js_worker": 4096,
       "kv": 8192,
+      "monitoring_uuid": 4096,
       "static_monitoring": 8192,
       "task": 4096,
       "token": 4096
     },
-    "total": 61440
+    "total": 69632
   },
   "id": 1
 }
@@ -439,13 +393,13 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET"
-  // SuperToken 字符串
+  // Super Token 字符串
 }
 ```
 
 ### 权限要求
 
-该方法仅允许 **SuperToken** 调用。
+该方法仅允许 **Super Token** 调用。
 
 `token` 支持以下格式之一:
 
@@ -535,7 +489,7 @@
 ```json
 {
   "token": "SUPER_TOKEN_KEY:SUPER_TOKEN_SECRET",
-  // SuperToken 字符串
+  // Super Token 字符串
   "log_filter": "info,rpc=debug,db=trace"
   // 日志过滤规则，语法同 RUST_LOG
 }
@@ -551,7 +505,7 @@
 
 ### 权限要求
 
-该方法仅允许 **SuperToken** 调用。
+该方法仅允许 **Super Token** 调用。
 
 `token` 支持以下格式之一:
 
@@ -677,7 +631,7 @@
 
 ### 方法
 
-调用方法名为 `nodeget-server_self_update`，需要传入 super token 和目标版本号 tag（格式 `vX.Y.Z`，支持升级和降级，仅做格式校验）。
+调用方法名为 `nodeget-server_self_update`，需要传入 super token 和目标版本 tag（格式 `vX.Y.Z`，支持升级和降级，仅做格式校验）。
 
 ### 权限要求
 
@@ -699,7 +653,10 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
   -d '{
     "jsonrpc": "2.0",
     "method": "nodeget-server_self_update",
-    "params": ["<super-token>", "v0.0.14"],
+    "params": {
+      "token": "<super-token>",
+      "tag": "v0.0.14"
+    },
     "id": 1
   }'
 ```
@@ -812,9 +769,24 @@ curl -X POST http://127.0.0.1:2211/jsonrpc \
 
 ### 返回值
 
-返回包含 `database_type` 字段的对象，可能的值为:
+返回包含 `success`、`data` 字段的对象，`data` 可能的值为:
 
 - `"sqlite"`: 当前使用 SQLite 数据库
 - `"postgres"`: 当前使用 PostgreSQL 数据库
+- `"mysql"`: 当前使用 MySQL 数据库
+- `"unknown"`: 未知数据库类型
+
+响应示例:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "success": true,
+    "data": "sqlite"
+  },
+  "id": 1
+}
+```
 
 如需查询由 `db` 命名空间管理的实例数据库类型，请使用 `db` 命名空间的 RPC 方法。

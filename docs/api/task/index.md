@@ -8,8 +8,16 @@ Task 是本项目的重要功能之一，也可以称为 `任务` 等
 |-------------------------------------------------------------|----------------------|
 | [task_create_task](./crud.md#create-task)                   | 创建并下发任务给 Agent       |
 | [task_create_task_blocking](./crud.md#create-task-blocking) | 创建任务并阻塞等待 Agent 返回结果 |
-| [task_query_task](./crud.md#query-task)                     | 查询任务执行记录             |
-| [task_delete_task](./crud.md#delete-task)                   | 删除任务执行记录             |
+| [task_query](./crud.md#query-task)                          | 查询任务执行记录             |
+| [task_delete](./crud.md#delete-task)                        | 删除任务执行记录             |
+| [task_upload_task_result](./crud.md#upload-task-result)     | Agent 上传任务执行结果       |
+
+### 订阅方法
+
+| 订阅方法                                          | 描述                      |
+|------------------------------------------------|-------------------------|
+| [task_register_task](./crud.md#register-task)  | Agent 订阅任务下发通道           |
+| 取消订阅: `task_unregister_task`                      | Agent 取消任务订阅             |
 
 Agent 端实现请参考 [agent.md](./agent.md)。
 
@@ -37,10 +45,10 @@ pub enum TaskEventType {
     Ping(String),       // 可能为域名，需解析
     TcpPing(String),    // 可能为域名，需解析
     HttpPing(url::Url), // Url, Method, Body
-    HttpRequest(HttpRequestTask), // 通用 HTTP 请求
-
     WebShell(WebShellTask), // Websocket URL + terminal_id
     Execute(ExecuteTask), // 结构化命令执行
+    HttpRequest(HttpRequestTask), // 通用 HTTP 请求
+    Dns(DnsTask),       // DNS 查询任务
     ReadConfig,         // 读取本地 config.toml
     EditConfig(String), // 编辑本地 config.toml（完整 TOML 字符串）
 
@@ -67,7 +75,7 @@ pub struct ExecuteTask {
 pub struct HttpRequestTask {
     pub url: url::Url,
     pub method: String,
-    pub headers: BTreeMap<String, String>,
+    pub headers: BTreeMap<String, String>,  // #[serde(default)]，省略时默认为空 Map
     pub body: Option<String>, // 与 body_base64 互斥
     pub body_base64: Option<String>, // 与 body 互斥
     pub ip: Option<String>, // 指定出口 IP，或 "ipv4 auto" / "ipv6 auto"
@@ -163,10 +171,10 @@ pub enum TaskEventResult {
     Ping(f64),     // 延迟
     TcpPing(f64),  // 延迟
     HttpPing(f64), // 延迟
-    HttpRequest(HttpRequestTaskResult), // HTTP 请求结果
-
     WebShell(bool),  // Is Connected
     Execute(String), // 命令输出
+    HttpRequest(HttpRequestTaskResult), // HTTP 请求结果
+    Dns(Vec<DnsRecordResult>), // DNS 查询结果
     ReadConfig(String), // 当前 config.toml 原文
     EditConfig(bool),   // 是否成功写入
 
@@ -243,6 +251,7 @@ pub struct HttpRequestTaskResult {
 DNS 查询任务。
 
 ```rust
+#[serde(rename_all = "snake_case")]
 pub enum DnsRecordType {
     A,
     Aaaa,

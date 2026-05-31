@@ -1,5 +1,5 @@
 use log::error;
-use nodeget_lib::error::NodegetError;
+use ng_core::error::NodegetError;
 use rand::random;
 use surge_ping::{Client, Config, ICMP, PingIdentifier, PingSequence, SurgeError};
 use tokio::net::lookup_host;

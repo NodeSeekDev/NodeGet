@@ -1,0 +1,280 @@
+use crate::utils::version::NodeGetVersion;
+
+#[cfg(feature = "for-agent")]
+const ARCH_NAME: [(&str, &str); 24] = [
+    (
+        "x86_64-unknown-linux-musl",
+        "nodeget-agent-linux-x86_64-musl",
+    ),
+    ("x86_64-unknown-linux-gnu", "nodeget-agent-linux-x86_64-gnu"),
+    ("i686-unknown-linux-gnu", "nodeget-agent-linux-i686-gnu"),
+    ("i686-unknown-linux-musl", "nodeget-agent-linux-i686-musl"),
+    (
+        "aarch64-unknown-linux-gnu",
+        "nodeget-agent-linux-aarch64-gnu",
+    ),
+    (
+        "aarch64-unknown-linux-musl",
+        "nodeget-agent-linux-aarch64-musl",
+    ),
+    (
+        "arm-unknown-linux-gnueabi",
+        "nodeget-agent-linux-arm-gnueabi",
+    ),
+    (
+        "arm-unknown-linux-gnueabihf",
+        "nodeget-agent-linux-arm-gnueabihf",
+    ),
+    (
+        "arm-unknown-linux-musleabi",
+        "nodeget-agent-linux-arm-musleabi",
+    ),
+    (
+        "arm-unknown-linux-musleabihf",
+        "nodeget-agent-linux-arm-musleabihf",
+    ),
+    (
+        "armv7-unknown-linux-gnueabi",
+        "nodeget-agent-linux-armv7-gnueabi",
+    ),
+    (
+        "armv7-unknown-linux-gnueabihf",
+        "nodeget-agent-linux-armv7-gnueabihf",
+    ),
+    (
+        "armv7-unknown-linux-musleabi",
+        "nodeget-agent-linux-armv7-musleabi",
+    ),
+    (
+        "armv7-unknown-linux-musleabihf",
+        "nodeget-agent-linux-armv7-musleabihf",
+    ),
+    (
+        "thumbv7neon-unknown-linux-gnueabihf",
+        "nodeget-agent-linux-thumbv7neon-gnueabihf",
+    ),
+    (
+        "riscv64gc-unknown-linux-gnu",
+        "nodeget-agent-linux-riscv64gc-gnu",
+    ),
+    (
+        "powerpc64-unknown-linux-gnu",
+        "nodeget-agent-linux-powerpc64-gnu",
+    ),
+    (
+        "powerpc64le-unknown-linux-gnu",
+        "nodeget-agent-linux-powerpc64le-gnu",
+    ),
+    ("s390x-unknown-linux-gnu", "nodeget-agent-linux-s390x-gnu"),
+    (
+        "sparc64-unknown-linux-gnu",
+        "nodeget-agent-linux-sparc64-gnu",
+    ),
+    ("x86_64-pc-windows-msvc", "nodeget-agent-windows-x86_64.exe"),
+    ("i686-pc-windows-msvc", "nodeget-agent-windows-i686.exe"),
+    (
+        "aarch64-pc-windows-msvc",
+        "nodeget-agent-windows-aarch64.exe",
+    ),
+    ("aarch64-apple-darwin", "nodeget-agent-macos-aarch64"),
+];
+
+#[cfg(feature = "for-server")]
+const SERVER_ARCH_NAME: [(&str, &str); 10] = [
+    (
+        "x86_64-unknown-linux-musl",
+        "nodeget-server-linux-x86_64-musl",
+    ),
+    (
+        "x86_64-unknown-linux-gnu",
+        "nodeget-server-linux-x86_64-gnu",
+    ),
+    (
+        "aarch64-unknown-linux-gnu",
+        "nodeget-server-linux-aarch64-gnu",
+    ),
+    (
+        "aarch64-unknown-linux-musl",
+        "nodeget-server-linux-aarch64-musl",
+    ),
+    (
+        "armv7-unknown-linux-gnueabi",
+        "nodeget-server-linux-armv7-gnueabi",
+    ),
+    (
+        "armv7-unknown-linux-gnueabihf",
+        "nodeget-server-linux-armv7-gnueabihf",
+    ),
+    (
+        "armv7-unknown-linux-musleabi",
+        "nodeget-server-linux-armv7-musleabi",
+    ),
+    (
+        "armv7-unknown-linux-musleabihf",
+        "nodeget-server-linux-armv7-musleabihf",
+    ),
+    (
+        "x86_64-pc-windows-msvc",
+        "nodeget-server-windows-x86_64.exe",
+    ),
+    ("aarch64-apple-darwin", "nodeget-server-macos-aarch64"),
+];
+
+fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
+    let body = s.strip_prefix('v')?;
+    let mut parts = body.splitn(3, '.');
+    let x: u32 = parts.next()?.parse().ok()?;
+    let y: u32 = parts.next()?.parse().ok()?;
+    let z: u32 = parts.next()?.parse().ok()?;
+    Some((x, y, z))
+}
+
+fn should_update(target: (u32, u32, u32), current: (u32, u32, u32)) -> bool {
+    target != current
+}
+
+/// 获取当前进程对应的"原"二进制路径：
+/// 如果 current_exe() 因为之前的 self_update rename 而指向 .old / .old.old …
+/// 则把所有末尾的 .old extension 剥掉，确保始终指向用户真正启动的那个文件。
+pub fn canonical_exe_path() -> Option<std::path::PathBuf> {
+    let mut path = std::env::current_exe().ok()?;
+    while path.extension() == Some(std::ffi::OsStr::new("old")) {
+        path = path.with_extension("");
+    }
+    Some(path)
+}
+
+pub fn check_if_update_needed(tag: &str) -> ((u32, u32, u32), (u32, u32, u32), bool) {
+    let target_version = match parse_version(tag) {
+        None => {
+            return ((0, 0, 0), (0, 0, 0), false);
+        }
+        Some(v) => v,
+    };
+
+    let current_version = match parse_version(&format!("v{}", NodeGetVersion::get().cargo_version))
+    {
+        None => {
+            return ((0, 0, 0), target_version, false);
+        }
+        Some(v) => v,
+    };
+
+    (
+        current_version,
+        target_version,
+        should_update(target_version, current_version),
+    )
+}
+
+#[cfg(any(feature = "for-agent", feature = "for-server"))]
+fn build_release_url(arch_name: &[(&str, &str)], tag: &str) -> Option<String> {
+    let arch_str = NodeGetVersion::get().cargo_target_triple;
+
+    let (_, binary_name) = match arch_name.iter().find(|(target, _)| *target == arch_str) {
+        Some(pair) => pair,
+        None => {
+            return None;
+        }
+    };
+
+    Some(format!(
+        "https://install.nodeget.com/releases/{}?tag={}",
+        binary_name, tag
+    ))
+}
+
+#[cfg(feature = "for-agent")]
+pub fn get_url(tag: &str) -> Option<String> {
+    build_release_url(&ARCH_NAME, tag)
+}
+
+#[cfg(feature = "for-server")]
+pub fn get_server_url(tag: &str) -> Option<String> {
+    build_release_url(&SERVER_ARCH_NAME, tag)
+}
+
+pub fn replace_binary(binary: Vec<u8>) -> bool {
+    let current = match canonical_exe_path() {
+        Some(p) => p,
+        None => {
+            tracing::error!("Failed to get canonical exe path for binary replacement");
+            return false;
+        }
+    };
+
+    let mut backup = current.as_os_str().to_os_string();
+    backup.push(".old");
+
+    if std::fs::rename(&current, &backup).is_err() {
+        tracing::error!("Failed to rename current binary to backup");
+        return false;
+    }
+
+    if std::fs::write(&current, &binary).is_err() {
+        if let Err(e) = std::fs::rename(&backup, &current) {
+            tracing::error!(error = %e, "Failed to restore backup during rollback");
+        }
+        return false;
+    }
+
+    true
+}
+
+#[cfg(all(not(unix), any(feature = "for-agent", feature = "for-server")))]
+pub fn restart_process() -> ! {
+    let current = canonical_exe_path().unwrap_or_else(|| {
+        tracing::error!("Failed to get canonical exe path");
+        std::process::exit(1);
+    });
+
+    let mut args = std::env::args();
+    let _ = args.next();
+
+    tracing::info!("Restarting agent: {}", current.display());
+
+    match std::process::Command::new(&current).args(args).spawn() {
+        Ok(_) => std::process::exit(0),
+        Err(e) => {
+            tracing::error!("Failed to restart: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+#[cfg(all(unix, any(feature = "for-agent", feature = "for-server")))]
+pub fn restart_process() -> ! {
+    restart_process_with_exec_v()
+}
+
+#[cfg(all(unix, any(feature = "for-agent", feature = "for-server")))]
+pub fn restart_process_with_exec_v() -> ! {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+    use std::ptr;
+
+    let current = canonical_exe_path().unwrap_or_else(|| {
+        tracing::error!("Failed to get canonical exe path");
+        std::process::exit(1);
+    });
+
+    let path = CString::new(current.to_str().unwrap()).unwrap();
+
+    let c_args: Vec<CString> = std::env::args().map(|s| CString::new(s).unwrap()).collect();
+
+    let mut ptrs: Vec<*const c_char> = c_args.iter().map(|c| c.as_ptr()).collect();
+    ptrs.push(ptr::null());
+
+    tracing::info!("Starting execv...");
+
+    // SAFETY: execv replaces the current process image. All pointers
+    // (`path` and `ptrs`) originate from `CString` values that live
+    // for the duration of this function. execv only returns on failure,
+    // so the dangling-pointer concern after exec does not apply.
+    unsafe {
+        libc::execv(path.as_ptr(), ptrs.as_ptr());
+    }
+
+    tracing::error!("execv failed: {}", std::io::Error::last_os_error());
+    std::process::exit(1);
+}

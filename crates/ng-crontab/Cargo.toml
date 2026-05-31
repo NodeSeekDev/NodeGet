@@ -1,0 +1,49 @@
+[package]
+name = "ng-crontab"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+server = [
+    "dep:ng-infra",
+    "dep:ng-db",
+    "dep:ng-token",
+    "dep:ng-js-runtime",
+    "dep:ng-js-worker",
+    "dep:anyhow",
+    "dep:sea-orm",
+    "dep:jsonrpsee",
+    "dep:tokio",
+    "dep:tracing",
+    "dep:chrono",
+    "dep:cron",
+    "ng-infra/server",
+    "ng-db/server",
+    "ng-core/for-server",
+    "ng-token/server",
+    "ng-task/server",
+    "ng-js-runtime/server",
+    "ng-js-worker/server",
+]
+
+[dependencies]
+ng-core = { workspace = true }
+ng-task = { workspace = true }
+ng-infra = { workspace = true, optional = true }
+ng-db = { workspace = true, optional = true }
+ng-token = { workspace = true, optional = true }
+ng-js-runtime = { workspace = true, optional = true }
+ng-js-worker = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true, optional = true }
+sea-orm = { workspace = true, optional = true, default-features = false, features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres", "macros"] }
+jsonrpsee = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+cron = { workspace = true, optional = true }

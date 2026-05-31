@@ -3,7 +3,7 @@ use std::fmt as stdfmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use nodeget_lib::config::server::LoggingConfig;
+use ng_config::config::server::LoggingConfig;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Metadata, Subscriber};
 use tracing_subscriber::{

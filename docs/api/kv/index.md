@@ -15,6 +15,7 @@
 | [kv_get_all_keys](./crud.md#list-all-keys)            | 列出所有键名   |
 | [kv_create](./crud.md#create-namespace)               | 创建命名空间   |
 | [kv_list_all_namespace](./crud.md#list-all-namespace) | 列出所有命名空间 |
+| [kv_delete_namespace](./crud.md#delete-namespace)    | 删除命名空间   |
 
 特殊说明请参考 [special.md](./special.md)。
 

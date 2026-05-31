@@ -1,0 +1,28 @@
+[package]
+name = "ng-config"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+server = ["dep:jsonrpsee", "dep:ng-token", "ng-token/server", "ng-core/for-server"]
+
+[dependencies]
+# Internal
+ng-core = { workspace = true }
+
+# Core deps (always needed — agent and server both use config types)
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["fs", "sync"] }
+uuid = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+palc = { workspace = true }
+
+# server feature only
+jsonrpsee = { workspace = true, optional = true }
+ng-token = { workspace = true, optional = true }

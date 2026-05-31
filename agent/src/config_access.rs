@@ -11,8 +11,8 @@
 //! ，替代散落在各模块的 `.expect("Agent config not initialized") / .expect("... poisoned")`。
 
 use crate::AGENT_CONFIG;
-use nodeget_lib::config::agent::AgentConfig;
-use nodeget_lib::error::NodegetError;
+use ng_config::config::agent::AgentConfig;
+use ng_core::error::NodegetError;
 
 /// Return a cloned snapshot of the current [`AgentConfig`].
 ///

@@ -1,6 +1,6 @@
 use crate::monitoring::impls::Monitor;
 use log::info;
-use nodeget_lib::monitoring::data_structure::{
+use ng_monitoring::data_structure::{
     DynamicMonitoringData, StaticMonitoringData, is_excluded_mount, is_virtual_interface,
 };
 

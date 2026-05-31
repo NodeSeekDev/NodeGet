@@ -1,0 +1,50 @@
+[package]
+name = "ng-js-runtime"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+server = [
+    "dep:rquickjs",
+    "dep:llrt_fetch",
+    "dep:llrt_buffer",
+    "dep:llrt_stream_web",
+    "dep:llrt_url",
+    "dep:llrt_util",
+    "dep:llrt_timers",
+    "dep:uuid",
+    "dep:tokio",
+    "dep:tracing",
+    "dep:anyhow",
+    "dep:ng-db",
+    "ng-infra/server",
+    "dep:futures-util",
+]
+
+[dependencies]
+ng-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Server feature dependencies
+rquickjs = { workspace = true, optional = true }
+llrt_fetch = { workspace = true, optional = true }
+llrt_buffer = { workspace = true, optional = true }
+llrt_stream_web = { workspace = true, optional = true }
+llrt_url = { workspace = true, optional = true }
+llrt_util = { workspace = true, optional = true }
+llrt_timers = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+ng-db = { workspace = true, optional = true }
+ng-infra = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+
+# ARM32 needs bindgen for libatomic workaround
+[target.'cfg(target_arch = "arm")'.dependencies]
+rquickjs = { git = "https://github.com/delskayn/rquickjs.git", default-features = false, features = ["futures", "bindgen"], optional = true }

@@ -17,7 +17,7 @@ Server，调用者可按条件查询历史数据。
 
 ```rust
 pub struct StaticMonitoringData {
-    pub uuid: String,               // Agent UUID
+    pub uuid: uuid::Uuid,  // 序列化为 UUID 字符串
     pub time: u64,                  // 毫秒时间戳
     pub data_hash: Vec<u8>,         // 数据内容 SHA-256 哈希（前 16 字节原始二进制），用于去重
     pub cpu: StaticCPUData,
@@ -113,7 +113,7 @@ pub struct StaticGpuData {
 
 ```rust
 pub struct DynamicMonitoringData {
-    pub uuid: String,                       // Agent UUID
+    pub uuid: uuid::Uuid,  // 序列化为 UUID 字符串
     pub time: u64,                          // 毫秒时间戳
     pub cpu: DynamicCPUData,
     pub ram: DynamicRamData,
@@ -290,7 +290,7 @@ pub struct DynamicGpuData {
 
 ```rust
 pub struct DynamicMonitoringSummaryData {
-    pub uuid: String,                       // Agent UUID
+    pub uuid: uuid::Uuid,  // 序列化为 UUID 字符串
     pub time: u64,                          // 毫秒时间戳
     pub cpu_usage: Option<i16>,             // CPU 总使用率 × 10 (0~1000)，查询时自动 /10 还原
     pub gpu_usage: Option<i16>,             // GPU 使用率 (0~100)，整数
@@ -465,7 +465,7 @@ JSON 解析示例：
 
 ```rust
 pub struct StaticResponseItem {
-    pub uuid: String,
+    pub uuid: uuid::Uuid,  // 序列化为 UUID 字符串
     pub timestamp: i64,
     pub cpu: Option<Value>,
     pub system: Option<Value>,
@@ -473,7 +473,7 @@ pub struct StaticResponseItem {
 }
 
 pub struct DynamicResponseItem {
-    pub uuid: String,
+    pub uuid: uuid::Uuid,  // 序列化为 UUID 字符串
     pub timestamp: i64,
     pub cpu: Option<Value>,
     pub ram: Option<Value>,
@@ -485,7 +485,7 @@ pub struct DynamicResponseItem {
 }
 
 pub struct DynamicSummaryResponseItem {
-    pub uuid: String,
+    pub uuid: uuid::Uuid,  // 序列化为 UUID 字符串
     pub timestamp: i64,
     pub cpu_usage: Option<Value>,
     pub gpu_usage: Option<Value>,
@@ -516,4 +516,4 @@ pub struct DynamicSummaryResponseItem {
 ## 相关页面
 
 - [Agent 上报](./agent.md) — `agent_report_static` / `agent_report_dynamic` / `agent_report_dynamic_summary`
-- [查询与删除](./query.md) — 查询、分段平均、批量最新、删除
+- [查询与删除](./query.md) — 查询、批量最新、删除

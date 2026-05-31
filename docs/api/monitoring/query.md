@@ -2,7 +2,7 @@
 outline: deep
 ---
 
-# 查询与删除
+# 查询、批量最新、删除
 
 调用者通过以下方法查询和删除历史监控数据。关于查询条件和数据结构体的详细定义，请参考 [Monitoring 总览](./index.md)。
 
@@ -36,9 +36,11 @@ pub struct StaticDataQuery {
 }
 ```
 
-- `fields`: 指定返回哪些数据字段，可选值为 `cpu` / `system` / `gpu`。若为空，返回 Token 有权限读取的所有字段
+- `fields`: 指定返回哪些数据字段，可选值为 `cpu` / `system` / `gpu`。若为空，仅返回 `uuid` 和 `timestamp`，不返回任何数据字段
 - `condition`: 查询条件列表，多个条件为 AND 关系。支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` /
   `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`
+
+> **默认 LIMIT**：若 `condition` 中未指定 `limit` 或 `last`，查询默认限制返回 10,000 条记录。显式指定 `limit` 可覆盖此默认值（最大 10,000）。
 
 ### 权限要求
 
@@ -167,10 +169,11 @@ pub struct DynamicDataQuery {
 }
 ```
 
-- `fields`: 指定返回哪些数据字段，可选值为 `cpu` / `ram` / `load` / `system` / `disk` / `network` / `gpu`。若为空，返回
-  Token 有权限读取的所有字段
+- `fields`: 指定返回哪些数据字段，可选值为 `cpu` / `ram` / `load` / `system` / `disk` / `network` / `gpu`。若为空，仅返回 `uuid` 和 `timestamp`，不返回任何数据字段
 - `condition`: 查询条件列表，多个条件为 AND 关系。支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` /
   `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`
+
+> **默认 LIMIT**：若 `condition` 中未指定 `limit` 或 `last`，查询默认限制返回 10,000 条记录。显式指定 `limit` 可覆盖此默认值（最大 10,000）。
 
 ### 权限要求
 
@@ -673,7 +676,7 @@ pub struct DynamicDataQuery {
 ```json
 {
   "token": "demo_token",
-  "dynamic_summary_query": {
+    "query": {
     "fields": ["cpu_usage", "used_memory", "total_memory"],
     "condition": [
       { "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd" },
@@ -698,6 +701,8 @@ pub struct DynamicSummaryQuery {
   `udp_connections` / `total_received` / `total_transmitted` / `transmit_speed` / `receive_speed`。若为空，返回所有字段
 - `condition`: 查询条件列表，多个条件为 AND 关系。支持 `uuid` / `timestamp_from_to` / `timestamp_from` / `timestamp_to` /
   `storage_time_from_to` / `storage_time_from` / `storage_time_to` / `limit` / `last`
+
+> **默认 LIMIT**：若 `condition` 中未指定 `limit` 或 `last`，查询默认限制返回 10,000 条记录。显式指定 `limit` 可覆盖此默认值（最大 10,000）。
 
 ### 权限要求
 
@@ -743,7 +748,7 @@ pub struct DynamicSummaryQuery {
   "method": "agent_query_dynamic_summary",
   "params": {
     "token": "demo_key:demo_secret",
-    "dynamic_summary_query": {
+  "query": {
       "fields": ["cpu_usage", "used_memory", "total_memory"],
       "condition": [
         { "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd" },

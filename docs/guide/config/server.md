@@ -80,6 +80,10 @@ log_filter = "info"
 # 单次最大批量大小，默认 1000
 # max_batch_size = 1000
 
+# 数据库文件存储路径，默认 "./db/"
+# 仅用于 db 命名空间管理的 SQLite 实例，不影响主数据库
+# db_path = "./db/"
+
 # 数据库配置
 [database]
 
