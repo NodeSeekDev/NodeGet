@@ -6,7 +6,7 @@
 
 ***Next-generation server monitoring and management tools***
 
-![Dynamic TOML Badge](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FNodeSeekDev%2FNodeGet%2Frefs%2Fheads%2Fmain%2Fnodeget-lib%2FCargo.toml&query=package.version&prefix=v&style=for-the-badge&label=Latest%20Version&link=https%3A%2F%2Fraw.githubusercontent.com%2FNodeSeekDev%2FNodeGet%2Frefs%2Fheads%2Fmain%2Fnodeget-lib%2FCargo.toml)
+![Dynamic TOML Badge](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FNodeSeekDev%2FNodeGet%2Frefs%2Fheads%2Fmain%2FCargo.toml&query=workspace.package.version&prefix=v&style=for-the-badge&label=Latest%20Version&link=https%3A%2F%2Fraw.githubusercontent.com%2FNodeSeekDev%2FNodeGet%2Frefs%2Fheads%2Fmain%2FCargo.toml)
 ![GitHub top language](https://img.shields.io/github/languages/top/NodeSeekDev/NodeGet?style=for-the-badge&label=Rust&color=red)
 ![GitHub License](https://img.shields.io/github/license/NodeSeekDev/NodeGet?style=for-the-badge)
 ![GitHub contributors](https://img.shields.io/github/contributors/NodeSeekDev/NodeGet?style=for-the-badge)
