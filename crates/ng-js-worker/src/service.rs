@@ -70,7 +70,7 @@ pub async fn enqueue_defined_js_worker_run(
     trace!(target: "js_worker", js_result_id = js_result_id, worker = %worker_name, "spawning bytecode execution task");
 
     tokio::spawn(async move {
-        let run_outcome = runtime_pool::init_global_pool()
+        let run_outcome = runtime_pool::global_pool()
             .execute_script(
                 worker_name.as_str(),
                 bytecode,

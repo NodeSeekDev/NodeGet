@@ -334,11 +334,13 @@ static CLEANUP_LOOP_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[must_use]
 pub fn global_pool() -> &'static Arc<JsRuntimePool> {
-    GLOBAL_RUNTIME_POOL.get_or_init(|| Arc::new(JsRuntimePool::new()))
+    GLOBAL_RUNTIME_POOL.get_or_init(|| {
+        info!(target: "js_runtime", "initializing global JS runtime pool");
+        Arc::new(JsRuntimePool::new())
+    })
 }
 
 pub fn init_global_pool() -> &'static Arc<JsRuntimePool> {
-    info!(target: "js_runtime", "initializing global JS runtime pool");
     let pool = global_pool();
 
     if !CLEANUP_LOOP_STARTED.swap(true, Ordering::SeqCst) {
@@ -684,6 +686,19 @@ async fn execute_on_worker(
 
     state.rt.idle().await;
 
+    // 给 tokio runtime 一个短窗口来处理挂起的 I/O 清理。
+    //
+    // JS 执行期间 fetch() 产生的 Response 对象可能未被完全消费（未调
+    // .text()/.json() 等）。rt.idle() 期间 QuickJS GC 可能回收了部分
+    // Response，其持有的 hyper Incoming body 被 drop，向连接 task 发出
+    // 异步关闭信号。但 pool worker 的 current_thread runtime 在
+    // block_on 返回后不再被轮询，关闭信号将无法处理——TCP 连接停留在
+    // CLOSE_WAIT（远端已 FIN，本地未 FIN，Recv-Q 有残留字节）。
+    //
+    // 此 drain 让 runtime 继续运转一小段时间，使连接 task 能处理关闭
+    // 信号、发送 FIN、释放 socket。10ms 相对 30s 默认超时可忽略。
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
     // 判定是否是因为硬超时被 interrupt 打断。interrupt 会让 QuickJS 抛不可
     // 捕获异常，但 runtime 内部可能仍残留 pending jobs / 待清理的 promise
     // reactions。pool 场景下这个 AsyncRuntime 之后会继续服务新请求，残留
@@ -692,7 +707,15 @@ async fn execute_on_worker(
     let killed_by_timeout = state.kill_flag.load(Ordering::Relaxed) && run_outcome.is_err();
 
     if killed_by_timeout {
+        // Drop 整个 runtime state：释放 AsyncContext + AsyncRuntime，
+        // QuickJS 释放所有 JS 对象（含未消费 Incoming body 的 Response），
+        // 向 hyper 连接 task 发出异步关闭信号。
         *runtime_state = None;
+
+        // 同上：drop 后关闭信号已发出，需要 runtime 继续轮询才能处理。
+        // 否则被中断的 fetch 连接将永远停留在 CLOSE_WAIT。
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
         return Err(js_error(
             "js_runner",
             format!("JavaScript execution exceeded max_run_time_ms={max_run_time_ms}"),

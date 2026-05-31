@@ -643,6 +643,18 @@ pub fn js_runner(
         // 执行完/超时都 cancel 看门狗并回收线程
         let _ = cancel_tx.send(());
         let _ = watchdog.join();
+
+        // 释放 QuickJS 上下文——触发 GC 释放所有 JS 对象，包括 fetch()
+        // 产生的 Response（其 Incoming body 可能未被 JS 代码消费）。Drop
+        // Incoming 向 hyper 连接 task 发出异步关闭信号。
+        drop(ctx);
+
+        // 给 tokio runtime 一个短窗口来处理上述关闭信号。
+        // 否则 current_thread runtime 在 block_on 返回后不再被轮询，
+        // TCP 连接将停留在 CLOSE_WAIT（远端已 FIN，本地未 FIN，
+        // Recv-Q 残留字节未被读取）。10ms 相对 30s 默认超时可忽略。
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
         if kill_flag.load(Ordering::Relaxed) && outcome.is_err() {
             return Err(js_error(
                 "js_runner",
@@ -892,6 +904,12 @@ pub fn js_runner_source_mode(
         };
         let _ = cancel_tx.send(());
         let _ = watchdog.join();
+
+        // 同 js_runner()：释放 QuickJS 上下文以 drop 未消费的 fetch Response
+        // Incoming body，再 drain 让 hyper 连接 task 处理关闭信号。
+        drop(ctx);
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
         if kill_flag.load(Ordering::Relaxed) && outcome.is_err() {
             return Err(js_error(
                 "js_runner",

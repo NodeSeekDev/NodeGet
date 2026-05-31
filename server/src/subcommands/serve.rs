@@ -610,7 +610,7 @@ async fn handle_js_worker_route(
         model.max_stack_size,
         model.max_heap_size,
     );
-    let run_result = runtime_pool::init_global_pool()
+    let run_result = runtime_pool::global_pool()
         .execute_script(
             model.name.as_str(),
             bytecode,
