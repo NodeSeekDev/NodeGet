@@ -11,7 +11,7 @@
 //! - `MonitoringUuidCache` — DB-backed UUID-to-ID cache
 //! - `MonitoringLastCache` — in-memory last-value cache
 //! - `StaticHashCache` — in-memory static data hash dedup cache
-//! - RPC namespaces: `agent`, `agent-uuid`, `nodeget-server.list_all_agent_uuid`
+//! - RPC namespaces: `agent`, `agent-uuid`, `nodeget-server`
 //! - `rpc_module()` — merged RPC module for all monitoring-related methods
 
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
@@ -42,13 +42,14 @@ pub mod static_hash_cache;
 pub mod rpc;
 
 /// Build and return an `RpcModule` containing all monitoring-related RPC methods
-/// (agent + agent-uuid + nodeget-server.list_all_agent_uuid).
+/// (agent + agent-uuid + nodeget-server).
 ///
 /// The caller should merge this into the main RPC module during startup.
 #[cfg(feature = "server")]
 pub fn rpc_module() -> jsonrpsee::RpcModule<()> {
     use rpc::agent::RpcServer as AgentRpcServer;
     use rpc::agent_uuid::AgentUuidRpcServer;
+    use rpc::nodeget::RpcServer as NodegetServerRpcServer;
 
     let mut module = jsonrpsee::RpcModule::new(());
 
@@ -66,16 +67,10 @@ pub fn rpc_module() -> jsonrpsee::RpcModule<()> {
         .merge(agent_uuid_impl.into_rpc())
         .expect("merge agent-uuid rpc");
 
-    // nodeget-server::list_all_agent_uuid is registered separately as a
-    // standalone method because it belongs to the "nodeget-server" namespace
-    // but its implementation lives here.
+    let nodeget_impl = rpc::nodeget::NodegetServerRpcImpl;
     module
-        .register_async_method("nodeget-server_list_all_agent_uuid", |params, _, _| async move {
-            use rpc::nodeget::list_all_agent_uuid::list_all_agent_uuid;
-            let token: String = params.one()?;
-            list_all_agent_uuid(token).await
-        })
-        .expect("register list_all_agent_uuid");
+        .merge(nodeget_impl.into_rpc())
+        .expect("merge nodeget-server rpc from ng-monitoring");
 
     module
 }
