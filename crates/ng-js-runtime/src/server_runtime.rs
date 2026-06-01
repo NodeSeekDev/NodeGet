@@ -222,6 +222,35 @@ pub(crate) fn init_js_runtime_globals(ctx: &Ctx<'_>) -> Result<(), Error> {
             if (resp.error) throw new Error(resp.error.message);
             return resp.result;
         };
+        // Timer tracking: wrap setTimeout/setInterval/setImmediate to track IDs
+        // for cleanup after handler execution (prevents idle() hang from uncleared timers).
+        const __nodeget_timer_ids = [];
+        const __origST = globalThis.setTimeout;
+        const __origSI = globalThis.setInterval;
+        const __origSIM = globalThis.setImmediate;
+        globalThis.setTimeout = (cb, delay, ...args) => {
+            const id = __origST(cb, delay, ...args);
+            __nodeget_timer_ids.push(id);
+            return id;
+        };
+        globalThis.setInterval = (cb, delay, ...args) => {
+            // Enforce minimum 4ms interval (browser spec), prevents 250Hz CPU burn
+            const id = __origSI(cb, Math.max(delay || 0, 4), ...args);
+            __nodeget_timer_ids.push(id);
+            return id;
+        };
+        globalThis.setImmediate = (cb, ...args) => {
+            const id = __origSIM(cb, ...args);
+            __nodeget_timer_ids.push(id);
+            return id;
+        };
+        globalThis.__nodeget_clear_all_timers = () => {
+            let limit = 100;
+            while (__nodeget_timer_ids.length > 0 && limit-- > 0) {
+                const ids = __nodeget_timer_ids.splice(0);
+                for (const id of ids) { clearTimeout(id); clearInterval(id); }
+            }
+        };
         globalThis.db = {
             async create(token, name) {
                 const resp = await nodeget("db_create", { token, name });
@@ -370,6 +399,8 @@ pub fn compile_js_module_to_bytecode(js_code: impl AsRef<str>) -> Result<Vec<u8>
 /// and `__nodeget_entry` is set from the module namespace.
 pub const INVOKE_SCRIPT_JS: &str = r#"
 (async () => {
+    // Reset timer tracking for this execution
+    if (globalThis.__nodeget_timer_ids) globalThis.__nodeget_timer_ids.length = 0;
     const entry = globalThis.__nodeget_entry;
     const runHandler = globalThis.__nodeget_run_handler;
     const input = globalThis.__nodeget_run_params;
@@ -659,7 +690,9 @@ pub fn js_runner(
             })
                 .await;
 
-            rt.idle().await;
+            // Bounded idle: one-shot runtime is dropped after this, but uncleared
+            // setInterval can still hang idle() forever. 200ms is generous for GC.
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(200), rt.idle()).await;
             js_result
         };
 
@@ -671,6 +704,7 @@ pub fn js_runner(
             Ok(result) => result,
             Err(_) => Err(js_error("js_runner", "JavaScript execution timed out")),
         };
+
         // 执行完/超时都 cancel 看门狗并回收线程
         let _ = cancel_tx.send(());
         let _ = watchdog.join();
@@ -772,7 +806,7 @@ pub fn js_runner_source_mode(
             })
                 .await;
 
-            rt.idle().await;
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(200), rt.idle()).await;
             js_result
         };
 

@@ -530,7 +530,57 @@ async fn execute_on_worker(
     let _ = cancel_tx.send(());
     let _ = watchdog.join();
 
-    state.rt.idle().await;
+    // 判定是否是因为硬超时被 interrupt 打断。interrupt 会让 QuickJS 抛不可
+    // 捕获异常，但 runtime 内部可能仍残留 pending jobs / 待清理的 promise
+    // reactions。pool 场景下这个 AsyncRuntime 之后会继续服务新请求，残留
+    // 状态可能影响下一次执行——最稳的做法是丢弃当前 state，下次调用走
+    // `create_runtime_state` 重建一个干净的 runtime。
+    let killed_by_timeout = state.kill_flag.load(Ordering::Relaxed) && run_outcome.is_err();
+
+    // Reset kill flag so interrupt handler won't abort the timer-clear eval below.
+    // killed status is already stored in `killed_by_timeout`.
+    if killed_by_timeout {
+        state.kill_flag.store(false, Ordering::Relaxed);
+    }
+
+    // Clear all timers to prevent idle() from hanging on persistent setInterval
+    // and to clean RT_TIMER_STATE entries before potential runtime destruction.
+    // kill_flag is now false, so the interrupt handler won't interfere.
+    let _ = state.ctx.async_with(async |ctx| {
+        let _ = ctx.eval::<(), _>(
+            "if(typeof globalThis.__nodeget_clear_all_timers==='function')globalThis.__nodeget_clear_all_timers()"
+        );
+    }).await;
+
+    if killed_by_timeout {
+        // Drop 整个 runtime state：释放 AsyncContext + AsyncRuntime，
+        // QuickJS 释放所有 JS 对象（含未消费 Incoming body 的 Response），
+        // 向 hyper 连接 task 发出异步关闭信号。
+        *runtime_state = None;
+
+        // drop 后关闭信号已发出，需要 runtime 继续轮询才能处理。
+        // 否则被中断的 fetch 连接将永远停留在 CLOSE_WAIT。
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        return Err(js_error(
+            "js_runner",
+            format!("JavaScript execution exceeded max_run_time_ms={max_run_time_ms}"),
+        ));
+    }
+
+    // Bounded idle — safety net: if cleanup missed persistent async work,
+    // 100ms timeout triggers and we discard the runtime state.
+    let idle_ok = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        state.rt.idle()
+    ).await.is_ok();
+
+    if !idle_ok {
+        // idle() timed out — runtime has unkillable persistent work, discard it
+        *runtime_state = None;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        return Err(js_error("js_runner", "Runtime cleanup timed out — state discarded"));
+    }
 
     // 给 tokio runtime 一个短窗口来处理挂起的 I/O 清理。
     //
@@ -545,28 +595,6 @@ async fn execute_on_worker(
     // 信号、发送 FIN、释放 socket。10ms 相对 30s 默认超时可忽略。
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-    // 判定是否是因为硬超时被 interrupt 打断。interrupt 会让 QuickJS 抛不可
-    // 捕获异常，但 runtime 内部可能仍残留 pending jobs / 待清理的 promise
-    // reactions。pool 场景下这个 AsyncRuntime 之后会继续服务新请求，残留
-    // 状态可能影响下一次执行——最稳的做法是丢弃当前 state，下次调用走
-    // `create_runtime_state` 重建一个干净的 runtime。
-    let killed_by_timeout = state.kill_flag.load(Ordering::Relaxed) && run_outcome.is_err();
-
-    if killed_by_timeout {
-        // Drop 整个 runtime state：释放 AsyncContext + AsyncRuntime，
-        // QuickJS 释放所有 JS 对象（含未消费 Incoming body 的 Response），
-        // 向 hyper 连接 task 发出异步关闭信号。
-        *runtime_state = None;
-
-        // 同上：drop 后关闭信号已发出，需要 runtime 继续轮询才能处理。
-        // 否则被中断的 fetch 连接将永远停留在 CLOSE_WAIT。
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-        return Err(js_error(
-            "js_runner",
-            format!("JavaScript execution exceeded max_run_time_ms={max_run_time_ms}"),
-        ));
-    }
     run_outcome
 }
 
