@@ -14,6 +14,9 @@ use axum::{extract::Path, http::StatusCode};
 use base64::Engine as _;
 use ng_config::config::server::ServerConfig;
 use ng_config::get_reload_notify;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use std::sync::Arc;
 use ng_core::permission::data_structure::{Permission, Scope};
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_db::entity::js_worker;
@@ -344,7 +347,7 @@ pub async fn run(config: &ServerConfig) {
         let cert_path = config.tls_cert.as_deref().unwrap();
         let key_path = config.tls_key.as_deref().unwrap();
         info!(target: "server", address = %addr, cert = %cert_path, key = %key_path, "Server listening on TCP with TLS");
-        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
+        let tls_config = build_http1_only_tls_config(cert_path, key_path)
             .await
             .unwrap_or_else(|e| panic!("Failed to load TLS config: {e}"));
         let serve_future =
@@ -427,6 +430,39 @@ pub async fn run(config: &ServerConfig) {
             }
         }
     }
+}
+
+/// 构建 ALPN 仅广播 `http/1.1` 的 TLS 配置
+///
+/// `axum-server` 默认 ALPN 为 `[h2, http/1.1]`，客户端会优先协商 HTTP/2，
+/// 导致 h2 frame 生命周期开销（samply 显示 14-33% tokio worker 时间）。
+/// 本服务器所有入站连接均为 WebSocket（HTTP/1.1 upgrade）或 JSON-RPC（HTTP/1.1），
+/// 不需要 HTTP/2，限制 ALPN 消除 h2 开销。
+async fn build_http1_only_tls_config(
+    cert_path: &str,
+    key_path: &str,
+) -> std::io::Result<axum_server::tls_rustls::RustlsConfig> {
+    let cert_pem = tokio::fs::read(cert_path).await?;
+    let key_pem = tokio::fs::read(key_path).await?;
+
+    let certs: Vec<_> = CertificateDer::pem_slice_iter(&cert_pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+    let key = PrivateKeyDer::from_pem_slice(&key_pem)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+    let mut server_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+    // 仅广播 http/1.1，阻止客户端协商 HTTP/2
+    server_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+
+    Ok(axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(
+        server_config,
+    )))
 }
 
 /// 渲染根路径着陆页 HTML
