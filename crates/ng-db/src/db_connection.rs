@@ -60,7 +60,7 @@ pub async fn init_db_connection(config: DbConnectionConfig) -> anyhow::Result<()
     info!(target: "db", "initializing database connection");
 
     let mut opt = ConnectOptions::new(&config.database_url);
-    opt.sqlx_logging_level(LevelFilter::Warn)
+    opt.sqlx_logging_level(LevelFilter::Trace)
         .connect_timeout(Duration::from_millis(config.connect_timeout_ms))
         .acquire_timeout(Duration::from_millis(config.acquire_timeout_ms))
         .idle_timeout(Duration::from_millis(config.idle_timeout_ms))

@@ -1,6 +1,28 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# NodeGet Release 工作流
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# 整体流程：prepare → build-* (并行) → publish-release → publish-docker
+#
+# 触发方式：
+#   1. 推送 v* 标签（自动发布）        — git tag v0.5.6 && git push --tags
+#   2. 手动触发 workflow_dispatch      — 可选仅编译（不上传），或编译+发布
+#
+# 构建产物命名规则：nodeget-{agent|server}-{os}-{arch}[-libc].exe?
+#   例: nodeget-server-linux-aarch64-musl
+#       nodeget-agent-windows-x86_64.exe
+#       nodeget-server-macos-aarch64
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 name: nodeget-release
 
+# ── 触发条件 ────────────────────────────────────────────────────
 on:
+  # 手动触发：GitHub Actions 页面点击 "Run workflow"
+  # 可选参数：
+  #   release_tag      — 发布标签，如 v0.3.7。留空 = 仅编译，不上传 Release
+  #   publish_release  — 是否创建/更新 GitHub Release + Docker 镜像
   workflow_dispatch:
     inputs:
       release_tag:
@@ -12,20 +34,41 @@ on:
         required: false
         default: false
         type: boolean
+
+  # 自动触发：推送 v* 格式的 tag 时自动发布
+  # 例: git tag v0.5.6 && git push origin v0.5.6
   push:
     tags:
       - "v*"
 
+# ── 并发控制 ────────────────────────────────────────────────────
+# 同一个 tag 不会重复运行；手动触发无 tag 时用 run_id 兜底
+# cancel-in-progress: false — 不取消正在运行的发布，避免中途截断
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref_name || inputs.release_tag || github.run_id }}
   cancel-in-progress: false
 
+# ── 默认权限 ────────────────────────────────────────────────────
+# 最小权限原则：默认只读仓库内容；需要写权限的 job 单独声明
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Job 1: Prepare — 判断是否发布 + 提取 tag
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# 输出两个变量供后续 job 使用：
+#   publish — "true" 表示需要创建 GitHub Release + Docker 镜像
+#   tag     — 版本标签字符串，如 "v0.5.6"
+#
+# 逻辑：
+#   push tag 触发 → 自动发布
+#   手动触发     → 由 inputs.publish_release 决定
+#   tag 格式校验 — 必须匹配 ^v数字.数字... 的语义版本格式
+#
 jobs:
   prepare:
     name: Prepare release
@@ -41,6 +84,7 @@ jobs:
           publish="false"
           tag=""
 
+          # push tag 触发 → 自动发布；手动触发 → 读取 inputs
           if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
             publish="true"
             tag="${GITHUB_REF_NAME}"
@@ -49,6 +93,7 @@ jobs:
             tag="${{ inputs.release_tag }}"
           fi
 
+          # 发布时校验 tag 格式：v + 语义版本，允许 pre-release 后缀如 -rc1, +build123
           if [[ "${publish}" == "true" ]]; then
             if [[ ! "${tag}" =~ ^v[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.-]+)?$ ]]; then
               echo "release_tag must look like v0.3.7 when publishing" >&2
@@ -59,6 +104,18 @@ jobs:
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Job 2: build-linux — Linux 多平台交叉编译
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  # 使用 cross-rs/cross 在 Docker 容器中交叉编译，覆盖 8 个 Linux target：
+  #   - x86_64 / aarch64，musl (静态链接) 和 gnu (glibc 动态链接)
+  #     → 编译 agent + server（server 仅 x86_64/aarch64，因为需要 PostgreSQL 链接）
+  #   - armv7 / arm / i686
+  #     → 仅编译 agent（轻量，无数据库依赖）
+  #
+  # fail-fast: false — 某个 target 失败不阻塞其他 target 的构建
+  #
   build-linux:
     name: Linux ${{ matrix.platform.release_for }}
     needs: prepare
@@ -67,39 +124,46 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - release_for: x86_64-musl
+          # ── 主流服务器架构：musl ( Alpine/静态 ) + gnu ( glibc ) ──
+          - release_for: x86_64-musl        # Alpine / 静态链接，Docker 镜像使用此产物
             target: x86_64-unknown-linux-musl
             packages: [ agent, server ]
-          - release_for: x86_64-gnu
+          - release_for: x86_64-gnu         # glibc 动态链接，传统 Linux 发行版
             target: x86_64-unknown-linux-gnu
             packages: [ agent, server ]
-          - release_for: aarch64-musl
+          - release_for: aarch64-musl       # ARM64 Alpine / 静态链接，Docker arm64 使用此产物
             target: aarch64-unknown-linux-musl
             packages: [ agent, server ]
-          - release_for: aarch64-gnu
+          - release_for: aarch64-gnu        # ARM64 glibc，树莓派 4/5 等
             target: aarch64-unknown-linux-gnu
             packages: [ agent, server ]
-          - release_for: armv7-musleabihf
+          # ── 嵌入式 / IoT 架构：仅 agent（server 依赖过重不适合这些平台）──
+          - release_for: armv7-musleabihf   # ARMv7 硬浮点 musl（32位 ARM 静态）
             target: armv7-unknown-linux-musleabihf
             packages: [ agent ]
-          - release_for: armv7-gnueabihf
+          - release_for: armv7-gnueabihf    # ARMv7 硬浮点 gnu（树莓派 2/3）
             target: armv7-unknown-linux-gnueabihf
             packages: [ agent ]
-          - release_for: arm-musleabihf
+          - release_for: arm-musleabihf     # ARMv6 硬浮点 musl（树莓派 Zero）
             target: arm-unknown-linux-musleabihf
             packages: [ agent ]
-          - release_for: i686-musl
+          - release_for: i686-musl          # 32位 x86 musl（老旧硬件/兼容）
             target: i686-unknown-linux-musl
             packages: [ agent ]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # 复合 action：安装 Rust stable 工具链 + Cargo 缓存
+      # cache-shared-key 按 target 区分，避免不同 target 的缓存冲突
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
           cache-shared-key: release-linux-${{ matrix.platform.target }}
 
+      # 安装 cross —— Rust 交叉编译工具
+      # cross 会为每个 target 拉取对应的 Docker 镜像（含交叉工具链和系统库）
+      # 下载 GitHub release 的预编译二进制，避免 cargo install 的编译开销
       - name: Install cross
         env:
           CROSS_VERSION: v0.2.5
@@ -113,6 +177,9 @@ jobs:
             | tar -xz -C "${HOME}/.local/bin"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
+      # 根据矩阵中的 packages 列表选择性编译 agent/server
+      # --profile minimal — 自定义 profile，优化二进制体积（LTO + strip）
+      # --locked — 严格按 Cargo.lock 编译，确保可复现
       - name: Build selected packages
         env:
           TARGET: ${{ matrix.platform.target }}
@@ -126,6 +193,9 @@ jobs:
             cross build --package nodeget-server --target "${TARGET}" --profile minimal --locked
           fi
 
+      # 将编译产物从 target/{target}/minimal/ 复制到 dist/，统一命名
+      # 命名: nodeget-{agent|server}-linux-{release_for}
+      # 例: nodeget-server-linux-aarch64-musl
       - name: Stage artifacts
         shell: bash
         env:
@@ -142,6 +212,8 @@ jobs:
             cp "target/${TARGET}/minimal/nodeget-server" "dist/nodeget-server-${SUFFIX}"
           fi
 
+      # 上传到 GitHub Actions 临时存储，供 publish-release job 下载
+      # retention-days: 14 — 14 天后自动清理（仅编译不上传时仍有产物可下载）
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -150,6 +222,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Job 3: build-windows — Windows MSVC 编译
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  # Windows 上直接用 cargo 编译（原生 MSVC 工具链，无需 cross）
+  # 通过 rustup 添加对应 target 即可交叉编译 aarch64
+  #
   build-windows:
     name: Windows ${{ matrix.platform.release_for }}
     needs: prepare
@@ -158,16 +237,18 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - release_for: x86_64
+          - release_for: x86_64             # 64位 Windows（主流桌面/服务器）
             target: x86_64-pc-windows-msvc
             packages: [ agent, server ]
-          - release_for: aarch64
+          - release_for: aarch64            # Windows ARM64（Surface Pro X 等）
             target: aarch64-pc-windows-msvc
             packages: [ agent ]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # setup-rust action 会通过 dtolnay/rust-toolchain 的 targets 参数
+      # 安装对应 target 的标准库（aarch64 交叉编译需要）
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
@@ -178,7 +259,7 @@ jobs:
         run: |
           $target = "${{ matrix.platform.target }}"
           $buildAgent = "${{ contains(matrix.platform.packages, 'agent') }}" -eq "true"
-          $buildServer = "${{ contains(matrix.platform.packages, 'server') }}" -eq "true"
+          $buildServer = "${{ contains(matrix.platform.packages, 'agent') }}" -eq "true"
           if ($buildAgent) {
             cargo build --package nodeget-agent --target $target --profile minimal --locked
           }
@@ -186,6 +267,8 @@ jobs:
             cargo build --package nodeget-server --target $target --profile minimal --locked
           }
 
+      # Windows 产物带 .exe 后缀
+      # 命名: nodeget-{agent|server}-windows-{arch}.exe
       - name: Stage artifacts
         shell: pwsh
         run: |
@@ -209,6 +292,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Job 4: build-macos — macOS Darwin 编译
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  # macOS 上原生编译（Xcode 工具链），通过 rustup target 切换架构
+  # aarch64 = Apple Silicon (M1/M2/M3/M4)
+  # x86_64  = Intel Mac（仅编译 agent，Intel Mac 市场份额递减）
+  #
   build-macos:
     name: macOS ${{ matrix.platform.release_for }}
     needs: prepare
@@ -217,10 +308,10 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - release_for: aarch64
+          - release_for: aarch64            # Apple Silicon（当前主力 Mac）
             target: aarch64-apple-darwin
             packages: [ agent, server ]
-          - release_for: x86_64
+          - release_for: x86_64             # Intel Mac（仅 agent，降级支持）
             target: x86_64-apple-darwin
             packages: [ agent ]
     steps:
@@ -246,6 +337,8 @@ jobs:
             cargo build --package nodeget-server --target "${TARGET}" --profile minimal --locked
           fi
 
+      # macOS 产物无后缀
+      # 命名: nodeget-{agent|server}-macos-{arch}
       - name: Stage artifacts
         shell: bash
         env:
@@ -270,6 +363,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Job 5: publish-release — 创建/更新 GitHub Release
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  # 仅在 prepare.outputs.publish == 'true' 时执行
+  # 汇总所有 build-* job 的编译产物，上传为 GitHub Release assets
+  #
+  # 依赖：prepare + 三个 build job 全部完成
+  # 权限：contents: write（创建 Release 需要写权限）
+  #
   publish-release:
     name: Publish GitHub Release
     needs:
@@ -282,6 +385,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 下载所有 release-* 前缀的 artifact，合并到 dist/ 目录
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
@@ -289,6 +393,9 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # 创建 GitHub Release 并上传所有编译产物
+      # make_latest: true — 标记为最新 Release
+      # softprops/action-gh-release 支持幂等操作（tag 已存在时追加文件）
       - name: Upload release assets
         uses: softprops/action-gh-release@v3
         with:
@@ -297,6 +404,22 @@ jobs:
           make_latest: true
           files: dist/*
 
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Job 6: publish-docker — 构建并推送 Docker 多架构镜像
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  # 仅在 publish-release 成功后执行（确保 Docker 镜像拉取的 release 二进制已存在）
+  # 使用 Dockerfile 的 runtime-release target：
+  #   该 target 从 GitHub Release 下载预编译二进制（不源码编译）
+  #   通过 TARGETARCH 自动选择 amd64/arm64 对应的资产
+  #
+  # 推送双标签：
+  #   genshinmc/nodeget:latest  — 始终指向最新版本
+  #   genshinmc/nodeget:v0.5.6  — 带版本号的固定标签
+  #
+  # 依赖：prepare + publish-release（顺序依赖，确保 Release 资产先就绪）
+  # 权限：actions: write（GHA 缓存）, contents: read, packages: write（GHCR，备用）
+  #
   publish-docker:
     name: Publish Docker image
     needs:
@@ -317,18 +440,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # 前置检查：Docker Hub 凭据必须配置，否则提前失败而非在 login 步骤报错
       - name: Check Docker Hub credentials
         shell: bash
         run: |
           test -n "${DOCKERHUB_USERNAME}"
           test -n "${DOCKERHUB_TOKEN}"
 
+      # QEMU — 用户态模拟器，允许在 x86_64 runner 上构建 arm64 镜像
+      # Docker buildx 的多架构构建底层依赖 QEMU 模拟非原生指令集
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
+      # Buildx — Docker 的扩展构建器，支持多平台并行构建 + 缓存导出
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      # 登录 Docker Hub（凭据存储在 GitHub Secrets）
       - name: Login to Docker Hub
         uses: docker/login-action@v4
         with:
@@ -336,6 +464,10 @@ jobs:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ env.DOCKERHUB_TOKEN }}
 
+      # 生成 Docker 标签和标签元数据
+      # tags 规则：
+      #   type=raw,value=latest                    → genshinmc/nodeget:latest
+      #   type=raw,value=${{ needs.prepare.outputs.tag }} → genshinmc/nodeget:v0.5.6
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -345,6 +477,14 @@ jobs:
             type=raw,value=latest
             type=raw,value=${{ needs.prepare.outputs.tag }}
 
+      # 多架构构建并推送
+      # target: runtime-release — Dockerfile 中使用 GitHub Release 下载二进制的 stage
+      # platforms: linux/amd64,linux/arm64 — 同时构建两个架构
+      # build-args:
+      #   NODEGET_VERSION — 传给 Dockerfile 的 ARG，指定从哪个 Release 下载二进制
+      #   NODEGET_RELEASE_REPO — 指定 Release 仓库（支持 fork 场景）
+      # cache-from/to: type=gha — 使用 GitHub Actions 缓存加速重复构建
+      #   mode=max — 缓存所有中间层（不仅是最终层），最大化缓存命中率
       - name: Build and push
         uses: docker/build-push-action@v7
         with:

@@ -65,54 +65,12 @@ ws_url = "ws://127.0.0.1:2211/"
 # 是否允许执行任务
 allow_task = true
 
-# 是否允许 ICMP Ping
-allow_icmp_ping = true
-
-# 是否允许 TCP Ping
-allow_tcp_ping = true
-
-# 是否允许 HTTP Ping
-allow_http_ping = true
-
-# 是否允许通用 HTTP 请求，危险操作，谨慎开启
-allow_http_request = true
-
-# 是否允许 Web Shell，极度危险，谨慎开启
-allow_web_shell = true
-
-# 是否允许执行命令，极度危险，谨慎开启
-allow_execute = true
-
-# 是否允许阅读配置，极度危险，谨慎开启
-allow_read_config = true
-
-# 是否允许编辑配置，极度危险，谨慎开启
-allow_edit_config = true
-
-# 是否允许获取 IP 地址
-allow_ip = true
-
-# 是否允许 DNS 查询
-# 支持 A / AAAA / CNAME / MX / TXT / NS / SRV / PTR / SOA / CAA 记录类型
-# Agent 使用 hickory-resolver 库执行 DNS 查询，支持自定义 DNS 服务器（格式 "IP:port"）或系统默认
-# dns_server 字段必须包含端口号，如 "8.8.8.8:53"
-# 建议按需开启
-allow_dns = true
-
-# 是否允许获取版本信息
-allow_version = true
-
-# 是否允许自更新，开启后 Server 可通过 SelfUpdate 任务触发 Agent 自动下载并替换二进制
-# 支持升级和降级，版本号仅做格式校验（vX.Y.Z）
-# 重启后生效，需谨慎开启
-allow_self_update = false
-
 # 允许执行的任务类型白名单（可选）
 # 若指定此列表且非空，则单独的任务开关（如 allow_ping / allow_execute 等）全部失效
 # 以本列表为准，未列出的任务类型一律拒绝
 # 值为 task_name，可选值包括：ping / tcp_ping / http_ping / dns / execute / http_request
 # / web_shell / read_config / edit_config / ip / version / self_update
-# allow_task_type = ["ping", "dns", "ip"]
+allow_task_type = ["ping", "dns", "ip"]
 
 # 是否忽略服务端 TLS 证书校验，默认关闭
 # 仅在 Server 使用自签名证书或测试环境时开启

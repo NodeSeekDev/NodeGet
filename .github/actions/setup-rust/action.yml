@@ -1,0 +1,38 @@
+name: setup-rust
+description: Setup Rust toolchain and Cargo cache for NodeGet
+inputs:
+  components:
+    description: Rust components to install
+    required: false
+    default: ""
+  targets:
+    description: Rust targets to install
+    required: false
+    default: ""
+  cache-shared-key:
+    description: Shared cache key for Swatinem/rust-cache
+    required: false
+    default: ""
+  cache-targets:
+    description: Whether to cache target directories
+    required: false
+    default: "true"
+  cache-on-failure:
+    description: Whether to save cache when a job fails
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Setup Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+
+    - name: Restore Cargo cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ inputs.cache-shared-key }}
+        cache-targets: ${{ inputs.cache-targets }}
+        cache-on-failure: ${{ inputs.cache-on-failure }}

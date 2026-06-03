@@ -29,15 +29,21 @@ pub mod entity;
 
 // ── 主库全局单例 ──────────────────────────────────────────────────
 
-/// 全局数据库连接，服务端启动时通过 `set_db` 写入一次，之后只读
-static DB: std::sync::OnceLock<sea_orm::DatabaseConnection> = std::sync::OnceLock::new();
+/// 全局数据库连接，`ManuallyDrop` 包裹以避免进程退出时的昂贵析构。
+///
+/// `PostgreSQL` 连接池的 `drop` 需要 join 后台维护任务，耗时可达数秒。
+/// 进程退出时 OS 回收所有资源（TCP 连接、内存），无需显式析构。
+/// 若后续需要优雅关闭池，可在 `serve.rs` 退出前调用 `take_and_close_db()`。
+static DB: std::sync::OnceLock<std::mem::ManuallyDrop<sea_orm::DatabaseConnection>> =
+    std::sync::OnceLock::new();
 
 /// 获取全局主库连接
 ///
 /// - 返回值：若已初始化则返回 `Some(&DatabaseConnection)`，否则 `None`
 /// - 服务端各模块通过此函数共享同一个数据库连接
 pub fn get_db() -> Option<&'static sea_orm::DatabaseConnection> {
-    DB.get()
+    use std::ops::Deref;
+    DB.get().map(Deref::deref)
 }
 
 /// 设置全局主库连接，仅应在服务端启动时调用一次
@@ -45,8 +51,27 @@ pub fn get_db() -> Option<&'static sea_orm::DatabaseConnection> {
 /// - `conn` — `SeaORM` 数据库连接实例
 /// - 若重复调用，新连接会被丢弃并输出警告日志（OnceLock 语义）
 pub fn set_db(conn: sea_orm::DatabaseConnection) {
-    if DB.set(conn).is_err() {
+    if DB.set(std::mem::ManuallyDrop::new(conn)).is_err() {
         tracing::warn!(target: "db", "set_db called twice; new connection discarded (OnceLock already set)");
+    }
+}
+
+/// 取出并优雅关闭全局数据库连接（可选，仅用于需要显式 `drop` 的场景）
+///
+/// 调用后 `get_db()` 返回 `None`。若从未调用此函数，连接在进程退出时由 OS 回收。
+///
+/// # Safety
+///
+/// 必须确保无其他代码仍在使用 `get_db()` 返回的引用。
+#[allow(dead_code)]
+pub unsafe fn take_and_close_db() {
+    // SAFETY: 调用者保证无其他引用在使用中
+    let db_ptr: *mut std::sync::OnceLock<std::mem::ManuallyDrop<sea_orm::DatabaseConnection>> =
+        &DB as *const _ as *mut _;
+    // SAFETY: 调用者保证独占访问
+    if let Some(md) = unsafe { (*db_ptr).take() } {
+        // ManuallyDrop::into_inner 恢复所有权并执行正常 drop
+        drop(std::mem::ManuallyDrop::into_inner(md));
     }
 }
 
