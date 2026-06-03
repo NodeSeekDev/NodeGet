@@ -58,7 +58,7 @@ jobs:
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
-  build-linux:
+  build-linux-server:
     name: Build - ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: ubuntu-latest
@@ -122,7 +122,132 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  build-windows:
+  build-linux-agent:
+    name: Build - ${{ matrix.platform.release_for }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          # x86_64
+          - release_for: linux_x86_64_musl
+            target: x86_64-unknown-linux-musl
+            binary_name: nodeget-agent-linux-x86_64-musl
+          - release_for: linux_x86_64_gnu
+            target: x86_64-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-x86_64-gnu
+          # i686
+          - release_for: linux_i686_gnu
+            target: i686-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-i686-gnu
+          - release_for: linux_i686_musl
+            target: i686-unknown-linux-musl
+            binary_name: nodeget-agent-linux-i686-musl
+          # aarch64
+          - release_for: linux_aarch64_gnu
+            target: aarch64-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-aarch64-gnu
+          - release_for: linux_aarch64_musl
+            target: aarch64-unknown-linux-musl
+            binary_name: nodeget-agent-linux-aarch64-musl
+          # arm (generic)
+          - release_for: linux_arm_gnueabi
+            target: arm-unknown-linux-gnueabi
+            binary_name: nodeget-agent-linux-arm-gnueabi
+          - release_for: linux_arm_gnueabihf
+            target: arm-unknown-linux-gnueabihf
+            binary_name: nodeget-agent-linux-arm-gnueabihf
+          - release_for: linux_arm_musleabi
+            target: arm-unknown-linux-musleabi
+            binary_name: nodeget-agent-linux-arm-musleabi
+          - release_for: linux_arm_musleabihf
+            target: arm-unknown-linux-musleabihf
+            binary_name: nodeget-agent-linux-arm-musleabihf
+          # armv7
+          - release_for: linux_armv7_gnueabi
+            target: armv7-unknown-linux-gnueabi
+            binary_name: nodeget-agent-linux-armv7-gnueabi
+          - release_for: linux_armv7_gnueabihf
+            target: armv7-unknown-linux-gnueabihf
+            binary_name: nodeget-agent-linux-armv7-gnueabihf
+          - release_for: linux_armv7_musleabi
+            target: armv7-unknown-linux-musleabi
+            binary_name: nodeget-agent-linux-armv7-musleabi
+          - release_for: linux_armv7_musleabihf
+            target: armv7-unknown-linux-musleabihf
+            binary_name: nodeget-agent-linux-armv7-musleabihf
+          # thumbv7neon (ARMv7 with NEON SIMD)
+          - release_for: linux_thumbv7neon_gnueabihf
+            target: thumbv7neon-unknown-linux-gnueabihf
+            binary_name: nodeget-agent-linux-thumbv7neon-gnueabihf
+          # riscv64
+          - release_for: linux_riscv64gc_gnu
+            target: riscv64gc-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-riscv64gc-gnu
+            no_upx: true
+          # powerpc
+          - release_for: linux_powerpc64_gnu
+            target: powerpc64-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-powerpc64-gnu
+            no_upx: true
+          - release_for: linux_powerpc64le_gnu
+            target: powerpc64le-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-powerpc64le-gnu
+            no_upx: true
+          # s390x (IBM Z)
+          - release_for: linux_s390x_gnu
+            target: s390x-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-s390x-gnu
+            no_upx: true
+          # sparc64
+          - release_for: linux_sparc64_gnu
+            target: sparc64-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-sparc64-gnu
+            no_upx: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-shared-key: release-agent-linux-${{ matrix.platform.target }}
+
+      - name: Install cross
+        env:
+          CROSS_VERSION: v0.2.5
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${HOME}/.local/bin"
+          gh release download "${CROSS_VERSION}" \
+            --repo cross-rs/cross \
+            --pattern cross-x86_64-unknown-linux-gnu.tar.gz \
+            -O - \
+            | tar -xz -C "${HOME}/.local/bin"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+
+      - name: Build binary
+        run: cross build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32
+        env:
+          CROSS_NO_WARNINGS: 0
+
+      - name: Compress binary
+        if: ${{ !matrix.platform.no_upx }}
+        run: upx -9 ./target/${{ matrix.platform.target }}/minimal/nodeget-agent
+
+      - name: Rename binary
+        run: cp target/${{ matrix.platform.target }}/minimal/nodeget-agent target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.platform.target }}
+          path: target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+          if-no-files-found: error
+          retention-days: 14
+
+  build-windows-server:
     name: Build - ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: windows-latest
@@ -162,7 +287,47 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  build-macos:
+  build-windows-agent:
+    name: Build - ${{ matrix.platform.release_for }}
+    needs: prepare
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - release_for: windows_x86_64
+            target: x86_64-pc-windows-msvc
+            binary_name: nodeget-agent-windows-x86_64.exe
+          - release_for: windows_aarch64
+            target: aarch64-pc-windows-msvc
+            binary_name: nodeget-agent-windows-aarch64.exe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.platform.target }}
+          cache-shared-key: release-agent-windows-${{ matrix.platform.target }}
+
+      - name: Build binary
+        run: cargo build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32
+        env:
+          CROSS_NO_WARNINGS: 0
+
+      - name: Rename binary
+        run: copy target\${{ matrix.platform.target }}\minimal\nodeget-agent.exe target\${{ matrix.platform.target }}\minimal\${{ matrix.platform.binary_name }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.platform.target }}
+          path: target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+          if-no-files-found: error
+          retention-days: 14
+
+  build-macos-server:
     name: Build - ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: macos-latest
@@ -200,13 +365,54 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  build-macos-agent:
+    name: Build - ${{ matrix.platform.release_for }}
+    needs: prepare
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - release_for: macos_aarch64
+            target: aarch64-apple-darwin
+            binary_name: nodeget-agent-macos-aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.platform.target }}
+          cache-shared-key: release-agent-macos-${{ matrix.platform.target }}
+
+      - name: Build binary
+        run: cargo build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32
+        env:
+          CROSS_NO_WARNINGS: 0
+
+      - name: Rename binary
+        run: cp target/${{ matrix.platform.target }}/minimal/nodeget-agent target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.platform.target }}
+          path: target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+          if-no-files-found: error
+          retention-days: 14
+
   publish-release:
     name: Publish GitHub Release
     needs:
       - prepare
-      - build-linux
-      - build-windows
-      - build-macos
+      - build-linux-server
+      - build-windows-server
+      - build-macos-server
+      - build-linux-agent
+      - build-windows-agent
+      - build-macos-agent
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -226,11 +432,11 @@ jobs:
           make_latest: true
           files: dist/*
 
-  publish-docker:
+  publish-docker-server:
     name: Publish Docker image
     needs:
       - prepare
-      - build-linux
+      - build-linux-server
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
