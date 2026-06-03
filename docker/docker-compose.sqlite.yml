@@ -1,0 +1,12 @@
+name: nodeget-sqlite
+
+services:
+  nodeget:
+    image: genshinmc/nodeget:latest
+    restart: unless-stopped
+    environment:
+      NODEGET_DATABASE_URL: sqlite:///nodeget/nodeget.db?mode=rwc
+    ports:
+      - "2211:2211"
+    volumes:
+      - ./data:/nodeget

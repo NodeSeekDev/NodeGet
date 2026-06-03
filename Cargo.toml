@@ -26,17 +26,17 @@ edition = "2024"
 repository = "https://github.com/NodeSeekDev/NodeGet"
 
 [workspace.dependencies]
-serde = { version = "1.0", default-features = false, features = ["std", "derive"] }
-serde_json = { version = "1.0", default-features = false, features = ["std", "raw_value"] }
-tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
-anyhow = { version = "1.0", default-features = false }
+serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0.150", default-features = false, features = ["std", "raw_value"] }
+tokio = { version = "1.52.3", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+anyhow = { version = "1.0.102", default-features = false }
 jsonrpsee = { git = "https://github.com/infinitefield/jsonrpsee.git", default-features = false, features = ["server", "macros"] }
-axum = { version = "0.8.8", default-features = false, features = ["tokio", "ws", "http1", "query"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
-uuid = { version = "1.19.0", default-features = false, features = ["std", "serde", "v4", "v5", "fast-rng"] }
+axum = { version = "0.8.9", default-features = false, features = ["tokio", "ws", "http1", "query"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
+uuid = { version = "1.23.2", default-features = false, features = ["std", "serde", "v4", "v5", "fast-rng"] }
 thiserror = { version = "2.0.18", default-features = false }
-rand = { version = "0.9", default-features = false, features = ["std", "thread_rng"] }
-tracing = { version = "0.1", default-features = false, features = ["std"] }
+rand = { version = "0.10.1", default-features = false, features = ["std", "thread_rng"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 sha2 = { version = "0.11.0", default-features = false }
 toml = { version = "1.1.2", default-features = false, features = ["std", "serde", "parse"] }
 url = { version = "2.5.8", default-features = false, features = ["std", "serde"] }
@@ -44,9 +44,9 @@ base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
 hex = { version = "0.4.3", default-features = false, features = ["std"] }
 subtle = { version = "2.6.1", default-features = false }
 palc = { version = "0.0.2", default-features = false, features = ["help"] }
-chrono = { version = "0.4.43", default-features = false, features = ["now", "std"] }
-futures-util = { version = "0.3.31", default-features = false }
-sea-orm = { version = "2.0.0-rc.38", default-features = false, features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres", "macros", "with-json", "with-uuid"] }
+chrono = { version = "0.4.44", default-features = false, features = ["now", "std"] }
+futures-util = { version = "0.3.32", default-features = false }
+sea-orm = { version = "2.0.0-rc.40", default-features = false, features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres", "macros", "with-json", "with-uuid"] }
 cron = { version = "0.16.0", default-features = false }
 dav-server = { version = "0.11.0", default-features = false, features = ["localfs"] }
 rquickjs = { git = "https://github.com/delskayn/rquickjs.git", default-features = false, features = ["futures"] }
@@ -56,11 +56,11 @@ llrt_timers = { git = "https://github.com/awslabs/llrt.git", default-features = 
 llrt_url = { git = "https://github.com/awslabs/llrt.git", default-features = false }
 llrt_stream_web = { git = "https://github.com/awslabs/llrt.git", default-features = false }
 llrt_util = { git = "https://github.com/awslabs/llrt.git", default-features = false }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "json", "fmt", "chrono", "tracing-log"] }
-log = { version = "0.4.29", default-features = false, features = ["std"] }
-rustls = "0.23"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "json", "fmt", "ansi", "chrono", "tracing-log"] }
+log = { version = "0.4.31", default-features = false, features = ["std"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
 tower = { version = "0.5.3", default-features = false }
-axum-server = { version = "0.8", features = ["tls-rustls"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 
 # Internal crates
 ng-core = { path = "crates/ng-core" }
@@ -77,6 +77,11 @@ ng-js-worker = { path = "crates/ng-js-worker" }
 ng-static = { path = "crates/ng-static" }
 ng-terminal = { path = "crates/ng-terminal" }
 ng-migration = { path = "crates/ng-db/migration" }
+
+[patch.crates-io]
+rquickjs = { git = "https://github.com/delskayn/rquickjs.git" }
+rquickjs-core = { git = "https://github.com/delskayn/rquickjs.git" }
+rquickjs-sys = { git = "https://github.com/delskayn/rquickjs.git" }
 
 [profile]
 dev = { opt-level = 0, debug = true, debug-assertions = true, overflow-checks = true, lto = false, panic = "unwind", incremental = true, codegen-units = 256, rpath = false }

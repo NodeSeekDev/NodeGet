@@ -43,6 +43,3 @@ anyhow = { workspace = true, optional = true }
 ng-db = { workspace = true, optional = true }
 ng-infra = { workspace = true, optional = true }
 
-# ARM32 needs bindgen for libatomic workaround
-[target.'cfg(target_arch = "arm")'.dependencies]
-rquickjs = { git = "https://github.com/delskayn/rquickjs.git", default-features = false, features = ["futures", "bindgen"], optional = true }

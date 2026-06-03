@@ -23,10 +23,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      NODEGET_PORT: "2211"
-      NODEGET_LOG_FILTER: info
       NODEGET_DATABASE_URL: postgres://nodeget:nodeget@postgres:5432/nodeget
     ports:
       - "2211:2211"
     volumes:
-      - ./data/config:/etc/nodeget
+      - ./data/nodeget:/nodeget

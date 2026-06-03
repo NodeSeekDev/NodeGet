@@ -1,0 +1,17 @@
+[target.arm-unknown-linux-gnueabi]
+rustflags = ["-C", "link-arg=-latomic"]
+
+[target.arm-unknown-linux-gnueabihf]
+rustflags = ["-C", "link-arg=-latomic"]
+
+[target.armv7-unknown-linux-gnueabi]
+rustflags = ["-C", "link-arg=-latomic"]
+
+[target.armv7-unknown-linux-gnueabihf]
+rustflags = ["-C", "link-arg=-latomic"]
+
+[target.armv7-unknown-linux-musleabi]
+rustflags = ["-C", "link-arg=-latomic"]
+
+[target.armv7-unknown-linux-musleabihf]
+rustflags = ["-C", "link-arg=-latomic"]
