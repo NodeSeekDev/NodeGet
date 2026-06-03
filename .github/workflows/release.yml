@@ -1,4 +1,4 @@
-name: release-server
+name: release
 
 on:
   workflow_dispatch:
@@ -59,7 +59,7 @@ jobs:
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
   build-linux-server:
-    name: Build - ${{ matrix.platform.release_for }}
+    name: Build Server - ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: ubuntu-latest
     strategy:
@@ -123,7 +123,7 @@ jobs:
           retention-days: 14
 
   build-linux-agent:
-    name: Build - ${{ matrix.platform.release_for }}
+    name: Build Agent - ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: ubuntu-latest
     strategy:
@@ -200,11 +200,6 @@ jobs:
             target: s390x-unknown-linux-gnu
             binary_name: nodeget-agent-linux-s390x-gnu
             no_upx: true
-          # sparc64
-          - release_for: linux_sparc64_gnu
-            target: sparc64-unknown-linux-gnu
-            binary_name: nodeget-agent-linux-sparc64-gnu
-            no_upx: true
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -248,7 +243,7 @@ jobs:
           retention-days: 14
 
   build-windows-server:
-    name: Build - ${{ matrix.platform.release_for }}
+    name: Build Server - ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: windows-latest
     strategy:
@@ -288,7 +283,7 @@ jobs:
           retention-days: 14
 
   build-windows-agent:
-    name: Build - ${{ matrix.platform.release_for }}
+    name: Build Agent - ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: windows-latest
     strategy:
@@ -328,7 +323,7 @@ jobs:
           retention-days: 14
 
   build-macos-server:
-    name: Build - ${{ matrix.platform.release_for }}
+    name: Build Server - ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: macos-latest
     strategy:
@@ -366,7 +361,7 @@ jobs:
           retention-days: 14
 
   build-macos-agent:
-    name: Build - ${{ matrix.platform.release_for }}
+    name: Build Agent - ${{ matrix.platform.release_for }}
     needs: prepare
     runs-on: macos-latest
     strategy:
