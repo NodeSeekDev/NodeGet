@@ -162,7 +162,7 @@ jobs:
           cache-shared-key: release-windows-${{ matrix.platform.target }}
 
       - name: Build binary
-        run: cross build --package nodeget-server --target ${{ matrix.platform.target }} --profile minimal --jobs 32
+        run: cargo build --package nodeget-server --target ${{ matrix.platform.target }} --profile minimal --jobs 32
         env:
           CROSS_NO_WARNINGS: 0
 
