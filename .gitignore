@@ -18,4 +18,5 @@ rp.md
 rustest
 nodeget.db*
 .claude
+bin/
 /server/profile.json.gz
