@@ -55,9 +55,7 @@ pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
             "success": true,
             "rows_affected": delete_result.rows_affected
         });
-        let json_str = serde_json::to_string(&response)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&response)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

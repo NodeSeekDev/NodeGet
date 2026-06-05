@@ -101,11 +101,7 @@ pub async fn edit(
             "token_key": updated.token_key
         });
 
-        let json_str = serde_json::to_string(&response).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize response: {e}"))
-        })?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&response)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

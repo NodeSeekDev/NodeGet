@@ -56,11 +56,7 @@ pub async fn get(token: String, supertoken: Option<String>) -> RpcResult<Box<Raw
             get_token(&token_or_auth).await?
         };
 
-        let json_str = serde_json::to_string(&token_info).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize token info: {e}"))
-        })?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&token_info)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

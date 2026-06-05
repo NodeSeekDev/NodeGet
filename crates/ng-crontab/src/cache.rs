@@ -17,8 +17,8 @@ use tracing::warn;
 
 /// 缓存中的单条定时任务条目，预解析了 cron 表达式和类型。
 pub struct CachedCrontab {
-    /// 数据库行模型（Arc 共享，避免深拷贝）
-    pub model: Arc<crontab::Model>,
+    /// 数据库行模型，外层 Arc<CachedCrontab> 已提供共享，无需内层 Arc
+    pub model: crontab::Model,
     /// 预编译的 cron 调度对象，用于判断下次触发时间
     pub schedule: Schedule,
     /// 预解析的定时任务类型（Agent / Server）
@@ -103,7 +103,7 @@ impl CrontabCache {
     /// 解析失败的条目（无效 cron 表达式或无效 cron_type）会被跳过并记录警告日志。
     fn build_maps(models: Vec<crontab::Model>) -> HashMap<i64, Arc<CachedCrontab>> {
         let mut by_id = HashMap::with_capacity(models.len());
-        for model in models {
+        for mut model in models {
             // 解析 cron 表达式为 Schedule 对象
             let schedule = match Schedule::from_str(&model.cron_expression) {
                 Ok(s) => s,
@@ -119,8 +119,9 @@ impl CrontabCache {
                 }
             };
 
-            // 反序列化 cron_type JSON 字段
-            let cron_type = match serde_json::from_value::<CronType>(model.cron_type.clone()) {
+            // 取走 cron_type 所有权直接解析，避免 clone 整个 Value
+            // 缓存中通过 CachedCrontab.cron_type 访问，model.cron_type 不再被读取
+            let cron_type = match serde_json::from_value::<CronType>(std::mem::take(&mut model.cron_type)) {
                 Ok(ct) => ct,
                 Err(e) => {
                     warn!(
@@ -138,7 +139,7 @@ impl CrontabCache {
             by_id.insert(
                 id,
                 Arc::new(CachedCrontab {
-                    model: Arc::new(model),
+                    model,
                     schedule,
                     cron_type,
                 }),

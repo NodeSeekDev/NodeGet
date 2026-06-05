@@ -66,11 +66,7 @@ pub async fn set_enable(token: String, name: String, enable: bool) -> RpcResult<
 
         debug!(target: "crontab", name = %name, enabled = state, "Crontab enable state updated");
 
-        let json_str =
-            serde_json::to_string(&serde_json::json!({"success": true, "enabled": state}))
-                .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&serde_json::json!({"success": true, "enabled": state}))
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

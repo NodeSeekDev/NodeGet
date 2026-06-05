@@ -388,7 +388,8 @@ impl RpcServer for TaskRpcImpl {
 type Peers = Arc<RwLock<HashMap<Uuid, (Uuid, mpsc::Sender<crate::types::TaskEvent>)>>>;
 
 /// Blocking waiter 表：task_id → oneshot 发送端，用于 `create_task_blocking` 等待结果
-type BlockingWaiters = Arc<RwLock<HashMap<u64, oneshot::Sender<crate::types::TaskEventResponse>>>>;
+/// 临界区无 .await，使用 std::sync::RwLock 避免 tokio async 开销
+type BlockingWaiters = Arc<std::sync::RwLock<HashMap<u64, oneshot::Sender<crate::types::TaskEventResponse>>>>;
 
 /// 全局 TaskManager 单例，延迟初始化
 static GLOBAL_TASK_MANAGER: OnceLock<Arc<TaskManager>> = OnceLock::new();
@@ -412,7 +413,7 @@ impl TaskManager {
     pub fn new() -> Self {
         Self {
             peers: Arc::new(RwLock::new(HashMap::new())),
-            blocking_waiters: Arc::new(RwLock::new(HashMap::new())),
+            blocking_waiters: Arc::new(std::sync::RwLock::new(HashMap::new())),
         }
     }
 
@@ -476,30 +477,30 @@ impl TaskManager {
     }
 
     /// 注册一个 blocking waiter，等待指定 `task_id` 的结果
-    pub async fn register_blocking_waiter(
+    pub fn register_blocking_waiter(
         &self,
         task_id: u64,
     ) -> oneshot::Receiver<crate::types::TaskEventResponse> {
         let (tx, rx) = oneshot::channel();
-        self.blocking_waiters.write().await.insert(task_id, tx);
+        self.blocking_waiters.write().unwrap_or_else(|e| e.into_inner()).insert(task_id, tx);
         debug!(target: "task", task_id = task_id, "blocking waiter registered");
         rx
     }
 
     /// 移除 blocking waiter（超时或取消时调用）
-    pub async fn remove_blocking_waiter(&self, task_id: u64) {
-        self.blocking_waiters.write().await.remove(&task_id);
+    pub fn remove_blocking_waiter(&self, task_id: u64) {
+        self.blocking_waiters.write().unwrap_or_else(|e| e.into_inner()).remove(&task_id);
     }
 
     /// 尝试通知 blocking waiter（upload_task_result 时调用）
     ///
     /// 返回 `true` 表示有 waiter 被通知，`false` 表示无人在等待
-    pub async fn notify_blocking_waiter(
+    pub fn notify_blocking_waiter(
         &self,
         task_id: u64,
         response: crate::types::TaskEventResponse,
     ) -> bool {
-        let value = self.blocking_waiters.write().await.remove(&task_id);
+        let value = self.blocking_waiters.write().unwrap_or_else(|e| e.into_inner()).remove(&task_id);
         value.is_some_and(|tx| {
             let _ = tx.send(response);
             debug!(target: "task", task_id = task_id, "blocking waiter notified");

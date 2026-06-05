@@ -42,10 +42,7 @@ pub async fn list_all_agent_uuids(token: String) -> RpcResult<Box<RawValue>> {
 
         let uuids = MonitoringUuidCache::global().list_all();
 
-        let json_str = serde_json::to_string(&uuids)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&uuids)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

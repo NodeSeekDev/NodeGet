@@ -55,11 +55,7 @@ pub async fn get(token: String) -> RpcResult<Box<RawValue>> {
                 })
                 .collect();
 
-            let json_str = serde_json::to_string(&crontabs).map_err(|e| {
-                NodegetError::SerializationError(format!("Failed to serialize crontabs: {e}"))
-            })?;
-
-            return RawValue::from_string(json_str)
+            return serde_json::value::to_raw_value(&crontabs)
                 .map_err(|e| NodegetError::SerializationError(e.to_string()).into());
         }
 
@@ -99,11 +95,7 @@ pub async fn get(token: String) -> RpcResult<Box<RawValue>> {
 
         // 根据 Token 的 Scope 过滤可见条目
         let crontabs = filter_entries_by_token(&entries, &token_info, cache);
-        let json_str = serde_json::to_string(&crontabs).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize crontabs: {e}"))
-        })?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&crontabs)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

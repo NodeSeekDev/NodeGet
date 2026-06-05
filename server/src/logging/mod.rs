@@ -188,36 +188,28 @@ where
 
         let message = visitor.message.take().unwrap_or_default();
 
-        // 收集 span 上下文——剥离 ANSI，因为控制台层 `with_ansi(true)`
-        // 导致 `FormattedFields<DefaultFields>` 中包含 ANSI 转义码
+        // 收集 span 上下文——直接 Map 构造替代 serde_json::json!，消除每 span 的中间 Value 分配
         let spans: Vec<serde_json::Value> = ctx
             .event_scope(event)
             .into_iter()
             .flatten()
             .map(|span| {
-                let mut obj = serde_json::json!({ "name": span.name() });
+                let mut map = serde_json::Map::with_capacity(2);
+                map.insert("name".to_owned(), serde_json::Value::String(span.name().to_owned()));
                 let ext = span.extensions();
                 if let Some(fields) = ext
                     .get::<FormattedFields<format::DefaultFields>>()
                     .filter(|f| !f.is_empty())
                 {
-                    obj["fields"] = serde_json::Value::String(strip_ansi(&fields.to_string()));
+                    map.insert("fields".to_owned(), serde_json::Value::String(strip_ansi(&fields.to_string())));
                 }
                 drop(ext);
-                obj
+                serde_json::Value::Object(map)
             })
             .collect();
 
-        let target = remap_target(meta.target());
-
-        let entry = serde_json::json!({
-            "timestamp": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
-            "level": meta.level().as_str(),
-            "target": target,
-            "message": message,
-            "fields": visitor.fields,
-            "spans": spans,
-        });
+        // 直接 Map 构造替代 serde_json::json!，消除 6 次中间 Value 分配
+        let entry = build_log_entry(meta, message, visitor.fields, spans);
 
         // 使用 unwrap_or_else(into_inner) 从 Mutex 中毒中恢复，
         // 而非静默丢弃日志条目
@@ -456,38 +448,29 @@ where
         event: &Event<'_>,
     ) -> stdfmt::Result {
         let meta = event.metadata();
-        let target = remap_target(meta.target());
-
         // 收集字段
         let mut visitor = JsonFieldVisitor::default();
         event.record(&mut visitor);
         let message = visitor.message.take().unwrap_or_default();
 
-        // 收集 span 上下文——防御性 strip_ansi，
-        // 避免字段格式化器类型 `N` 与 ANSI 启用的层共享存储时泄漏转义码
+        // 收集 span 上下文——直接 Map 构造替代 serde_json::json!
         let spans: Vec<serde_json::Value> = ctx
             .event_scope()
             .into_iter()
             .flatten()
             .map(|span| {
-                let mut obj = serde_json::json!({ "name": span.name() });
+                let mut map = serde_json::Map::with_capacity(2);
+                map.insert("name".to_owned(), serde_json::Value::String(span.name().to_owned()));
                 let ext = span.extensions();
                 if let Some(fields) = ext.get::<FormattedFields<N>>().filter(|f| !f.is_empty()) {
-                    obj["fields"] = serde_json::Value::String(strip_ansi(&fields.to_string()));
+                    map.insert("fields".to_owned(), serde_json::Value::String(strip_ansi(&fields.to_string())));
                 }
                 drop(ext);
-                obj
+                serde_json::Value::Object(map)
             })
             .collect();
 
-        let entry = serde_json::json!({
-            "timestamp": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
-            "level": meta.level().as_str(),
-            "target": target,
-            "message": message,
-            "fields": visitor.fields,
-            "spans": spans,
-        });
+        let entry = build_log_entry(meta, message, visitor.fields, spans);
 
         // 输出单行 JSON（无尾逗号）
         write!(writer, "{entry}")?;
@@ -509,6 +492,38 @@ const fn level_ansi(level: tracing::Level) -> (&'static str, &'static str) {
         tracing::Level::DEBUG => ("\x1b[34m", RESET), // 蓝色
         tracing::Level::TRACE => ("\x1b[35m", RESET), // 紫色
     }
+}
+
+/// 构建 JSON 日志条目，供 `MemoryLogLayer::on_event` 和 `JsonRemapFormat::format_event` 共享。
+///
+/// 直接 Map 构造替代 `serde_json::json!`，消除每条日志 6 次中间 `Value` 分配。
+fn build_log_entry(
+    meta: &tracing::Metadata<'_>,
+    message: String,
+    fields: serde_json::Map<String, serde_json::Value>,
+    spans: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    let mut map = serde_json::Map::with_capacity(6);
+    map.insert(
+        "timestamp".to_owned(),
+        serde_json::Value::String(
+            chrono::Local::now()
+                .format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+                .to_string(),
+        ),
+    );
+    map.insert(
+        "level".to_owned(),
+        serde_json::Value::String(meta.level().as_str().to_owned()),
+    );
+    map.insert(
+        "target".to_owned(),
+        serde_json::Value::String(remap_target(meta.target()).to_owned()),
+    );
+    map.insert("message".to_owned(), serde_json::Value::String(message));
+    map.insert("fields".to_owned(), serde_json::Value::Object(fields));
+    map.insert("spans".to_owned(), serde_json::Value::Array(spans));
+    serde_json::Value::Object(map)
 }
 
 /// 剥离字符串中的 ANSI 转义序列
@@ -580,7 +595,7 @@ impl StreamLogManager {
     pub fn add_subscriber(
         &self,
         id: Uuid,
-        tx: tokio::sync::mpsc::Sender<serde_json::Value>,
+        tx: tokio::sync::mpsc::Sender<String>,
         filter_str: &str,
     ) {
         let expanded = expand_virtual_targets(filter_str);
@@ -615,8 +630,8 @@ impl StreamLogManager {
 
 /// 单个流日志订阅者，持有独立的过滤器和发送通道
 struct StreamLogSubscriber {
-    /// 日志条目发送通道
-    tx: tokio::sync::mpsc::Sender<serde_json::Value>,
+    /// 日志条目发送通道（预序列化 JSON 字符串）
+    tx: tokio::sync::mpsc::Sender<String>,
     /// 订阅者专属过滤器
     filter: StreamFilter,
 }
@@ -768,7 +783,7 @@ where
         }
 
         // 预过滤：收集对此事件感兴趣的订阅者通道
-        let interested_tx: Vec<tokio::sync::mpsc::Sender<serde_json::Value>> = guard
+        let interested_tx: Vec<tokio::sync::mpsc::Sender<String>> = guard
             .values()
             .filter(|sub| sub.filter.is_enabled(meta))
             .map(|sub| sub.tx.clone())
@@ -814,9 +829,14 @@ where
             "spans": spans,
         });
 
-        // 非阻塞广播给所有感兴趣的订阅者
+        // 序列化一次，广播预序列化 JSON 字符串给所有订阅者（避免 per-subscriber 深拷贝）
+        let json_str = match serde_json::to_string(&entry) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
         for tx in interested_tx {
-            let _ = tx.try_send(entry.clone());
+            let _ = tx.try_send(json_str.clone());
         }
     }
 }

@@ -64,9 +64,7 @@ pub async fn get_database_type(token: String) -> RpcResult<Box<RawValue>> {
             "data": db_type,
         });
 
-        let json_str = serde_json::to_string(&response)?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&response)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

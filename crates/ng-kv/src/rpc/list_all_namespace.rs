@@ -36,11 +36,7 @@ pub async fn list_all_namespace(token: String) -> RpcResult<Box<RawValue>> {
 
         debug!(target: "kv", namespace_count = filtered_namespaces.len(), "list_all_namespace completed");
 
-        let json_str = serde_json::to_string(&filtered_namespaces).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize namespaces: {e}"))
-        })?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&filtered_namespaces)
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
     };
 

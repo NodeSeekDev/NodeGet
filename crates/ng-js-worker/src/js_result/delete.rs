@@ -64,13 +64,11 @@ pub async fn delete(token: String, query: JsResultDataQuery) -> RpcResult<Box<Ra
                     "deleted": 0,
                     "condition_count": condition_count,
                 });
-                let json_str = serde_json::to_string(&response).map_err(|e| {
+                return serde_json::value::to_raw_value(&response).map_err(|e| {
                     NodegetError::SerializationError(format!(
                         "Failed to serialize delete response: {e}"
                     ))
-                })?;
-                return RawValue::from_string(json_str)
-                    .map_err(|e| NodegetError::SerializationError(e.to_string()).into());
+                }).map_err(|e| e.into());
             }
             select_query =
                 select_query.filter(js_result::Column::JsWorkerName.is_in(allowed_workers.clone()));
@@ -233,11 +231,9 @@ pub async fn delete(token: String, query: JsResultDataQuery) -> RpcResult<Box<Ra
         });
 
         debug!(target: "js_result", deleted_rows, condition_count, "js_result delete completed");
-        let json_str = serde_json::to_string(&response).map_err(|e| {
+        serde_json::value::to_raw_value(&response).map_err(|e| {
             NodegetError::SerializationError(format!("Failed to serialize delete response: {e}"))
-        })?;
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        }).map_err(|e| e.into())
     };
 
     match process_logic.await {

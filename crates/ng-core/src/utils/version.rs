@@ -39,14 +39,16 @@ pub struct NodeGetVersion {
     pub rustc_llvm_version: String,
 }
 
+/// OnceLock 缓存实例，避免每次调用分配 14 个堆 String
+static VERSION_CACHE: std::sync::OnceLock<NodeGetVersion> = std::sync::OnceLock::new();
+
 impl NodeGetVersion {
     /// 获取编译期注入的版本信息实例。
     ///
-    /// 1. 根据 feature gate 判断二进制类型
-    /// 2. 读取所有 `env!` 宏注入的 vergen 环境变量
+    /// 所有字段为编译期常量，首次调用构建后缓存在 `OnceLock` 中，后续调用零分配。
     #[must_use]
-    pub fn get() -> Self {
-        Self {
+    pub fn get() -> &'static Self {
+        VERSION_CACHE.get_or_init(|| NodeGetVersion {
             binary_type: {
                 if cfg!(feature = "for-server") {
                     "Server"
@@ -69,7 +71,7 @@ impl NodeGetVersion {
             rustc_commit_date: env!("VERGEN_RUSTC_COMMIT_DATE").to_string(),
             rustc_commit_hash: env!("VERGEN_RUSTC_COMMIT_HASH").to_string(),
             rustc_llvm_version: env!("VERGEN_RUSTC_LLVM_VERSION").to_string(),
-        }
+        })
     }
 }
 

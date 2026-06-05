@@ -18,6 +18,7 @@ use crate::rpc::multi_server::subscribe_to;
 use log::{error, info, warn};
 use ng_config::config::agent::AgentConfig;
 use ng_core::utils::JsonError;
+use std::sync::Arc;
 use ng_task::TaskEvent;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -30,7 +31,7 @@ use tokio_tungstenite::tungstenite::Message;
 /// 新代码请直接用 [`crate::config_access::get_agent_config`]。
 #[deprecated(note = "use crate::config_access::get_agent_config instead")]
 #[allow(dead_code)]
-pub fn get_agent_config_safe() -> anyhow::Result<AgentConfig> {
+pub fn get_agent_config_safe() -> anyhow::Result<Arc<AgentConfig>> {
     get_agent_config().map_err(Into::into)
 }
 
@@ -114,7 +115,8 @@ pub async fn handle_error_message() {
 
     let mut tasks = JoinSet::new();
 
-    for server in agent_config.server.unwrap_or_default() {
+    for server in agent_config.server.as_deref().unwrap_or_default() {
+        let server = server.clone();
         tasks.spawn(async move {
             let mut rx = match subscribe_to(server.name.as_str()).await {
                 Ok(rx) => rx,

@@ -66,9 +66,7 @@ pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
 
         debug!(target: "crontab", name = %name, "Crontab deleted successfully");
 
-        let json_str = serde_json::to_string(&serde_json::json!({"success": deleted}))
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&serde_json::json!({"success": deleted}))
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
     };
 

@@ -135,7 +135,11 @@ const SERVER_ARCH_NAME: [(&str, &str); 10] = [
 /// - 返回 (major, minor, patch) 或 None
 fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     let body = s.strip_prefix('v')?;
-    let mut parts = body.splitn(3, '.');
+    parse_version_body(body)
+}
+
+fn parse_version_body(body: impl AsRef<str>) -> Option<(u32, u32, u32)> {
+    let mut parts = body.as_ref().splitn(3, '.');
     let x: u32 = parts.next()?.parse().ok()?;
     let y: u32 = parts.next()?.parse().ok()?;
     let z: u32 = parts.next()?.parse().ok()?;
@@ -174,7 +178,7 @@ pub fn check_if_update_needed(tag: &str) -> ((u32, u32, u32), (u32, u32, u32), b
         Some(v) => v,
     };
 
-    let current_version = match parse_version(&format!("v{}", NodeGetVersion::get().cargo_version))
+    let current_version = match parse_version_body(NodeGetVersion::get().cargo_version.clone())
     {
         None => {
             return ((0, 0, 0), target_version, false);
@@ -200,7 +204,7 @@ pub fn check_if_update_needed(tag: &str) -> ((u32, u32, u32), (u32, u32, u32), b
 /// - 返回下载 URL，未找到对应架构时返回 None
 #[cfg(any(feature = "for-agent", feature = "for-server"))]
 fn build_release_url(arch_name: &[(&str, &str)], tag: &str) -> Option<String> {
-    let arch_str = NodeGetVersion::get().cargo_target_triple;
+    let arch_str = &NodeGetVersion::get().cargo_target_triple;
 
     let (_, binary_name) = match arch_name.iter().find(|(target, _)| *target == arch_str) {
         Some(pair) => pair,

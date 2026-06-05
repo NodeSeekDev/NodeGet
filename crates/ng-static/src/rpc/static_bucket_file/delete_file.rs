@@ -30,9 +30,7 @@ pub async fn delete_file_rpc(
 
         delete_file(&name, &path).await?;
 
-        let json_str = r#"{"success":true}"#.to_string();
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&serde_json::json!({"success": true}))
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
     };
 

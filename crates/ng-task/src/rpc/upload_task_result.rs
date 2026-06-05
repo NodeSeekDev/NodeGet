@@ -11,7 +11,6 @@ use ng_db::rpc::RpcHelper;
 use sea_orm::ColumnTrait;
 use sea_orm::QueryFilter;
 use sea_orm::{EntityTrait, Set};
-use serde_json::Value;
 use serde_json::value::RawValue;
 use std::sync::Arc;
 use tracing::{debug, error};
@@ -127,13 +126,7 @@ pub async fn upload_task_result(
             .into());
         }
 
-        let error_message = task_response.error_message.clone().map(|v| {
-            let json_v = serde_json::to_value(v).unwrap_or(Value::Null);
-            match json_v {
-                Value::String(s) => s,
-                _ => format!("{json_v}"),
-            }
-        });
+        let error_message = task_response.error_message.clone();
 
         let task_event_result = task_response
             .task_event_result
@@ -174,18 +167,18 @@ pub async fn upload_task_result(
             .into());
         }
 
-        manager
-            .notify_blocking_waiter(task_response.task_id, task_response.clone())
-            .await;
+        let task_id = task_response.task_id;
+        let is_auth = token_or_auth.is_auth();
+        manager.notify_blocking_waiter(task_id, task_response);
 
         debug!(
             target: "task",
-            task_id = task_response.task_id,
-            auth_type = if token_or_auth.is_auth() { "Auth" } else { "Token" },
+            task_id,
+            auth_type = if is_auth { "Auth" } else { "Token" },
             "Task result uploaded"
         );
 
-        let json_str = format!("{{\"id\":{}}}", task_response.task_id);
+        let json_str = format!("{{\"id\":{}}}", task_id);
         RawValue::from_string(json_str)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };

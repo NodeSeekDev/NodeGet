@@ -65,14 +65,11 @@ pub async fn roll_token_secret(token: String, target_token: String) -> RpcResult
             );
         }
 
-        let json_str = serde_json::to_string(&serde_json::json!({
+        serde_json::value::to_raw_value(&serde_json::json!({
             "key": updated.token_key,
             "secret": new_secret
         }))
-        .map_err(|e| NodegetError::SerializationError(format!("{e}")))?;
-
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
     // 统一错误转换：anyhow → NodegetError → JSON-RPC ErrorObject

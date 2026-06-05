@@ -142,9 +142,9 @@ pub async fn delete(token: String, target_token: String) -> RpcResult<Box<RawVal
             .await
             .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
-        let json_str = if delete_result_by_key.rows_affected > 0 {
+        let raw = if delete_result_by_key.rows_affected > 0 {
             debug!(target: "token", target = %target_token_to_delete, matched_by = "token_key", "Token deleted successfully");
-            serde_json::to_string(&serde_json::json!({
+            serde_json::value::to_raw_value(&serde_json::json!({
                 "message": format!("Token {target_token_to_delete} deleted successfully by SuperToken"),
                 "rows_affected": delete_result_by_key.rows_affected,
                 "matched_by": "token_key"
@@ -158,7 +158,7 @@ pub async fn delete(token: String, target_token: String) -> RpcResult<Box<RawVal
 
             if delete_result_by_username.rows_affected > 0 {
                 debug!(target: "token", target = %target_token_to_delete, matched_by = "username", "Token deleted successfully");
-                serde_json::to_string(&serde_json::json!({
+                serde_json::value::to_raw_value(&serde_json::json!({
                     "message": format!("Token {target_token_to_delete} deleted successfully by SuperToken"),
                     "rows_affected": delete_result_by_username.rows_affected,
                     "matched_by": "username"
@@ -172,8 +172,7 @@ pub async fn delete(token: String, target_token: String) -> RpcResult<Box<RawVal
             }
         };
 
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        Ok(raw)
     };
 
     // 统一错误转换：anyhow → NodegetError → JSON-RPC ErrorObject

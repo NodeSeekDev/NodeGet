@@ -84,10 +84,7 @@ pub async fn database_storage(token: String) -> jsonrpsee::core::RpcResult<Box<R
         let response = DatabaseStorageResponse { tables, total };
         debug!(target: "server", total_bytes = total, "Database storage query completed");
 
-        let json_str = serde_json::to_string(&response)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&response)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

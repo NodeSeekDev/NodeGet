@@ -180,7 +180,7 @@ async fn execute_task(
             .map_err(|e| NodegetError::Other(format!("{e}")).into()),
 
         TaskEventType::Version => {
-            let version = ng_core::utils::version::NodeGetVersion::get();
+            let version = ng_core::utils::version::NodeGetVersion::get().clone();
             Ok(TaskEventResult::Version(version))
         }
 
@@ -213,7 +213,8 @@ pub async fn handle_task() {
 
     let mut server_tasks = JoinSet::new();
 
-    for server in agent_config.server.unwrap_or_default() {
+    for server in agent_config.server.as_deref().unwrap_or_default() {
+        let server = server.clone();
         server_tasks.spawn(async move {
             if !server.allow_task.unwrap_or(false) {
                 return;

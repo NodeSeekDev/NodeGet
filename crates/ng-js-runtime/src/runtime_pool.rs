@@ -676,10 +676,16 @@ async fn execute_on_worker(
     // 清除所有定时器，防止 idle() 因未清理的 setInterval 挂起，
     // 同时清理 RT_TIMER_STATE 条目以避免潜在的 Runtime 销毁问题。
     // 此时 kill_flag 已为 false，interrupt handler 不会干扰。
-    let _ = state.ctx.async_with(async |ctx| {
+    // 同时检查 fetch 使用标志，用于条件性 I/O drain。
+    let fetch_used: bool = state.ctx.async_with(async |ctx| {
         let _ = ctx.eval::<(), _>(
             "if(typeof globalThis.__nodeget_clear_all_timers==='function')globalThis.__nodeget_clear_all_timers()"
         );
+        let used: bool = ctx
+            .eval::<bool, _>("globalThis.__nodeget_fetch_used === true")
+            .unwrap_or(false);
+        let _ = ctx.eval::<(), _>("globalThis.__nodeget_fetch_used = false");
+        used
     }).await;
 
     if killed_by_timeout {
@@ -714,7 +720,7 @@ async fn execute_on_worker(
         ));
     }
 
-    // 给 tokio runtime 一个短窗口来处理挂起的 I/O 清理。
+    // 条件性 I/O drain：仅在本次执行使用了 fetch() 时等待。
     //
     // JS 执行期间 fetch() 产生的 Response 对象可能未被完全消费（未调
     // .text()/.json() 等）。rt.idle() 期间 QuickJS GC 可能回收了部分
@@ -723,10 +729,11 @@ async fn execute_on_worker(
     // block_on 返回后不再被轮询，关闭信号将无法处理——TCP 连接停留在
     // CLOSE_WAIT（远端已 FIN，本地未 FIN，Recv-Q 有残留字节）。
     //
-    // 此 drain 让 runtime 继续运转一小段时间，使连接 task 能处理关闭
-    // 信号、发送 FIN、释放 socket。100ms (DRAIN_IO_MS) 足以覆盖绝大多数
-    // HTTP 连接关闭握手，同时相对 30s 默认超时可忽略。
-    tokio::time::sleep(std::time::Duration::from_millis(DRAIN_IO_MS)).await;
+    // 无 fetch 时跳过 drain，快速脚本（1-10ms）吞吐量提升 10-100 倍。
+    // 有 fetch 时 100ms (DRAIN_IO_MS) 足以覆盖绝大多数 HTTP 连接关闭握手。
+    if fetch_used {
+        tokio::time::sleep(std::time::Duration::from_millis(DRAIN_IO_MS)).await;
+    }
 
     run_outcome
 }

@@ -49,14 +49,18 @@ pub async fn delete_agent_uuid(token: String, agent_uuid: Uuid) -> RpcResult<Box
                 NodegetError::DatabaseError(format!("Failed to soft delete agent UUID: {e}"))
             })?;
 
-        let json_str = if deleted {
-            r#"{"success":true,"message":"Agent UUID soft-deleted"}"#.to_owned()
+        let raw = if deleted {
+            serde_json::value::to_raw_value(&serde_json::json!({
+                "success": true,
+                "message": "Agent UUID soft-deleted"
+            }))
         } else {
-            r#"{"success":false,"message":"Agent UUID not found"}"#.to_owned()
+            serde_json::value::to_raw_value(&serde_json::json!({
+                "success": false,
+                "message": "Agent UUID not found"
+            }))
         };
-
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        raw.map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
     match process_logic.await {

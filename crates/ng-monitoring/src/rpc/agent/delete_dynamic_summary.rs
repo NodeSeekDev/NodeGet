@@ -185,13 +185,12 @@ pub async fn delete_dynamic_summary(
 
         debug!(target: "monitoring", rows_affected = rows_affected, conditions = conditions.len(), "Dynamic monitoring summary delete completed");
 
-        let json_str = format!(
-            "{{\"success\":true,\"deleted\":{},\"condition_count\":{}}}",
-            rows_affected,
-            conditions.len()
-        );
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        serde_json::value::to_raw_value(&serde_json::json!({
+            "success": true,
+            "deleted": rows_affected,
+            "condition_count": conditions.len()
+        }))
+        .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
     match process_logic.await {

@@ -30,7 +30,7 @@ use ng_core::utils::set_ntp_offset_ms;
 use ng_core::utils::version::NodeGetVersion;
 use std::process::exit;
 use std::str::FromStr;
-use std::sync::{LazyLock, OnceLock, RwLock};
+use std::sync::{Arc, LazyLock, OnceLock, RwLock};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
@@ -43,8 +43,8 @@ mod tasks;
 
 /// 命令行参数全局单例，启动时设置一次，之后只读。[`AGENT_ARGS`]
 static AGENT_ARGS: OnceLock<AgentArgs> = OnceLock::new();
-/// 全局配置 `RwLock` 单例，支持热重载时写入新配置。
-static AGENT_CONFIG: OnceLock<RwLock<AgentConfig>> = OnceLock::new();
+/// 全局配置 `RwLock` 单例，支持热重载时写入新配置。`Arc<AgentConfig>` 使 `get_agent_config()` 返回 O(1) 的 Arc clone。
+static AGENT_CONFIG: OnceLock<RwLock<Arc<AgentConfig>>> = OnceLock::new();
 /// 配置热重载通知信号；`EditConfig` 任务写入配置文件后 notify，主循环收到后 abort 并重建。
 pub(crate) static RELOAD_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 /// NTP 初始化完成标记，防止热重载时覆盖已有偏移导致时间跳变。
@@ -76,12 +76,12 @@ fn update_global_config(config: AgentConfig) -> anyhow::Result<()> {
         let mut guard = lock.write().map_err(|e| {
             NodegetError::Other(format!("Failed to lock AGENT_CONFIG for write: {e}"))
         })?;
-        *guard = config;
+        *guard = Arc::new(config);
         return Ok(());
     }
 
     AGENT_CONFIG
-        .set(RwLock::new(config))
+        .set(RwLock::new(Arc::new(config)))
         .map_err(|_| NodegetError::Other("Failed to set AGENT_CONFIG".to_owned()).into())
 }
 
@@ -123,7 +123,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    AGENT_ARGS.set(args.clone()).unwrap();
+    AGENT_ARGS.set(args).unwrap();
 
     let mut logger_initialized = false;
 
@@ -153,19 +153,20 @@ async fn main() -> anyhow::Result<()> {
             let _ = NTP_INIT_DONE.set(true);
         }
 
-        update_global_config(config.clone())?;
-
         let servers = config.server.clone().ok_or_else(|| {
             NodegetError::ConfigNotFound("No server configuration found".to_owned())
         })?;
 
+        let connect_timeout = config.connect_timeout_duration();
+
+        update_global_config(config)?;
+
         dry_run().await;
 
-        if args.dry_run {
+        if AGENT_ARGS.get().unwrap().dry_run {
             exit(0);
         }
 
-        let connect_timeout = config.connect_timeout_duration();
         let mut handles = rpc::multi_server::init_connections(servers, connect_timeout).await;
 
         handles.push(tokio::spawn(handle_static_monitoring_data_report()));

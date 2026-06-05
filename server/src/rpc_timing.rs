@@ -63,7 +63,7 @@ where
         request: Request<'a>,
     ) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
         let method_name = request.method_name().to_owned();
-        let request_id = format!("{:?}", request.id());
+        let request_id = request.id().into_owned();
         let level = self.level;
         let service = self.service.clone();
         let started_at = Instant::now();
@@ -76,7 +76,7 @@ where
                 &method_name,
                 "call",
                 elapsed_us,
-                &format!("rpc.call completed id={request_id}"),
+                &format!("rpc.call completed id={request_id:?}"),
             );
             response
         }

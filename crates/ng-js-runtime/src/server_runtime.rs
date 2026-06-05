@@ -383,6 +383,14 @@ globalThis.db = {
         return resp.result;
     },
 };
+// fetch 使用追踪：包装原生 fetch，记录是否被调用，用于条件性 I/O drain
+const __nodeget_orig_fetch = globalThis.fetch;
+if (__nodeget_orig_fetch) {
+    globalThis.fetch = function(...args) {
+        globalThis.__nodeget_fetch_used = true;
+        return __nodeget_orig_fetch.apply(this, args);
+    };
+}
 "#;
 
 /// 初始化 JS 运行时全局 API。
@@ -699,23 +707,14 @@ pub fn prepare_invoke_globals(
     match script_name {
         Some(name) => global.set("__nodeget_current_script_name", name.to_owned())?,
         None => {
-            let null_js = ctx.json_parse("null").map_err(|e| {
-                js_error("js_runner", format!("Failed to set script name in JS: {e}"))
-            })?;
-            global.set("__nodeget_current_script_name", null_js)?;
+            global.set("__nodeget_current_script_name", JsValue::new_null(ctx.clone()))?;
         }
     }
 
     match inline_caller {
         Some(caller) => global.set("__nodeget_inline_caller", caller.to_owned())?,
         None => {
-            let null_js = ctx.json_parse("null").map_err(|e| {
-                js_error(
-                    "js_runner",
-                    format!("Failed to set inline caller in JS: {e}"),
-                )
-            })?;
-            global.set("__nodeget_inline_caller", null_js)?;
+            global.set("__nodeget_inline_caller", JsValue::new_null(ctx.clone()))?;
         }
     }
 

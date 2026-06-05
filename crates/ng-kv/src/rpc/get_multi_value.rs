@@ -122,13 +122,9 @@ pub async fn get_multi_value(
             }
         }
 
-        let json_str = serde_json::to_string(&output).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize kv multi values: {e}"))
-        })?;
-
         debug!(target: "kv", result_count = output.len(), "get_multi_value completed");
 
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&output)
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
     };
 

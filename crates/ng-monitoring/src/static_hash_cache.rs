@@ -10,8 +10,8 @@ use std::sync::RwLock;
 
 /// 缓存内部数据，按 `uuid_id` 存储最近一次的数据哈希。
 struct Inner {
-    /// `uuid_id` → 数据哈希（前 16 字节）
-    by_uuid_id: HashMap<i16, Vec<u8>>,
+    /// `uuid_id` → 数据哈希（前 16 字节，栈上固定大小，避免每条目堆分配）
+    by_uuid_id: HashMap<i16, [u8; 16]>,
 }
 
 /// 静态数据哈希去重缓存。
@@ -36,6 +36,14 @@ fn recover_write(lock: &RwLock<Inner>) -> std::sync::RwLockWriteGuard<'_, Inner>
         tracing::warn!(target: "static_hash_cache", "lock poisoned during write, recovering");
         e.into_inner()
     })
+}
+
+/// 将字节切片截取为 16 字节数组，不足 16 字节补零。
+fn truncate_to_16(bytes: &[u8]) -> [u8; 16] {
+    let mut arr = [0u8; 16];
+    let len = bytes.len().min(16);
+    arr[..len].copy_from_slice(&bytes[..len]);
+    arr
 }
 
 impl StaticHashCache {
@@ -69,7 +77,7 @@ impl StaticHashCache {
         guard
             .by_uuid_id
             .get(&uuid_id)
-            .is_some_and(|cached| cached == data_hash)
+            .is_some_and(|cached| *cached == truncate_to_16(data_hash))
     }
 
     /// 更新指定设备的静态数据哈希缓存。
@@ -78,6 +86,6 @@ impl StaticHashCache {
     /// - `data_hash` — 新数据的哈希值
     pub fn update(&self, uuid_id: i16, data_hash: Vec<u8>) {
         let mut guard = recover_write(&self.inner);
-        guard.by_uuid_id.insert(uuid_id, data_hash);
+        guard.by_uuid_id.insert(uuid_id, truncate_to_16(&data_hash));
     }
 }

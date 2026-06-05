@@ -56,10 +56,7 @@ pub async fn list_all_agent_uuids_with_agent_mode(token: String) -> RpcResult<Bo
             .map(|(uuid, soft_delete)| AgentUuidWithMode { uuid, soft_delete })
             .collect();
 
-        let json_str = serde_json::to_string(&items)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&items)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

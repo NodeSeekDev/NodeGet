@@ -18,6 +18,8 @@ pub type Result<T> = anyhow::Result<T>;
 
 /// rustls crypto provider 初始化标记，防止重复安装。
 static RUSTLS_PROVIDER_INIT: OnceLock<()> = OnceLock::new();
+/// 默认 reqwest Client 缓存（无 IP 绑定），避免每次请求重建连接池/TLS/DNS 缓存。
+static DEFAULT_CLIENT: OnceLock<Client> = OnceLock::new();
 /// HTTP 请求超时时间，30 秒。
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -26,6 +28,20 @@ fn ensure_rustls_ring_provider() {
     let () = RUSTLS_PROVIDER_INIT.get_or_init(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
     });
+}
+
+/// 获取默认的缓存 reqwest Client（无 IP 绑定）。
+///
+/// `Client::clone()` 仅增加 Arc 引用计数，不复制连接池。
+fn get_default_client() -> Client {
+    DEFAULT_CLIENT
+        .get_or_init(|| {
+            Client::builder()
+                .timeout(HTTP_REQUEST_TIMEOUT)
+                .build()
+                .expect("Failed to build default HTTP client")
+        })
+        .clone()
 }
 
 /// 执行 HTTP 请求任务。
@@ -45,8 +61,7 @@ pub async fn execute_http_request(task: HttpRequestTask) -> Result<HttpRequestTa
     let method = Method::from_bytes(task.method.trim().to_ascii_uppercase().as_bytes())
         .map_err(|e| NodegetError::InvalidInput(format!("Invalid http_request.method: {e}")))?;
 
-    let mut builder = Client::builder().timeout(HTTP_REQUEST_TIMEOUT);
-    if let Some(ip_raw) = task.ip.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let client = if let Some(ip_raw) = task.ip.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         let ip = match ip_raw.to_ascii_lowercase().as_str() {
             "ipv4 auto" => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             "ipv6 auto" => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
@@ -54,11 +69,14 @@ pub async fn execute_http_request(task: HttpRequestTask) -> Result<HttpRequestTa
                 NodegetError::InvalidInput(format!("Invalid http_request.ip '{ip_raw}': {e}"))
             })?,
         };
-        builder = builder.local_address(ip);
-    }
-    let client = builder
-        .build()
-        .map_err(|e| NodegetError::Other(format!("Failed to build HTTP client: {e}")))?;
+        Client::builder()
+            .timeout(HTTP_REQUEST_TIMEOUT)
+            .local_address(ip)
+            .build()
+            .map_err(|e| NodegetError::Other(format!("Failed to build HTTP client: {e}")))?
+    } else {
+        get_default_client()
+    };
 
     let mut req = client.request(method, task.url);
     for (k, v) in &task.headers {

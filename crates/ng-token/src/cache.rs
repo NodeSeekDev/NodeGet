@@ -112,10 +112,12 @@ impl DbBackedCache for TokenCache {
     async fn reload_from_models(&self, models: Vec<Self::Model>) {
         let (by_key, by_username, super_token) = Self::build_maps(models);
         let mut guard = recover_write(&self.inner);
-        guard.by_key = by_key;
-        guard.by_username = by_username;
+        let old_by_key = std::mem::replace(&mut guard.by_key, by_key);
+        let old_by_username = std::mem::replace(&mut guard.by_username, by_username);
         guard.super_token = super_token;
-        drop(guard); // 显式释放写锁，避免后续读操作阻塞
+        drop(guard); // 显式释放写锁，旧 HashMap 在锁外 drop
+        drop(old_by_key);
+        drop(old_by_username);
     }
 
     /// 从数据库全量加载所有 Token 记录。
@@ -141,7 +143,7 @@ impl TokenCache {
         Option<Arc<CachedToken>>,
     ) {
         let mut by_key = HashMap::with_capacity(all_tokens.len());
-        let mut by_username = HashMap::new();
+        let mut by_username = HashMap::with_capacity(all_tokens.len());
         let mut super_token: Option<Arc<CachedToken>> = None;
 
         for model in all_tokens {

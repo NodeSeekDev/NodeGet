@@ -122,7 +122,8 @@ impl DbRegistryManager {
         let main_db = get_main_db()?;
         let entries = dbreg_entity::Entity::find().all(main_db).await?;
         let db_base = self.db_path.trim_end_matches('/');
-        let mut pools = self.pools.write().await;
+        // 锁外构建连接（磁盘 I/O），避免写锁阻塞所有池访问
+        let mut built: Vec<(String, Arc<TrackedConnection>)> = Vec::with_capacity(entries.len());
         for entry in entries {
             let name = &entry.name;
             let valid = !name.is_empty()
@@ -145,19 +146,24 @@ impl DbRegistryManager {
                         let _ = conn.execute_unprepared("PRAGMA busy_timeout = 5000;").await;
                         let _ = conn.execute_unprepared("PRAGMA foreign_keys = ON;").await;
                     }
-                    pools.insert(
+                    built.push((
                         name.clone(),
                         Arc::new(TrackedConnection {
                             conn,
                             last_used_ms: AtomicU64::new(now_ms_u64()),
                         }),
-                    );
+                    ));
                     info!(target: "db", name = %name, "Restored database connection from registry");
                 }
                 Err(e) => {
                     error!(target: "db", name = %name, error = %e, "Failed to restore database connection");
                 }
             }
+        }
+        // 锁内仅做快速 HashMap 插入
+        let mut pools = self.pools.write().await;
+        for (name, tracked) in built {
+            pools.insert(name, tracked);
         }
         Ok(())
     }

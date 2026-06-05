@@ -191,12 +191,12 @@ async fn connection_manager(
         // 任务注册
         {
             if server.allow_task.unwrap_or(false) {
-                let rpc = wrap_json_into_rpc_with_id_1(
+                let uuid_json = serde_json::to_string(&crate::config_access::current_agent_uuid_string())
+                    .unwrap_or_else(|_| "\"\"".to_owned());
+                let rpc = crate::rpc::monitoring_data_report::build_rpc_with_raw_data(
                     "task_register_task",
-                    vec![
-                        serde_json::Value::String(token.clone()),
-                        serde_json::Value::String(crate::config_access::current_agent_uuid_string()),
-                    ],
+                    &token,
+                    &uuid_json,
                 );
 
                 if let Err(e) = ws_write.send(Message::Text(Utf8Bytes::from(rpc))).await {
@@ -376,7 +376,7 @@ async fn verify_server_uuid(
     ws_write: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     ws_read: &mut SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
 ) -> UuidVerification {
-    let rpc = wrap_json_into_rpc_with_id_1("nodeget-server_uuid", vec![]);
+    let rpc = r#"{"jsonrpc":"2.0","id":1,"method":"nodeget-server_uuid","params":[]}"#;
     if let Err(e) = ws_write.send(Message::Text(Utf8Bytes::from(rpc))).await {
         return UuidVerification::Transport(format!("write error: {e}"));
     }

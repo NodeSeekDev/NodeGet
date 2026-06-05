@@ -36,12 +36,8 @@ pub async fn update(
 
         let model = update_static(name, path, is_http_root, cors, enable).await?;
 
-        let json_str = serde_json::to_string(&model).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize static: {e}"))
-        })?;
-
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
+        serde_json::value::to_raw_value(&model)
+            .map_err(|e| NodegetError::SerializationError(format!("Failed to serialize static: {e}")).into())
     };
 
     match process_logic.await {

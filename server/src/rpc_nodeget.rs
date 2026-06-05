@@ -229,10 +229,7 @@ impl RpcServer for NodegetServerRpcImpl {
                 let logs = logging::get_memory_logs();
                 tracing::debug!(target: "server", log_count = logs.len(), "In-memory logs fetched");
 
-                let json_str = serde_json::to_string(&logs)
-                    .map_err(|e| ng_core::error::NodegetError::SerializationError(e.to_string()))?;
-
-                RawValue::from_string(json_str).map_err(|e| {
+                serde_json::value::to_raw_value(&logs).map_err(|e| {
                     ng_core::error::NodegetError::SerializationError(e.to_string()).into()
                 })
             };
@@ -310,7 +307,7 @@ impl RpcServer for NodegetServerRpcImpl {
 
         // ── 接受订阅 ─────────────────────────────────────────────
         let sink = subscription_sink.accept().await?;
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<serde_json::Value>(512);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(512);
         let sub_id = Uuid::new_v4();
 
         let manager = logging::get_stream_log_manager();
@@ -326,10 +323,7 @@ impl RpcServer for NodegetServerRpcImpl {
         let manager = manager.clone();
 
         tokio::spawn(async move {
-            while let Some(entry) = rx.recv().await {
-                let Ok(json_str) = serde_json::to_string(&entry) else {
-                    continue;
-                };
+            while let Some(json_str) = rx.recv().await {
                 let Ok(raw) = RawValue::from_string(json_str) else {
                     continue;
                 };

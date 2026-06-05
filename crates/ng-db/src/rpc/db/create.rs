@@ -59,8 +59,7 @@ pub async fn create(token: String, name: String) -> RpcResult<Box<RawValue>> {
             }
         });
 
-        let json_str = serde_json::to_string(&resp)?;
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&resp)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
