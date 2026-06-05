@@ -27,7 +27,7 @@ use tracing::debug;
 ///
 /// 注意：使用 `query_all_raw` 统一执行所有 SQL 类型（SELECT/DML/DDL/PRAGMA/CTE），
 /// 无 RETURNING 子句的 DML 返回 `data: []` + `row_count: 0`
-pub(crate) async fn exec_sql_inner(
+pub async fn exec_sql_inner(
     db_name: &str,
     sql: &str,
     params: Option<serde_json::Value>,

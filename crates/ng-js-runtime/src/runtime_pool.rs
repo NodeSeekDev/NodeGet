@@ -32,7 +32,7 @@ const RUNTIME_CLEAN_TIME_NONE: i64 = -1;
 /// 空闲清理扫描间隔（ms）。
 const CLEANUP_INTERVAL_MS: u64 = 5_000;
 /// I/O drain 窗口（ms）。Worker 的 current-thread runtime 在 `block_on` 返回后不再被轮询，
-/// 此窗口让 hyper 连接 task 处理关闭信号，防止 TCP 停留在 CLOSE_WAIT。
+/// 此窗口让 hyper 连接 task 处理关闭信号，防止 TCP 停留在 `CLOSE_WAIT`。
 const DRAIN_IO_MS: u64 = 100;
 
 /// 单个 Worker 线程内的运行时状态，持有 `QuickJS` `AsyncRuntime` 和 `AsyncContext`。
@@ -157,7 +157,8 @@ impl RuntimeWorkerHandle {
                 .map_err(|_| anyhow::anyhow!("Worker queue full, request rejected"))?;
 
             // 发送成功后更新哈希缓存
-            self.last_bytecode_hash.store(bytecode_hash, Ordering::Release);
+            self.last_bytecode_hash
+                .store(bytecode_hash, Ordering::Release);
 
             Ok(response_rx)
         })();
@@ -200,7 +201,9 @@ pub struct JsRuntimePool {
 }
 
 /// `RwLock` 中毒恢复：读锁。
-fn recover_read(lock: &RwLock<HashMap<String, Arc<RuntimeWorkerHandle>>>) -> std::sync::RwLockReadGuard<'_, HashMap<String, Arc<RuntimeWorkerHandle>>> {
+fn recover_read(
+    lock: &RwLock<HashMap<String, Arc<RuntimeWorkerHandle>>>,
+) -> std::sync::RwLockReadGuard<'_, HashMap<String, Arc<RuntimeWorkerHandle>>> {
     lock.read().unwrap_or_else(|e| {
         tracing::warn!("workers RwLock poisoned during read, recovering");
         e.into_inner()
@@ -208,7 +211,9 @@ fn recover_read(lock: &RwLock<HashMap<String, Arc<RuntimeWorkerHandle>>>) -> std
 }
 
 /// `RwLock` 中毒恢复：写锁。
-fn recover_write(lock: &RwLock<HashMap<String, Arc<RuntimeWorkerHandle>>>) -> std::sync::RwLockWriteGuard<'_, HashMap<String, Arc<RuntimeWorkerHandle>>> {
+fn recover_write(
+    lock: &RwLock<HashMap<String, Arc<RuntimeWorkerHandle>>>,
+) -> std::sync::RwLockWriteGuard<'_, HashMap<String, Arc<RuntimeWorkerHandle>>> {
     lock.write().unwrap_or_else(|e| {
         tracing::warn!("workers RwLock poisoned during write, recovering");
         e.into_inner()
@@ -528,9 +533,9 @@ fn worker_loop(
                         cached_bytecode = Some(Arc::clone(&bc));
                         bc
                     }
-                    None => cached_bytecode.clone().unwrap_or_else(|| {
-                        Arc::new(Vec::new())
-                    }),
+                    None => cached_bytecode
+                        .clone()
+                        .unwrap_or_else(|| Arc::new(Vec::new())),
                 };
                 let exec_result = host_rt.block_on(async {
                     execute_on_worker(
@@ -551,7 +556,7 @@ fn worker_loop(
             }
             WorkerCommand::Shutdown => {
                 drop(runtime_state.take());
-                let _ = host_rt.block_on(async {
+                let () = host_rt.block_on(async {
                     tokio::time::sleep(std::time::Duration::from_millis(DRAIN_IO_MS)).await;
                 });
                 break;
@@ -603,7 +608,7 @@ async fn execute_on_worker(
             .ctx
             .async_with(async |ctx| {
                 let declared_module = enrich_exception(&ctx, "js_load", unsafe {
-                    Module::load(ctx.clone(), &bytecode)
+                    Module::load(ctx.clone(), bytecode)
                 })?;
 
                 let (module, module_eval_promise) =
@@ -637,8 +642,8 @@ async fn execute_on_worker(
         prepare_invoke_globals(
             &ctx,
             run_type.handler_name(),
-            &params,
-            &env,
+            params,
+            env,
             Some(script_name),
             None,
         )?;

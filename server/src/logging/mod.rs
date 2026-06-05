@@ -195,13 +195,19 @@ where
             .flatten()
             .map(|span| {
                 let mut map = serde_json::Map::with_capacity(2);
-                map.insert("name".to_owned(), serde_json::Value::String(span.name().to_owned()));
+                map.insert(
+                    "name".to_owned(),
+                    serde_json::Value::String(span.name().to_owned()),
+                );
                 let ext = span.extensions();
                 if let Some(fields) = ext
                     .get::<FormattedFields<format::DefaultFields>>()
                     .filter(|f| !f.is_empty())
                 {
-                    map.insert("fields".to_owned(), serde_json::Value::String(strip_ansi(&fields.to_string())));
+                    map.insert(
+                        "fields".to_owned(),
+                        serde_json::Value::String(strip_ansi(&fields.to_string())),
+                    );
                 }
                 drop(ext);
                 serde_json::Value::Object(map)
@@ -460,10 +466,16 @@ where
             .flatten()
             .map(|span| {
                 let mut map = serde_json::Map::with_capacity(2);
-                map.insert("name".to_owned(), serde_json::Value::String(span.name().to_owned()));
+                map.insert(
+                    "name".to_owned(),
+                    serde_json::Value::String(span.name().to_owned()),
+                );
                 let ext = span.extensions();
                 if let Some(fields) = ext.get::<FormattedFields<N>>().filter(|f| !f.is_empty()) {
-                    map.insert("fields".to_owned(), serde_json::Value::String(strip_ansi(&fields.to_string())));
+                    map.insert(
+                        "fields".to_owned(),
+                        serde_json::Value::String(strip_ansi(&fields.to_string())),
+                    );
                 }
                 drop(ext);
                 serde_json::Value::Object(map)

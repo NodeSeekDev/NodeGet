@@ -159,7 +159,9 @@ pub async fn dry_run() {
 
     info!("SUMMARY READ DATA SOURCE");
     let cfg = get_agent_config().ok();
-    let select_disk = cfg.as_ref().and_then(|c| c.dynamic_summary_select_disk.as_deref());
+    let select_disk = cfg
+        .as_ref()
+        .and_then(|c| c.dynamic_summary_select_disk.as_deref());
     let select_nic = cfg
         .as_ref()
         .and_then(|c| c.dynamic_summary_select_network_interface.as_deref());

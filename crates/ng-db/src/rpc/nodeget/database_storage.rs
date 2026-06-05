@@ -184,7 +184,7 @@ async fn query_sqlite(db: &DatabaseConnection) -> anyhow::Result<BTreeMap<String
     let discover_sql = format!(
         "SELECT name AS table_name FROM sqlite_master WHERE type = 'table'{not_in_clause} ORDER BY name"
     );
-    let values: Vec<sea_orm::Value> = excluded.into_iter().map(|s| s.into()).collect();
+    let values: Vec<sea_orm::Value> = excluded.into_iter().map(std::convert::Into::into).collect();
     let table_names: Vec<String> = TableNameRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         &discover_sql,

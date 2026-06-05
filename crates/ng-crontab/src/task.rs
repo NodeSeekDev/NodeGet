@@ -229,26 +229,24 @@ pub async fn crontab_task(
         }
 
         // 批量回滚发送失败的 task 记录
-        if !failed_task_ids.is_empty() {
-            if let Err(e) = task::Entity::delete_many()
-                .filter(task::Column::Id.is_in(failed_task_ids))
-                .exec(db)
-                .await
-            {
-                error!(target: "crontab", error = %e, "failed to batch delete failed task records");
-            }
+        if !failed_task_ids.is_empty()
+            && let Err(e) = task::Entity::delete_many()
+            .filter(task::Column::Id.is_in(failed_task_ids))
+            .exec(db)
+            .await
+        {
+            error!(target: "crontab", error = %e, "failed to batch delete failed task records");
         }
 
         // 批量写入 crontab_result（单次 DB 往返）
-        if !crontab_results.is_empty() {
-            if let Err(e) = crontab_result::Entity::insert_many(crontab_results)
-                .exec(db)
-                .await
-            {
-                error!(target: "crontab", error = %e, "failed to batch save crontab_results");
-            }
+        if !crontab_results.is_empty()
+            && let Err(e) = crontab_result::Entity::insert_many(crontab_results)
+            .exec(db)
+            .await
+        {
+            error!(target: "crontab", error = %e, "failed to batch save crontab_results");
         }
     }
-    .instrument(span)
-    .await;
+        .instrument(span)
+        .await;
 }

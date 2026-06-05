@@ -25,8 +25,9 @@ pub async fn list_file_rpc(token: String, name: String) -> RpcResult<Box<RawValu
 
         let files = list_file(&name).await?;
 
-        serde_json::value::to_raw_value(&files)
-            .map_err(|e| NodegetError::SerializationError(format!("Failed to serialize file list: {e}")).into())
+        serde_json::value::to_raw_value(&files).map_err(|e| {
+            NodegetError::SerializationError(format!("Failed to serialize file list: {e}")).into()
+        })
     };
 
     match process_logic.await {

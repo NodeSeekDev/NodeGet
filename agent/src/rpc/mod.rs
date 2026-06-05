@@ -18,9 +18,9 @@ use crate::rpc::multi_server::subscribe_to;
 use log::{error, info, warn};
 use ng_config::config::agent::AgentConfig;
 use ng_core::utils::JsonError;
-use std::sync::Arc;
 use ng_task::TaskEvent;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinSet;
 use tokio::time;
@@ -130,10 +130,10 @@ pub async fn handle_error_message() {
 
             loop {
                 while let Some(join_result) = per_message_tasks.try_join_next() {
-                    if let Err(e) = join_result {
-                        if !e.is_cancelled() {
-                            warn!("[{}] Error handler task failed: {e}", server.name);
-                        }
+                    if let Err(e) = join_result
+                        && !e.is_cancelled()
+                    {
+                        warn!("[{}] Error handler task failed: {e}", server.name);
                     }
                 }
 

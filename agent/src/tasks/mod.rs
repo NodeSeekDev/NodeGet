@@ -246,10 +246,10 @@ pub async fn handle_task() {
 
             loop {
                 while let Some(join_result) = per_task.try_join_next() {
-                    if let Err(e) = join_result {
-                        if !e.is_cancelled() {
-                            warn!("[{}] Per-message task failed: {e}", server.name);
-                        }
+                    if let Err(e) = join_result
+                        && !e.is_cancelled()
+                    {
+                        warn!("[{}] Per-message task failed: {e}", server.name);
                     }
                 }
 

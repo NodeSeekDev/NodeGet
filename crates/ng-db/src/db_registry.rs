@@ -367,26 +367,24 @@ impl DbRegistryManager {
             .filter(dbreg_entity::Column::Name.eq(name))
             .one(main_db)
             .await?
-        {
-            if let Err(e) = dbreg_entity::Entity::delete_by_id(model.id)
+            && let Err(e) = dbreg_entity::Entity::delete_by_id(model.id)
                 .exec(main_db)
                 .await
-            {
-                warn!(target: "db", name = %name, error = %e, "Failed to delete db_registry row");
-            }
+        {
+            warn!(target: "db", name = %name, error = %e, "Failed to delete db_registry row");
         }
         let db_file = self.get_db_path(name);
-        if std::path::Path::new(&db_file).exists() {
-            if let Err(e) = std::fs::remove_file(&db_file) {
-                warn!(target: "db", path = %db_file, error = %e, "Failed to delete db file");
-            }
+        if std::path::Path::new(&db_file).exists()
+            && let Err(e) = std::fs::remove_file(&db_file)
+        {
+            warn!(target: "db", path = %db_file, error = %e, "Failed to delete db file");
         }
         for ext in &["-wal", "-shm"] {
             let f = format!("{db_file}{ext}");
-            if std::path::Path::new(&f).exists() {
-                if let Err(e) = std::fs::remove_file(&f) {
-                    warn!(target: "db", path = %f, error = %e, "Failed to delete WAL/SHM file");
-                }
+            if std::path::Path::new(&f).exists()
+                && let Err(e) = std::fs::remove_file(&f)
+            {
+                warn!(target: "db", path = %f, error = %e, "Failed to delete WAL/SHM file");
             }
         }
         info!(target: "db", name = %name, "Database connection removed and files cleaned");
@@ -437,10 +435,10 @@ impl DbRegistryManager {
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
                 Ok(Ok(())) => info!(target: "db", "DbRegistry cleanup loop exited cleanly"),
                 Ok(Err(e)) => {
-                    warn!(target: "db", error = %e, "DbRegistry cleanup loop task panicked")
+                    warn!(target: "db", error = %e, "DbRegistry cleanup loop task panicked");
                 }
                 Err(_) => {
-                    warn!(target: "db", "DbRegistry cleanup loop did not exit within 5s timeout")
+                    warn!(target: "db", "DbRegistry cleanup loop did not exit within 5s timeout");
                 }
             }
         }

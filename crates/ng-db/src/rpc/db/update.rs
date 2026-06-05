@@ -76,10 +76,10 @@ pub async fn update(token: String, name: String, new_name: String) -> RpcResult<
                             for ext in &["-wal", "-shm"] {
                                 let old_ext = format!("{old_file_clone}{ext}");
                                 let new_ext = format!("{new_file_clone}{ext}");
-                                if std::path::Path::new(&old_ext).exists() {
-                                    if std::fs::rename(&old_ext, &new_ext).is_err() {
-                                        warnings.push((old_ext, new_ext));
-                                    }
+                                if std::path::Path::new(&old_ext).exists()
+                                    && std::fs::rename(&old_ext, &new_ext).is_err()
+                                {
+                                    warnings.push((old_ext, new_ext));
                                 }
                             }
                         }

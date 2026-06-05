@@ -12,8 +12,8 @@ use ng_core::utils::get_local_timestamp_ms_i64;
 use ng_db::entity::{js_result, js_worker};
 use ng_db::get_db;
 use ng_js_runtime::{
-    JsCodeInput, RunType, RuntimeLimits, compile_js_module_to_bytecode, format_js_error,
-    js_runner, js_runner_source_mode, runtime_pool,
+    JsCodeInput, RunType, RuntimeLimits, compile_js_module_to_bytecode, format_js_error, js_runner,
+    js_runner_source_mode, runtime_pool,
 };
 use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde_json::Value;
@@ -81,7 +81,10 @@ pub async fn ensure_bytecode_version(
 
     let mut active: js_worker::ActiveModel = model.clone().into();
     active.js_byte_code = Set(Some(new_bytecode.clone()));
-    active.update(db).await.map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
+    active
+        .update(db)
+        .await
+        .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
     runtime_pool::global_pool().evict_worker(&model.name);
 

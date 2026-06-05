@@ -26,8 +26,10 @@ pub async fn read_file_rpc(token: String, name: String, path: String) -> RpcResu
 
         let base64_data = read_file(&name, &path).await?;
 
-        serde_json::value::to_raw_value(&base64_data)
-            .map_err(|e| NodegetError::SerializationError(format!("Failed to serialize file content: {e}")).into())
+        serde_json::value::to_raw_value(&base64_data).map_err(|e| {
+            NodegetError::SerializationError(format!("Failed to serialize file content: {e}"))
+                .into()
+        })
     };
 
     match process_logic.await {

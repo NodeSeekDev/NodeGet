@@ -39,10 +39,10 @@ fn dav_handler_cache() -> &'static RwLock<HashMap<String, DavHandler>> {
 /// Retrieve a cached DavHandler for the given bucket, or build and cache one.
 fn get_or_create_dav_handler(bucket_name: &str, disk_path: &std::path::Path) -> DavHandler {
     // Fast path: read lock
-    if let Ok(cache) = dav_handler_cache().read() {
-        if let Some(handler) = cache.get(bucket_name) {
-            return handler.clone();
-        }
+    if let Ok(cache) = dav_handler_cache().read()
+        && let Some(handler) = cache.get(bucket_name)
+    {
+        return handler.clone();
     }
     // Slow path: write lock
     let mut cache = dav_handler_cache()

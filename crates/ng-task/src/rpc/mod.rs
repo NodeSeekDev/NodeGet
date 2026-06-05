@@ -389,7 +389,8 @@ type Peers = Arc<RwLock<HashMap<Uuid, (Uuid, mpsc::Sender<crate::types::TaskEven
 
 /// Blocking waiter 表：task_id → oneshot 发送端，用于 `create_task_blocking` 等待结果
 /// 临界区无 .await，使用 std::sync::RwLock 避免 tokio async 开销
-type BlockingWaiters = Arc<std::sync::RwLock<HashMap<u64, oneshot::Sender<crate::types::TaskEventResponse>>>>;
+type BlockingWaiters =
+    Arc<std::sync::RwLock<HashMap<u64, oneshot::Sender<crate::types::TaskEventResponse>>>>;
 
 /// 全局 TaskManager 单例，延迟初始化
 static GLOBAL_TASK_MANAGER: OnceLock<Arc<TaskManager>> = OnceLock::new();
@@ -482,14 +483,20 @@ impl TaskManager {
         task_id: u64,
     ) -> oneshot::Receiver<crate::types::TaskEventResponse> {
         let (tx, rx) = oneshot::channel();
-        self.blocking_waiters.write().unwrap_or_else(|e| e.into_inner()).insert(task_id, tx);
+        self.blocking_waiters
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(task_id, tx);
         debug!(target: "task", task_id = task_id, "blocking waiter registered");
         rx
     }
 
     /// 移除 blocking waiter（超时或取消时调用）
     pub fn remove_blocking_waiter(&self, task_id: u64) {
-        self.blocking_waiters.write().unwrap_or_else(|e| e.into_inner()).remove(&task_id);
+        self.blocking_waiters
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&task_id);
     }
 
     /// 尝试通知 blocking waiter（upload_task_result 时调用）
@@ -500,7 +507,11 @@ impl TaskManager {
         task_id: u64,
         response: crate::types::TaskEventResponse,
     ) -> bool {
-        let value = self.blocking_waiters.write().unwrap_or_else(|e| e.into_inner()).remove(&task_id);
+        let value = self
+            .blocking_waiters
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&task_id);
         value.is_some_and(|tx| {
             let _ = tx.send(response);
             debug!(target: "task", task_id = task_id, "blocking waiter notified");

@@ -34,7 +34,7 @@ pub const DEFAULT_MAX_STACK_SIZE_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_MAX_HEAP_SIZE_BYTES: usize = JS_RT_MEMORY_LIMIT_BYTES;
 
 /// I/O drain 窗口（ms）。一次性 Runtime 的 current-thread 在 `block_on` 返回后
-/// 不再被轮询，此窗口让 hyper 连接 task 处理关闭信号，防止 TCP 停留在 CLOSE_WAIT。
+/// 不再被轮询，此窗口让 hyper 连接 task 处理关闭信号，防止 TCP 停留在 `CLOSE_WAIT`。
 const DRAIN_IO_MS: u64 = 100;
 
 /// 来自 DB 的可选限制三元组，外加应用层默认兜底。
@@ -167,7 +167,11 @@ struct WatchdogManager {
 impl WatchdogManager {
     /// 注册一个看门狗监控请求，返回 `cancel_tx`。
     /// 执行完成后 `drop` `cancel_tx` 或 `send(())` 即可取消监控。
-    fn register(&self, kill_flag: Arc<AtomicBool>, duration: std::time::Duration) -> mpsc::Sender<()> {
+    fn register(
+        &self,
+        kill_flag: Arc<AtomicBool>,
+        duration: std::time::Duration,
+    ) -> mpsc::Sender<()> {
         let deadline_ms = now_ms() + duration.as_millis() as u64;
         let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
         // 注册失败（看门狗线程已退出）不影响正确性——看门狗是尽力辅助
@@ -250,7 +254,10 @@ static WATCHDOG_MANAGER: OnceLock<WatchdogManager> = OnceLock::new();
 ///
 /// 语义与原 `spawn_kill_watchdog` 一致：到时间仍未被 cancel 就 `store(true)`。
 /// 区别是使用常驻看门狗线程，不再每次 spawn/join。
-pub(crate) fn register_watchdog(kill_flag: Arc<AtomicBool>, duration: std::time::Duration) -> mpsc::Sender<()> {
+pub(crate) fn register_watchdog(
+    kill_flag: Arc<AtomicBool>,
+    duration: std::time::Duration,
+) -> mpsc::Sender<()> {
     let manager = WATCHDOG_MANAGER.get_or_init(init_watchdog_manager);
     manager.register(kill_flag, duration)
 }
@@ -707,7 +714,10 @@ pub fn prepare_invoke_globals(
     match script_name {
         Some(name) => global.set("__nodeget_current_script_name", name.to_owned())?,
         None => {
-            global.set("__nodeget_current_script_name", JsValue::new_null(ctx.clone()))?;
+            global.set(
+                "__nodeget_current_script_name",
+                JsValue::new_null(ctx.clone()),
+            )?;
         }
     }
 
@@ -728,11 +738,11 @@ pub fn prepare_invoke_globals(
 fn cleanup_invoke_globals(ctx: &Ctx<'_>) {
     // 清理大对象全局变量，释放 JS 堆内存；失败时静默忽略（Runtime 即将销毁）
     ctx.eval::<(), _>(
-        r#"globalThis.__nodeget_run_params = null;
+        r"globalThis.__nodeget_run_params = null;
         globalThis.__nodeget_env = null;
         globalThis.__nodeget_entry = null;
         globalThis.inlineCall = null;
-        globalThis.__nodeget_inline_caller = null;"#,
+        globalThis.__nodeget_inline_caller = null;",
     )
     .ok();
 }

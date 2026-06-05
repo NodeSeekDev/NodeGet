@@ -34,8 +34,9 @@ pub async fn create(
 
         let model = create_static(name, path, is_http_root, cors).await?;
 
-        serde_json::value::to_raw_value(&model)
-            .map_err(|e| NodegetError::SerializationError(format!("Failed to serialize static: {e}")).into())
+        serde_json::value::to_raw_value(&model).map_err(|e| {
+            NodegetError::SerializationError(format!("Failed to serialize static: {e}")).into()
+        })
     };
 
     match process_logic.await {

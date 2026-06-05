@@ -292,17 +292,15 @@ impl TokenCache {
                     .username
                     .as_deref()
                     .is_some_and(|u| u.as_bytes().ct_eq(username.as_bytes()).into());
-                if username_match {
-                    if let Some(stored) = &super_entry.password_hash_bytes {
-                        let computed = hash_to_bytes(password);
-                        if bool::from(computed.ct_eq(stored)) {
-                            debug!(target: "auth", is_super = true, "authenticate: super token (basic auth)");
-                            return Ok((Arc::clone(super_entry), true));
-                        }
-                        debug!(target: "auth", is_super = false, "super token check (basic auth), password mismatch");
+                if username_match && let Some(stored) = &super_entry.password_hash_bytes {
+                    let computed = hash_to_bytes(password);
+                    if bool::from(computed.ct_eq(stored)) {
+                        debug!(target: "auth", is_super = true, "authenticate: super token (basic auth)");
+                        return Ok((Arc::clone(super_entry), true));
                     }
-                    // username 匹配超级令牌但 password 不匹配（或未设置密码），继续检查普通令牌
+                    debug!(target: "auth", is_super = false, "super token check (basic auth), password mismatch");
                 }
+                // username 匹配超级令牌但 password 不匹配（或未设置密码），继续检查普通令牌
 
                 // 在 by_username 索引中查找普通令牌
                 if let Some(cached) = inner.by_username.get(username) {

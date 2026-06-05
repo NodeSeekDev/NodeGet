@@ -14,9 +14,6 @@ use axum::{extract::Path, http::StatusCode};
 use base64::Engine as _;
 use ng_config::config::server::ServerConfig;
 use ng_config::get_reload_notify;
-use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use std::sync::Arc;
 use ng_core::permission::data_structure::{Permission, Scope};
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_db::entity::js_worker;
@@ -26,9 +23,12 @@ use ng_js_runtime::runtime_pool;
 use ng_js_worker::ensure_bytecode_version;
 use ng_static::cache::StaticCache;
 use ng_static::ops::{get_static_path, resolve_safe_file_path};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tower::Service;
 use tracing::{debug, error, info, warn};
 
@@ -461,9 +461,9 @@ async fn build_http1_only_tls_config(
     // 仅广播 http/1.1，阻止客户端协商 HTTP/2
     server_config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
-    Ok(axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(
-        server_config,
-    )))
+    Ok(axum_server::tls_rustls::RustlsConfig::from_config(
+        Arc::new(server_config),
+    ))
 }
 
 /// 渲染根路径着陆页 HTML
@@ -1213,9 +1213,7 @@ impl ng_js_runtime::js_worker_service::JsWorkerService for JsWorkerServiceImpl {
         params_json: String,
         timeout_sec: Option<f64>,
         inline_caller: Option<String>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>> {
         Box::pin(async move {
             ng_js_worker::service::run_inline_call_and_record_result(
                 js_script_name,

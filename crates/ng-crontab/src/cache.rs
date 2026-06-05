@@ -121,19 +121,20 @@ impl CrontabCache {
 
             // 取走 cron_type 所有权直接解析，避免 clone 整个 Value
             // 缓存中通过 CachedCrontab.cron_type 访问，model.cron_type 不再被读取
-            let cron_type = match serde_json::from_value::<CronType>(std::mem::take(&mut model.cron_type)) {
-                Ok(ct) => ct,
-                Err(e) => {
-                    warn!(
-                        target: "crontab",
-                        job_id = model.id,
-                        job_name = %model.name,
-                        error = %e,
-                        "invalid cron_type during cache build, skipping"
-                    );
-                    continue;
-                }
-            };
+            let cron_type =
+                match serde_json::from_value::<CronType>(std::mem::take(&mut model.cron_type)) {
+                    Ok(ct) => ct,
+                    Err(e) => {
+                        warn!(
+                            target: "crontab",
+                            job_id = model.id,
+                            job_name = %model.name,
+                            error = %e,
+                            "invalid cron_type during cache build, skipping"
+                        );
+                        continue;
+                    }
+                };
 
             let id = model.id;
             by_id.insert(

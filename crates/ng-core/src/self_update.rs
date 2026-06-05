@@ -178,8 +178,7 @@ pub fn check_if_update_needed(tag: &str) -> ((u32, u32, u32), (u32, u32, u32), b
         Some(v) => v,
     };
 
-    let current_version = match parse_version_body(NodeGetVersion::get().cargo_version.clone())
-    {
+    let current_version = match parse_version_body(NodeGetVersion::get().cargo_version.clone()) {
         None => {
             return ((0, 0, 0), target_version, false);
         }

@@ -17,7 +17,7 @@ docker run -d \
 
 该命令默认使用 `sqlite:///nodeget/nodeget.db?mode=rwc` 为数据库
 
-自动生成的配置文件如下: 
+自动生成的配置文件如下:
 
 ```toml
 ws_listener = "0.0.0.0:2211"
@@ -65,5 +65,6 @@ docker compose up -d
 docker logs nodeget | grep -E 'Super Token'
 ```
 
-获取 Super Token 后，可前往 [NodeGet Dashboard 的 Server 管理页面](https://dash.nodeget.com/#/dashboard/node-manage?tab=servers) 添加
+获取 Super Token
+后，可前往 [NodeGet Dashboard 的 Server 管理页面](https://dash.nodeget.com/#/dashboard/node-manage?tab=servers) 添加
 Server。

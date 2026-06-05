@@ -191,11 +191,12 @@ async fn connection_manager(
         // 任务注册
         {
             if server.allow_task.unwrap_or(false) {
-                let uuid_json = serde_json::to_string(&crate::config_access::current_agent_uuid_string())
-                    .unwrap_or_else(|_| "\"\"".to_owned());
+                let uuid_json =
+                    serde_json::to_string(&crate::config_access::current_agent_uuid_string())
+                        .unwrap_or_else(|_| "\"\"".to_owned());
                 let rpc = crate::rpc::monitoring_data_report::build_rpc_with_raw_data(
                     "task_register_task",
-                    &token,
+                    token,
                     &uuid_json,
                 );
 

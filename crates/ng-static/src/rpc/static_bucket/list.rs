@@ -32,8 +32,10 @@ pub async fn list_rpc(token: String) -> jsonrpsee::core::RpcResult<Box<RawValue>
         let names = list_all_names().await;
         debug!(target: "static_bucket", count = names.len(), "static-bucket_list completed");
 
-        serde_json::value::to_raw_value(&names)
-            .map_err(|e| NodegetError::SerializationError(format!("Failed to serialize static name list: {e}")).into())
+        serde_json::value::to_raw_value(&names).map_err(|e| {
+            NodegetError::SerializationError(format!("Failed to serialize static name list: {e}"))
+                .into()
+        })
     };
 
     match process_logic.await {
