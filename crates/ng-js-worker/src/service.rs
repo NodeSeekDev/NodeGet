@@ -12,13 +12,71 @@ use ng_core::utils::get_local_timestamp_ms_i64;
 use ng_db::entity::{js_result, js_worker};
 use ng_db::get_db;
 use ng_js_runtime::{
-    JsCodeInput, RunType, RuntimeLimits, format_js_error, js_runner, js_runner_source_mode,
-    runtime_pool,
+    JsCodeInput, RunType, RuntimeLimits, compile_js_module_to_bytecode, format_js_error,
+    js_runner, js_runner_source_mode, runtime_pool,
 };
-use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde_json::Value;
+use std::sync::OnceLock;
 use std::time::Duration;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
+
+/// 获取当前 QuickJS 字节码版本号（首字节）。
+///
+/// 编译一个最小脚本提取 BC_VERSION，结果缓存在 `OnceLock` 中。
+fn current_bc_version() -> u8 {
+    static VERSION: OnceLock<u8> = OnceLock::new();
+    *VERSION.get_or_init(|| {
+        compile_js_module_to_bytecode("0")
+            .ok()
+            .and_then(|bc| bc.first().copied())
+            .unwrap_or(0)
+    })
+}
+
+/// 检查字节码版本是否匹配当前 QuickJS，不匹配时从源码重编译并更新 DB。
+///
+/// - 匹配：原样返回 `bytecode`
+/// - 不匹配：用 `js_script` 重编译，写入 DB，驱逐运行时池中旧 worker，返回新字节码
+async fn ensure_bytecode_version(
+    model: &js_worker::Model,
+    db: &sea_orm::DatabaseConnection,
+) -> anyhow::Result<Vec<u8>> {
+    let bytecode = model.js_byte_code.clone().ok_or_else(|| {
+        NodegetError::InvalidInput(format!(
+            "js_worker '{}' has no precompiled bytecode",
+            model.name
+        ))
+    })?;
+
+    if bytecode.first() == Some(&current_bc_version()) {
+        return Ok(bytecode);
+    }
+
+    info!(
+        target: "js_worker",
+        name = %model.name,
+        stored_version = bytecode.first().unwrap_or(&0),
+        current_version = current_bc_version(),
+        "Bytecode version mismatch, recompiling from source"
+    );
+
+    let new_bytecode = tokio::task::spawn_blocking({
+        let source = model.js_script.clone();
+        move || compile_js_module_to_bytecode(source)
+    })
+    .await
+    .map_err(|e| NodegetError::Other(format!("Recompile task join failed: {e}")))?
+    .map_err(|e| NodegetError::Other(format!("Bytecode recompile failed: {e}")))?;
+
+    let mut active: js_worker::ActiveModel = model.clone().into();
+    active.js_byte_code = Set(Some(new_bytecode.clone()));
+    active.update(db).await.map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
+
+    runtime_pool::global_pool().evict_worker(&model.name);
+
+    Ok(new_bytecode)
+}
 
 /// 入队执行已编译的 JS Worker（字节码模式）。
 ///
@@ -61,11 +119,7 @@ pub async fn enqueue_defined_js_worker_run(
 
     let worker_id = model.id;
     let worker_name = model.name.clone();
-    let bytecode = model.js_byte_code.ok_or_else(|| {
-        NodegetError::InvalidInput(format!(
-            "js_worker '{script_name}' has no precompiled bytecode"
-        ))
-    })?;
+    let bytecode = ensure_bytecode_version(&model, &db).await?;
     let runtime_clean_time = model.runtime_clean_time;
     let limits = RuntimeLimits::from_model(
         model.max_run_time,
@@ -203,11 +257,7 @@ pub async fn run_inline_call_and_record_result(
 
     let worker_id = model.id;
     let worker_name = model.name.clone();
-    let bytecode = model.js_byte_code.ok_or_else(|| {
-        NodegetError::InvalidInput(format!(
-            "js_worker '{script_name}' has no precompiled bytecode"
-        ))
-    })?;
+    let bytecode = ensure_bytecode_version(&model, &db).await?;
     let limits = RuntimeLimits::from_model(
         model.max_run_time,
         model.max_stack_size,

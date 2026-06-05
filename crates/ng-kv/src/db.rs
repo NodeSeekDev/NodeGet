@@ -29,9 +29,6 @@ fn get_db_conn() -> Result<&'static sea_orm::DatabaseConnection> {
 async fn namespace_exists(db: &sea_orm::DatabaseConnection, namespace: &str) -> Result<bool> {
     let exists = kv::Entity::find()
         .filter(kv::Column::Namespace.eq(namespace))
-        .select_only()
-        .column(kv::Column::Namespace)
-        .limit(1)
         .one(db)
         .await?
         .is_some();
