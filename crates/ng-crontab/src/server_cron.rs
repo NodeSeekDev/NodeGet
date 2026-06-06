@@ -88,8 +88,8 @@ static CRONTAB_WORKER_STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::ne
 
 /// 初始化定时任务调度协程（全局只启动一次）。
 ///
-/// 协程对齐分钟边界：计算当前秒数到下一分钟的等待时间，
-/// 每分钟唤醒后调用 [`process_crontab`] 处理到期任务。
+/// 协程每秒唤醒，从缓存读取已启用任务并判断是否有到期触发。
+/// 使用缓存避免每秒查询数据库，仅到期时才写入 DB 更新 last_run_time。
 pub fn init_crontab_worker() {
     info!(target: "crontab", "initializing crontab worker");
     if CRONTAB_WORKER_STARTED.set(()).is_err() {
@@ -99,18 +99,8 @@ pub fn init_crontab_worker() {
     tokio::spawn(async move {
         info!(target: "crontab", "scheduler started");
         loop {
-            // 计算到下一分钟边界的等待秒数
-            let now = Utc::now();
-            let secs = now.timestamp().rem_euclid(60);
-            let wait = if secs == 0 { 60 } else { 60 - secs as u64 };
-            sleep(Duration::from_secs(wait)).await;
-            // 处理到期任务
+            sleep(Duration::from_secs(1)).await;
             process_crontab().await;
-            // 补偿等待：确保调度循环严格在分钟边界触发
-            let remaining = 60 - Utc::now().timestamp().rem_euclid(60) as u64;
-            if remaining > 0 && remaining < 60 {
-                sleep(Duration::from_secs(remaining)).await;
-            }
         }
     });
 }
