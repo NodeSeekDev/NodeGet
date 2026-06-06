@@ -329,6 +329,12 @@ async fn handle_user(
     // 检查 token 是否存在
     let Some(token) = token else {
         warn!(target: "terminal", "User connection rejected: missing token");
+        let _ = socket
+            .send(Message::Text(Utf8Bytes::from(
+                generate_error_message(108, "Invalid Input: Missing token for user terminal connection")
+                    .to_string(),
+            )))
+            .await;
         return;
     };
 
@@ -366,10 +372,22 @@ async fn handle_user(
                     terminal_id = %terminal_id,
                     "Terminal session already has an attached user"
                 );
+                let _ = socket
+                    .send(Message::Text(Utf8Bytes::from(
+                        generate_error_message(108, "Terminal session already has an attached user")
+                            .to_string(),
+                    )))
+                    .await;
                 return;
             }
         } else {
             warn!(target: "terminal", agent_uuid = %agent_uuid, terminal_id = %terminal_id, "Terminal session not found");
+            let _ = socket
+                .send(Message::Text(Utf8Bytes::from(
+                    generate_error_message(108, "Terminal session not found")
+                        .to_string(),
+                )))
+                .await;
             return;
         }
     };

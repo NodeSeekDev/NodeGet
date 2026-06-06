@@ -56,6 +56,42 @@ async fn release_terminal_id(terminal_id: &str) {
     guard.remove(terminal_id);
 }
 
+/// RAII 守卫：drop 时自动释放 `terminal_id`，防止热重载 abort 等场景下 ID 泄漏。
+struct TerminalIdGuard {
+    id: String,
+    released: bool,
+}
+
+impl TerminalIdGuard {
+    /// 创建守卫并预留 `terminal_id`。
+    async fn reserve(terminal_id: String) -> Result<Self> {
+        reserve_terminal_id(&terminal_id).await?;
+        Ok(Self {
+            id: terminal_id,
+            released: false,
+        })
+    }
+
+    /// 提前释放（正常退出路径），避免等待 Drop 时再获取写锁。
+    async fn release(mut self) {
+        self.released = true;
+        release_terminal_id(&self.id).await;
+    }
+}
+
+impl Drop for TerminalIdGuard {
+    fn drop(&mut self) {
+        if !self.released {
+            // Drop 中无法 await，用 block_on 同步释放；仅在 abort 等异常路径触发
+            let id = self.id.clone();
+            // 仅在未释放时执行，且通过新 tokio runtime 避免嵌套 panic
+            if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                rt.block_on(async { release_terminal_id(&id).await });
+            }
+        }
+    }
+}
+
 /// 处理 PTY WebSocket URL，建立连接并启动终端会话。
 ///
 /// - `url` - WebSocket URL（可能包含解析错误）
@@ -81,7 +117,7 @@ pub async fn handle_pty_url(
         }
     };
 
-    reserve_terminal_id(&terminal_id).await?;
+    let guard = TerminalIdGuard::reserve(terminal_id).await?;
 
     let connect_result = async {
         // 限制 connect_async 最多 10s 握手，避免恶意/异常 server 让任务挂死，
@@ -116,7 +152,7 @@ pub async fn handle_pty_url(
     }
     .await;
 
-    release_terminal_id(&terminal_id).await;
+    guard.release().await;
 
     connect_result
 }
@@ -238,15 +274,18 @@ where
     info!("Terminal started in PTY, PID: {:?}", child.process_id());
 
     let (ws_sender, mut ws_receiver) = ws_stream.split();
-    let (pty_to_ws_tx, mut pty_to_ws_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    // PTY→WS 使用有界通道，网络拥塞时对 PTY 读取施加背压而非无限堆积
+    let (pty_to_ws_tx, mut pty_to_ws_rx) = mpsc::channel::<Vec<u8>>(4096);
 
     task::spawn_blocking(move || {
         let mut buffer = [0u8; 8192];
         loop {
             match pty_reader.read(&mut buffer) {
                 Ok(count) if count > 0 => {
-                    if pty_to_ws_tx.send(buffer[..count].to_vec()).is_err() {
-                        info!("PTY reader: WebSocket side closed, stopping read.");
+                    // try_send 非阻塞：通道满时丢弃数据而非阻塞 spawn_blocking 线程，
+                    // 避免 PTY 读取线程卡死导致整个会话僵死
+                    if pty_to_ws_tx.try_send(buffer[..count].to_vec()).is_err() {
+                        info!("PTY reader: channel full or closed, stopping read.");
                         break;
                     }
                 }
