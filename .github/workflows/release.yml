@@ -160,6 +160,11 @@ jobs:
           - release_for: linux_aarch64_android
             target: aarch64-linux-android
             binary_name: nodeget-agent-linux-aarch64-android
+          # aarch64_be (tier 3)
+          - release_for: linux_aarch64_be_gnu
+            target: aarch64_be-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-aarch64-be-gnu
+            build_std: true
           # arm (generic)
           - release_for: linux_arm_gnueabi
             target: arm-unknown-linux-gnueabi
@@ -192,7 +197,7 @@ jobs:
           - release_for: linux_armv7_androideabi
             target: armv7-linux-androideabi
             binary_name: nodeget-agent-linux-armv7-androideabi
-          # armv5te
+          # armv5te (tier 3)
           - release_for: linux_armv5te_gnueabi
             target: armv5te-unknown-linux-gnueabi
             binary_name: nodeget-agent-linux-armv5te-gnueabi
@@ -206,7 +211,47 @@ jobs:
           - release_for: linux_thumbv7neon_androideabi
             target: thumbv7neon-linux-androideabi
             binary_name: nodeget-agent-linux-thumbv7neon-androideabi
+          # mips (tier 3)
+          - release_for: linux_mips_gnu
+            target: mips-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-mips-gnu
+            build_std: true
+          - release_for: linux_mips_musl
+            target: mips-unknown-linux-musl
+            binary_name: nodeget-agent-linux-mips-musl
+            build_std: true
+          # mipsel (tier 3)
+          - release_for: linux_mipsel_gnu
+            target: mipsel-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-mipsel-gnu
+            build_std: true
+          - release_for: linux_mipsel_musl
+            target: mipsel-unknown-linux-musl
+            binary_name: nodeget-agent-linux-mipsel-musl
+            build_std: true
+          # mips64 (tier 3)
+          - release_for: linux_mips64_gnu
+            target: mips64-unknown-linux-gnuabi64
+            binary_name: nodeget-agent-linux-mips64-gnu
+            build_std: true
+          - release_for: linux_mips64_musl
+            target: mips64-unknown-linux-muslabi64
+            binary_name: nodeget-agent-linux-mips64-musl
+            build_std: true
+          # mips64el (tier 3)
+          - release_for: linux_mips64el_gnu
+            target: mips64el-unknown-linux-gnuabi64
+            binary_name: nodeget-agent-linux-mips64el-gnu
+            build_std: true
+          - release_for: linux_mips64el_musl
+            target: mips64el-unknown-linux-muslabi64
+            binary_name: nodeget-agent-linux-mips64el-musl
+            build_std: true
           # powerpc
+          - release_for: linux_powerpc_gnu
+            target: powerpc-unknown-linux-gnu
+            binary_name: nodeget-agent-linux-powerpc-gnu
+            build_std: true
           - release_for: linux_powerpc64_gnu
             target: powerpc64-unknown-linux-gnu
             binary_name: nodeget-agent-linux-powerpc64-gnu
@@ -220,21 +265,23 @@ jobs:
             target: s390x-unknown-linux-gnu
             binary_name: nodeget-agent-linux-s390x-gnu
             no_upx: true
-          # Loongarch64
+          # LoongArch64
           - release_for: linux_loongarch64_gnu
             target: loongarch64-unknown-linux-gnu
             binary_name: nodeget-agent-linux-loongarch64-gnu
           - release_for: linux_loongarch64_musl
             target: loongarch64-unknown-linux-musl
             binary_name: nodeget-agent-linux-loongarch64-musl
-          # riscv
+          # riscv64
           - release_for: linux_riscv64gc_gnu
             target: riscv64gc-unknown-linux-gnu
             binary_name: nodeget-agent-linux-riscv64gc-gnu
+            no_upx: true
           - release_for: linux_riscv64gc_musl
             target: riscv64gc-unknown-linux-musl
             binary_name: nodeget-agent-linux-riscv64gc-musl
-          # sparc
+            no_upx: true
+          # sparc64
           - release_for: linux_sparc64_gnu
             target: sparc64-unknown-linux-gnu
             binary_name: nodeget-agent-linux-sparc64-gnu
@@ -260,8 +307,19 @@ jobs:
             | tar -xz -C "${HOME}/.local/bin"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
-      - name: Build binary
+      - name: Install nightly toolchain for build-std
+        if: ${{ matrix.platform.build_std }}
+        run: rustup install nightly && rustup component add rust-src --toolchain nightly
+
+      - name: Build binary (stable)
+        if: ${{ !matrix.platform.build_std }}
         run: cross build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32
+        env:
+          CROSS_NO_WARNINGS: 0
+
+      - name: Build binary (nightly, build-std)
+        if: ${{ matrix.platform.build_std }}
+        run: cross +nightly build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32
         env:
           CROSS_NO_WARNINGS: 0
 
