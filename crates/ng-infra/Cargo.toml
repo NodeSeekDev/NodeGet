@@ -7,7 +7,7 @@ repository.workspace = true
 
 [features]
 default = []
-server = ["dep:jsonrpsee", "dep:sea-orm", "dep:serde_json", "dep:ng-db"]
+server = ["dep:sea-orm", "dep:serde_json", "dep:ng-db"]
 
 [dependencies]
 ng-core = { workspace = true }
@@ -15,7 +15,6 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 
 # server feature only
-jsonrpsee = { workspace = true, optional = true }
 sea-orm = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 ng-db = { workspace = true, optional = true }
