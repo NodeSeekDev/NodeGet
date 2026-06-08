@@ -117,3 +117,200 @@ pub fn anyhow_to_nodeget_error(err: &anyhow::Error) -> NodegetError {
     }
     NodegetError::Other(err.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{anyhow_to_nodeget_error, NodegetError};
+
+    // ── Variant constructions + Display ─────────────────────────────
+
+    #[test]
+    fn parse_error_display() {
+        let e = NodegetError::ParseError("bad format".into());
+        assert_eq!(e.to_string(), "Parse error: bad format");
+    }
+
+    #[test]
+    fn invalid_input_display() {
+        let e = NodegetError::InvalidInput("empty name".into());
+        assert_eq!(e.to_string(), "Invalid input: empty name");
+    }
+
+    #[test]
+    fn permission_denied_display() {
+        let e = NodegetError::PermissionDenied("no access".into());
+        assert_eq!(e.to_string(), "Permission denied: no access");
+    }
+
+    #[test]
+    fn database_error_display() {
+        let e = NodegetError::DatabaseError("conn refused".into());
+        assert_eq!(e.to_string(), "Database error: conn refused");
+    }
+
+    #[test]
+    fn agent_connection_error_display() {
+        let e = NodegetError::AgentConnectionError("timeout".into());
+        assert_eq!(e.to_string(), "Unable to connect agent: timeout");
+    }
+
+    #[test]
+    fn not_found_display() {
+        let e = NodegetError::NotFound("id=42".into());
+        assert_eq!(e.to_string(), "Not found in database: id=42");
+    }
+
+    #[test]
+    fn uuid_not_found_display() {
+        let e = NodegetError::UuidNotFound("abc".into());
+        assert_eq!(e.to_string(), "UUID not found: abc");
+    }
+
+    #[test]
+    fn config_not_found_display() {
+        let e = NodegetError::ConfigNotFound("db".into());
+        assert_eq!(e.to_string(), "Config not found: db");
+    }
+
+    #[test]
+    fn serialization_error_display() {
+        let e = NodegetError::SerializationError("invalid json".into());
+        assert_eq!(e.to_string(), "Serialization error: invalid json");
+    }
+
+    #[test]
+    fn io_error_display() {
+        let e = NodegetError::IoError("file not found".into());
+        assert_eq!(e.to_string(), "IO error: file not found");
+    }
+
+    #[test]
+    fn other_display() {
+        let e = NodegetError::Other("misc".into());
+        assert_eq!(e.to_string(), "Other error: misc");
+    }
+
+    // ── error_code ──────────────────────────────────────────────────
+
+    #[test]
+    fn error_code_parse_serialization_io_share_101() {
+        assert_eq!(NodegetError::ParseError("".into()).error_code(), 101);
+        assert_eq!(NodegetError::SerializationError("".into()).error_code(), 101);
+        assert_eq!(NodegetError::IoError("".into()).error_code(), 101);
+    }
+
+    #[test]
+    fn error_code_permission_denied_102() {
+        assert_eq!(NodegetError::PermissionDenied("".into()).error_code(), 102);
+    }
+
+    #[test]
+    fn error_code_database_103() {
+        assert_eq!(NodegetError::DatabaseError("".into()).error_code(), 103);
+    }
+
+    #[test]
+    fn error_code_agent_connection_104() {
+        assert_eq!(NodegetError::AgentConnectionError("".into()).error_code(), 104);
+    }
+
+    #[test]
+    fn error_code_not_found_105() {
+        assert_eq!(NodegetError::NotFound("".into()).error_code(), 105);
+    }
+
+    #[test]
+    fn error_code_uuid_not_found_106() {
+        assert_eq!(NodegetError::UuidNotFound("".into()).error_code(), 106);
+    }
+
+    #[test]
+    fn error_code_config_not_found_107() {
+        assert_eq!(NodegetError::ConfigNotFound("".into()).error_code(), 107);
+    }
+
+    #[test]
+    fn error_code_invalid_input_108() {
+        assert_eq!(NodegetError::InvalidInput("".into()).error_code(), 108);
+    }
+
+    #[test]
+    fn error_code_other_999() {
+        assert_eq!(NodegetError::Other("".into()).error_code(), 999);
+    }
+
+    // ── to_json_error ───────────────────────────────────────────────
+
+    #[test]
+    fn to_json_error_fields() {
+        let e = NodegetError::PermissionDenied("denied".into());
+        let je = e.to_json_error();
+        assert_eq!(je.error_id, 102);
+        assert_eq!(je.error_message, "Permission denied: denied");
+    }
+
+    // ── From impls ──────────────────────────────────────────────────
+
+    #[test]
+    fn from_serde_json_error() {
+        let json_err: serde_json::Error = serde_json::from_str::<i32>("not a number").unwrap_err();
+        let e: NodegetError = json_err.into();
+        assert!(matches!(e, NodegetError::SerializationError(_)));
+        assert!(e.to_string().contains("Serialization error:"));
+    }
+
+    #[test]
+    fn from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let e: NodegetError = io_err.into();
+        assert!(matches!(e, NodegetError::IoError(_)));
+        assert!(e.to_string().contains("IO error:"));
+    }
+
+    // ── anyhow_to_nodeget_error ─────────────────────────────────────
+
+    #[test]
+    fn anyhow_to_nodeget_error_preserves_nodeget_error() {
+        let original = NodegetError::NotFound("row".into());
+        let anyhow_err: anyhow::Error = original.clone().into();
+        let recovered = anyhow_to_nodeget_error(&anyhow_err);
+        assert!(matches!(recovered, NodegetError::NotFound(s) if s == "row"));
+    }
+
+    #[test]
+    fn anyhow_to_nodeget_error_wraps_other() {
+        let anyhow_err = anyhow::anyhow!("some generic error");
+        let recovered = anyhow_to_nodeget_error(&anyhow_err);
+        assert!(matches!(recovered, NodegetError::Other(_)));
+    }
+
+    // ── Debug + Clone ───────────────────────────────────────────────
+
+    #[test]
+    fn debug_clone() {
+        let e = NodegetError::InvalidInput("x".into());
+        let cloned = e.clone();
+        // Verify clone produces same Display output (NodegetError lacks PartialEq)
+        assert_eq!(cloned.to_string(), e.to_string());
+        let debug = format!("{e:?}");
+        assert!(debug.contains("InvalidInput"));
+    }
+
+    #[test]
+    fn all_variants_distinct_error_codes() {
+        let codes = [
+            NodegetError::ParseError("".into()).error_code(),
+            NodegetError::InvalidInput("".into()).error_code(),
+            NodegetError::PermissionDenied("".into()).error_code(),
+            NodegetError::DatabaseError("".into()).error_code(),
+            NodegetError::AgentConnectionError("".into()).error_code(),
+            NodegetError::NotFound("".into()).error_code(),
+            NodegetError::UuidNotFound("".into()).error_code(),
+            NodegetError::ConfigNotFound("".into()).error_code(),
+            NodegetError::Other("".into()).error_code(),
+        ];
+        // ParseError/SerializationError/IoError share 101, so exclude those
+        let unique: std::collections::HashSet<i128> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "all non-101-group error codes should be distinct");
+    }
+}

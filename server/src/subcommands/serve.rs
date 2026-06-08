@@ -6,28 +6,30 @@
 //! 3. 启动 TCP 监听（可选 TLS）和 Unix Socket 监听
 //! 4. 监听配置热重载信号，优雅关闭后由 main 循环重启
 //!
-//! 同时包含所有 trait 注入的具体实现（ServerAuthProvider、KvTokenChecker 等），
+//! 同时包含所有 trait 注入的具体实现（ServerPermissionChecker、MonitoringUuidProvider 等），
 //! 这些结构体将 ng-* crate 的抽象接口桥接到 `ng_token` 的具体逻辑。
+//! 统一权限校验器 `PermissionChecker`（ng-core）替代了原先散布在各 crate 的重复 trait 定义。
 
 use axum::routing::any;
 use axum::{extract::Path, http::StatusCode};
 use base64::Engine as _;
 use ng_config::config::server::ServerConfig;
 use ng_config::get_reload_notify;
-use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use std::sync::Arc;
 use ng_core::permission::data_structure::{Permission, Scope};
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_db::entity::js_worker;
 use ng_js_runtime::RunType;
 use ng_js_runtime::RuntimeLimits;
 use ng_js_runtime::runtime_pool;
+use ng_js_worker::ensure_bytecode_version;
 use ng_static::cache::StaticCache;
 use ng_static::ops::{get_static_path, resolve_safe_file_path};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tower::Service;
 use tracing::{debug, error, info, warn};
 
@@ -40,13 +42,14 @@ use crate::rpc_timing::RpcTimingMiddleware;
 /// 1. 安装 rustls 默认 provider（TLS 所需）
 /// 2. 初始化 Super Token
 /// 3. 初始化所有全局缓存（Token、Monitoring、Static、Crontab、JS Runtime Pool、DB Registry）
-/// 4. 注入所有 trait providers（AuthChecker、AuthProvider、TokenChecker 等）
+/// 4. 注入所有 trait providers（PermissionChecker、MonitoringUuidProvider 等）
 /// 5. 构建 RPC 模块和 axum 路由表
 /// 6. 启动 TCP（可选 TLS）+ Unix Socket 监听
 /// 7. 通过 `tokio::select!` 同时等待：服务器正常退出 或 热重载信号
 /// 8. 退出前刷新 monitoring buffer、关闭 DB registry、清理 Unix socket 文件
+#[allow(clippy::too_many_lines)]
 pub async fn run(config: &ServerConfig) {
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     super::init_or_skip_super_token().await;
     debug!(target: "server", "Super token initialization completed");
@@ -56,10 +59,6 @@ pub async fn run(config: &ServerConfig) {
         .await
         .expect("Failed to initialize token cache");
     debug!(target: "server", "Token cache initialized");
-
-    // 注册 auth checker（TokenAuthChecker → ng-infra 全局）
-    ng_token::register_auth_checker();
-    debug!(target: "server", "Auth checker registered");
 
     ng_monitoring::monitoring_uuid_cache::MonitoringUuidCache::init()
         .await
@@ -93,36 +92,15 @@ pub async fn run(config: &ServerConfig) {
     debug!(target: "server", "DB registry manager initialized");
 
     // ── 注入 trait providers ──────────────────────────────────────
-    // ng-config：注册 super token 验证函数
-    ng_config::server_rpc::register_check_super_token(|token_or_auth| {
-        Box::pin(async move { ng_token::check_super_token(token_or_auth).await })
-    });
-    debug!(target: "server", "ng-config check_super_token registered");
+    // 统一权限校验器：注册 PermissionChecker（供 ng-db、ng-kv、ng-static、ng-js-worker、ng-terminal、ng-task、ng-config 共用）
+    ng_core::permission::permission_checker::set_permission_checker(std::sync::Arc::new(
+        ServerPermissionChecker,
+    ));
+    debug!(target: "server", "unified PermissionChecker registered");
 
-    // ng-db：注册 auth provider
-    ng_db::rpc::set_auth_provider(std::sync::Arc::new(ServerAuthProvider));
-    debug!(target: "server", "ng-db auth provider registered");
-
-    // ng-kv：注册 token permission checker
-    ng_kv::set_token_checker(Box::new(KvTokenChecker));
-    debug!(target: "server", "ng-kv token checker registered");
-
-    // ng-static：注册 token permission checker
-    ng_static::auth::set_token_checker(Box::new(StaticTokenChecker));
-    debug!(target: "server", "ng-static token checker registered");
-
-    // ng-task：注册 auth provider + monitoring UUID provider
-    ng_task::set_auth_provider(std::sync::Arc::new(TaskAuthProvider));
+    // ng-task：注册 monitoring UUID provider
     ng_task::set_monitoring_uuid_provider(std::sync::Arc::new(TaskMonitoringUuidProvider));
-    debug!(target: "server", "ng-task providers registered");
-
-    // ng-js-worker：注册 token permission checker
-    ng_js_worker::set_token_checker(Box::new(JsWorkerTokenChecker));
-    debug!(target: "server", "ng-js-worker token checker registered");
-
-    // ng-terminal：注册 token permission checker
-    ng_terminal::set_token_checker(Box::new(TerminalTokenChecker));
-    debug!(target: "server", "ng-terminal token checker registered");
+    debug!(target: "server", "ng-task monitoring UUID provider registered");
 
     // ng-js-runtime：注册 JsWorkerService (inline_call + nodeget RPC dispatch)
     ng_js_runtime::js_worker_service::set_js_worker_service(Box::new(JsWorkerServiceImpl));
@@ -176,7 +154,16 @@ pub async fn run(config: &ServerConfig) {
                         }
 
                         if req.method() == axum::http::Method::GET {
-                            let cache = StaticCache::global();
+                            let Some(cache) = StaticCache::global() else {
+                                return axum::response::Response::builder()
+                                    .status(StatusCode::OK)
+                                    .header(
+                                        axum::http::header::CONTENT_TYPE,
+                                        "text/html; charset=utf-8",
+                                    )
+                                    .body(jsonrpsee::server::HttpBody::from(landing_html))
+                                    .expect("Failed to build HTML response");
+                            };
                             if let Some(model) = cache.get_http_root()
                                 && model.enable != Some(false)
                             {
@@ -195,7 +182,13 @@ pub async fn run(config: &ServerConfig) {
                                 .expect("Failed to build HTML response");
                         }
 
-                        rpc_service.call(req).await.unwrap()
+                        rpc_service.call(req).await.unwrap_or_else(|e| {
+                            tracing::error!(target: "server", error = %e, "RPC call failed");
+                            axum::http::Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
+                                .expect("Failed to build error response")
+                        })
                     }
                 }),
             )
@@ -210,7 +203,16 @@ pub async fn run(config: &ServerConfig) {
                         }
 
                         if req.method() == axum::http::Method::GET {
-                            let cache = StaticCache::global();
+                            let Some(cache) = StaticCache::global() else {
+                                return axum::response::Response::builder()
+                                    .status(StatusCode::OK)
+                                    .header(
+                                        axum::http::header::CONTENT_TYPE,
+                                        "text/html; charset=utf-8",
+                                    )
+                                    .body(jsonrpsee::server::HttpBody::from(landing_html))
+                                    .expect("Failed to build HTML response");
+                            };
                             if let Some(model) = cache.get_http_root()
                                 && model.enable != Some(false)
                             {
@@ -229,7 +231,13 @@ pub async fn run(config: &ServerConfig) {
                                 .expect("Failed to build HTML response");
                         }
 
-                        rpc_service.call(req).await.unwrap()
+                        rpc_service.call(req).await.unwrap_or_else(|e| {
+                            tracing::error!(target: "server", error = %e, "RPC call failed");
+                            axum::http::Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
+                                .expect("Failed to build error response")
+                        })
                     }
                 }),
             )
@@ -293,15 +301,28 @@ pub async fn run(config: &ServerConfig) {
                 let mut rpc_service = jsonrpc_service.clone();
                 async move {
                     if is_websocket_upgrade(req.headers()) {
-                        return rpc_service.call(req).await.unwrap();
+                        return rpc_service.call(req).await.unwrap_or_else(|e| {
+                            tracing::error!(target: "server", error = %e, "RPC call failed");
+                            axum::http::Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
+                                .expect("Failed to build error response")
+                        });
                     }
-                    let cache = StaticCache::global();
-                    if let Some(model) = cache.get_http_root() {
+                    if let Some(cache) = StaticCache::global()
+                        && let Some(model) = cache.get_http_root()
+                    {
                         let path = req.uri().path().to_owned();
                         let method = req.method().clone();
                         return serve_static_file(&model.path, &path, model.cors, &method).await;
                     }
-                    rpc_service.call(req).await.unwrap()
+                    rpc_service.call(req).await.unwrap_or_else(|e| {
+                            tracing::error!(target: "server", error = %e, "RPC call failed");
+                            axum::http::Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
+                                .expect("Failed to build error response")
+                        })
                 }
             }));
 
@@ -355,10 +376,14 @@ pub async fn run(config: &ServerConfig) {
         tokio::pin!(serve_future);
 
         tokio::select! {
+            biased;
             result = &mut serve_future => {
                 result.unwrap();
                 ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global().shutdown().await;
+                ng_db::DbRegistryManager::global()
+                    .expect("DbRegistryManager not initialized at shutdown")
+                    .shutdown()
+                    .await;
                 let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
                 #[cfg(not(target_os = "windows"))]
                 if let Some(task) = unix_server_task.take() {
@@ -372,7 +397,10 @@ pub async fn run(config: &ServerConfig) {
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping TLS server...");
                 ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global().shutdown().await;
+                ng_db::DbRegistryManager::global()
+                    .expect("DbRegistryManager not initialized at shutdown")
+                    .shutdown()
+                    .await;
                 let stop_handle = stop_handle.clone();
                 tokio::spawn(async move {
                     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
@@ -400,10 +428,14 @@ pub async fn run(config: &ServerConfig) {
         tokio::pin!(serve_future);
 
         tokio::select! {
+            biased;
             result = &mut serve_future => {
                 result.unwrap();
                 ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global().shutdown().await;
+                ng_db::DbRegistryManager::global()
+                    .expect("DbRegistryManager not initialized at shutdown")
+                    .shutdown()
+                    .await;
                 #[cfg(not(target_os = "windows"))]
                 if let Some(task) = unix_server_task.take() {
                     task.abort();
@@ -416,7 +448,10 @@ pub async fn run(config: &ServerConfig) {
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping server for restart...");
                 ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global().shutdown().await;
+                ng_db::DbRegistryManager::global()
+                    .expect("DbRegistryManager not initialized at shutdown")
+                    .shutdown()
+                    .await;
                 let stop_handle = stop_handle.clone();
                 tokio::spawn(async move {
                     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
@@ -460,9 +495,9 @@ async fn build_http1_only_tls_config(
     // 仅广播 http/1.1，阻止客户端协商 HTTP/2
     server_config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
-    Ok(axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(
-        server_config,
-    )))
+    Ok(axum_server::tls_rustls::RustlsConfig::from_config(
+        Arc::new(server_config),
+    ))
 }
 
 /// 渲染根路径着陆页 HTML
@@ -573,13 +608,31 @@ struct JsRouteOutputHeader {
 ///
 /// - `route_name`：JS Worker 路由名称
 /// - req：原始 HTTP 请求
+#[allow(clippy::too_many_lines)]
 async fn handle_js_worker_route(
     route_name: String,
     req: axum::extract::Request,
 ) -> axum::http::Response<jsonrpsee::server::HttpBody> {
     const ROUTE_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
+    const ALLOWED_RESPONSE_HEADERS: &[&str] = &[
+        "content-type",
+        "content-length",
+        "cache-control",
+        "last-modified",
+        "etag",
+        "access-control-allow-origin",
+        "access-control-allow-methods",
+        "access-control-allow-headers",
+    ];
 
-    let route_name = route_name.trim().to_owned();
+    let route_name = {
+        let trimmed = route_name.trim();
+        if trimmed.len() == route_name.len() {
+            route_name
+        } else {
+            trimmed.to_owned()
+        }
+    };
     if route_name.is_empty() {
         warn!(target: "js_worker", "route request with empty route_name");
         return build_http_error(StatusCode::BAD_REQUEST, "route_name cannot be empty");
@@ -673,23 +726,19 @@ async fn handle_js_worker_route(
         }
     };
 
-    let Some(bytecode) = model.js_byte_code else {
-        error!(target: "js_worker", route_name = %route_name, worker_name = %model.name, "js_worker has no precompiled bytecode");
-        return build_http_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("js_worker '{}' has no precompiled bytecode", model.name),
-        );
+    let bytecode = match ensure_bytecode_version(&model, &db).await {
+        Ok(bc) => bc,
+        Err(e) => {
+            error!(target: "js_worker", route_name = %route_name, worker_name = %model.name, error = %e, "js_worker bytecode version check/recompile failed");
+            return build_http_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("js_worker '{}' bytecode error: {e}", model.name),
+            );
+        }
     };
 
-    // Base64 编码请求体（在 spawn_blocking 中执行以避免阻塞异步运行时）
-    let body_base64 = tokio::task::spawn_blocking(move || {
-        base64::engine::general_purpose::STANDARD.encode(&body_bytes)
-    })
-        .await
-        .unwrap_or_else(|e| {
-            error!(target: "js_worker", route_name = %route_name, error = %e, "base64 encoding task panicked");
-            String::new()
-        });
+    // Base64 编码请求体（CPU 操作耗时微秒级，spawn_blocking 开销反而更大）
+    let body_base64 = base64::engine::general_purpose::STANDARD.encode(&body_bytes);
     let js_input = JsRouteInput {
         method,
         url,
@@ -749,14 +798,17 @@ async fn handle_js_worker_route(
         }
     };
 
-    // 构建响应：过滤危险头（content-encoding、transfer-encoding 由框架处理）
+    // 构建响应：仅允许白名单内的响应头，防止 JS Worker 注入敏感头（Set-Cookie、Location、CSP 等）
     let status = StatusCode::from_u16(js_output.status).unwrap_or(StatusCode::OK);
     let mut response = axum::http::Response::builder().status(status);
     for header in js_output.headers {
         if let Ok(name) = axum::http::header::HeaderName::from_bytes(header.name.as_bytes())
             && let Ok(value) = axum::http::header::HeaderValue::from_str(header.value.as_str())
         {
-            if name == "content-encoding" || name == "transfer-encoding" {
+            if !ALLOWED_RESPONSE_HEADERS
+                .iter()
+                .any(|&allowed| allowed.eq_ignore_ascii_case(name.as_str()))
+            {
                 continue;
             }
             response = response.header(name, value);
@@ -969,104 +1021,13 @@ async fn cleanup_unix_socket_file(path: Option<&str>) {
 
 // ── Trait 注入的具体实现（依赖倒置）──────────────────────────
 
-/// ng-db `AuthProvider` 实现：委托至 `ng_token::check_token_limit` / `check_super_token`
-struct ServerAuthProvider;
+/// 统一权限校验实现：委托至 `ng_token::check_token_limit` / `check_super_token` / `get_token`
+///
+/// 替代原先的 ServerAuthProvider、KvTokenChecker、StaticTokenChecker、
+/// TaskAuthProvider、JsWorkerTokenChecker、TerminalTokenChecker 六个重复实现。
+struct ServerPermissionChecker;
 
-impl ng_db::rpc::AuthProvider for ServerAuthProvider {
-    fn check_token_limit(
-        &self,
-        token_or_auth: &TokenOrAuth,
-        scopes: Vec<Scope>,
-        permissions: Vec<Permission>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>> {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(
-            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
-        )
-    }
-
-    fn check_super_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>> {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
-    }
-}
-
-/// ng-kv `TokenPermissionChecker` 实现：委托至 `ng_token::check_token_limit` / `check_super_token` / `get_token`
-struct KvTokenChecker;
-
-impl ng_kv::TokenPermissionChecker for KvTokenChecker {
-    fn check_token_limit(
-        &self,
-        token_or_auth: &TokenOrAuth,
-        scopes: Vec<Scope>,
-        permissions: Vec<Permission>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
-    {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(
-            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
-        )
-    }
-
-    fn check_super_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
-    {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
-    }
-
-    fn get_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = anyhow::Result<ng_core::permission::data_structure::Token>,
-                > + Send
-                + '_,
-        >,
-    > {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(async move { ng_token::get_token(&token_or_auth).await })
-    }
-}
-
-/// ng-static `TokenPermissionChecker` 实现：委托至 `ng_token::check_token_limit` / `check_super_token`
-struct StaticTokenChecker;
-
-impl ng_static::auth::TokenPermissionChecker for StaticTokenChecker {
-    fn check_token_limit(
-        &self,
-        token_or_auth: &TokenOrAuth,
-        scopes: Vec<Scope>,
-        permissions: Vec<Permission>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
-    {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(
-            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
-        )
-    }
-
-    fn check_super_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
-    {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
-    }
-}
-
-/// ng-task `TaskAuthProvider` 实现：委托至 `ng_token::check_token_limit` / `check_super_token` / `get_token`
-struct TaskAuthProvider;
-
-impl ng_task::TaskAuthProvider for TaskAuthProvider {
+impl ng_core::permission::permission_checker::PermissionChecker for ServerPermissionChecker {
     fn check_token_limit(
         &self,
         token_or_auth: &TokenOrAuth,
@@ -1114,6 +1075,7 @@ impl ng_task::MonitoringUuidProvider for TaskMonitoringUuidProvider {
     > {
         Box::pin(async move {
             ng_monitoring::monitoring_uuid_cache::MonitoringUuidCache::global()
+                .expect("MonitoringUuidCache not initialized in TaskMonitoringUuidProvider")
                 .get_or_insert(uuid)
                 .await
         })
@@ -1123,75 +1085,6 @@ impl ng_task::MonitoringUuidProvider for TaskMonitoringUuidProvider {
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>> {
         Box::pin(ng_monitoring::monitoring_uuid_cache::MonitoringUuidCache::reload())
-    }
-}
-
-/// ng-js-worker `TokenPermissionChecker` 实现：委托至 `ng_token::check_token_limit` / `check_super_token` / `get_token`
-struct JsWorkerTokenChecker;
-
-impl ng_js_worker::TokenPermissionChecker for JsWorkerTokenChecker {
-    fn check_token_limit(
-        &self,
-        token_or_auth: &TokenOrAuth,
-        scopes: Vec<Scope>,
-        permissions: Vec<Permission>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
-    {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(
-            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
-        )
-    }
-
-    fn check_super_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
-    {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
-    }
-
-    fn get_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = anyhow::Result<ng_core::permission::data_structure::Token>,
-                > + Send
-                + '_,
-        >,
-    > {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(async move { ng_token::get_token(&token_or_auth).await })
-    }
-}
-
-/// ng-terminal `TokenPermissionChecker` 实现：委托至 `ng_token::check_token_limit` / `check_super_token`
-struct TerminalTokenChecker;
-
-impl ng_terminal::TokenPermissionChecker for TerminalTokenChecker {
-    fn check_token_limit(
-        &self,
-        token_or_auth: &TokenOrAuth,
-        scopes: Vec<Scope>,
-        permissions: Vec<Permission>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
-    {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(
-            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
-        )
-    }
-
-    fn check_super_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
-    {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
     }
 }
 
@@ -1209,9 +1102,7 @@ impl ng_js_runtime::js_worker_service::JsWorkerService for JsWorkerServiceImpl {
         params_json: String,
         timeout_sec: Option<f64>,
         inline_caller: Option<String>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>> {
         Box::pin(async move {
             ng_js_worker::service::run_inline_call_and_record_result(
                 js_script_name,

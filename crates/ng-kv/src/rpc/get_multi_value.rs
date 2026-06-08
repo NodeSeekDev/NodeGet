@@ -9,7 +9,7 @@ use ng_core::error::{NodegetError, anyhow_to_nodeget_error};
 use serde_json::Value;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// 从通配符 key pattern 中提取前缀部分
 ///
@@ -49,6 +49,7 @@ pub async fn get_multi_value(
         );
 
         if namespace_key.is_empty() {
+            warn!(target: "kv", "验证失败: namespace_key 为空");
             return Err(
                 NodegetError::InvalidInput("namespace_key cannot be empty".to_owned()).into(),
             );
@@ -57,6 +58,7 @@ pub async fn get_multi_value(
         // 先做完整权限校验：任一项无权限则直接拒绝
         for item in &namespace_key {
             if item.namespace.is_empty() {
+                warn!(target: "kv", "验证失败: namespace 为空");
                 return Err(
                     NodegetError::InvalidInput("namespace cannot be empty".to_owned()).into(),
                 );
@@ -122,13 +124,9 @@ pub async fn get_multi_value(
             }
         }
 
-        let json_str = serde_json::to_string(&output).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize kv multi values: {e}"))
-        })?;
-
         debug!(target: "kv", result_count = output.len(), "get_multi_value completed");
 
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&output)
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
     };
 

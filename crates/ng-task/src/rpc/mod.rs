@@ -8,15 +8,15 @@
 //! - `task_query` — 查询任务记录
 //! - `task_delete` — 删除任务记录
 //!
-//! 同时定义 `TaskAuthProvider` 和 `MonitoringUuidProvider` trait，
-//! 由服务器二进制在启动时注入具体实现。
+//! 权限校验委托至全局 `ng_core::permission::permission_checker::PermissionChecker`。
+//! `MonitoringUuidProvider` trait 仍由服务器二进制注入。
 
 use jsonrpsee::PendingSubscriptionSink;
 use jsonrpsee::SubscriptionMessage;
 use jsonrpsee::core::{JsonRawValue, RpcResult, SubscriptionResult};
 use jsonrpsee::proc_macros::rpc;
 use ng_core::error::NodegetError;
-use ng_core::permission::data_structure::{Permission, Scope, Task, Token};
+use ng_core::permission::data_structure::{Permission, Scope, Task};
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_core::utils::JsonError;
 use ng_db::rpc::{RpcHelper, token_identity};
@@ -33,46 +33,6 @@ mod create_task_blocking;
 mod delete;
 mod query;
 mod upload_task_result;
-
-// ── Auth provider trait ────────────────────────────────────────
-
-/// 任务鉴权 trait，由服务器二进制实现并注入
-///
-/// 提供 Token 权限检查、SuperToken 判断和 Token 元数据获取能力
-pub trait TaskAuthProvider: Send + Sync + 'static {
-    /// 检查 Token/Auth 是否满足给定的 scope 和 permission 约束
-    fn check_token_limit(
-        &self,
-        token_or_auth: &TokenOrAuth,
-        scopes: Vec<Scope>,
-        permissions: Vec<Permission>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>>;
-
-    /// 检查 Token/Auth 是否为 SuperToken
-    fn check_super_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>>;
-
-    /// 获取 Token/Auth 的元数据
-    fn get_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Token>> + Send>>;
-}
-
-/// 全局 AuthProvider 单例，由服务器启动时通过 `set_auth_provider` 注入
-static AUTH_PROVIDER: OnceLock<Arc<dyn TaskAuthProvider>> = OnceLock::new();
-
-/// 设置全局 AuthProvider，服务器启动时调用一次
-pub fn set_auth_provider(provider: Arc<dyn TaskAuthProvider>) {
-    let _ = AUTH_PROVIDER.set(provider);
-}
-
-/// 获取全局 AuthProvider，未初始化时返回 None
-pub fn auth_provider() -> Option<&'static Arc<dyn TaskAuthProvider>> {
-    AUTH_PROVIDER.get()
-}
 
 // ── Monitoring UUID provider trait ──────────────────────────────
 
@@ -257,6 +217,12 @@ impl RpcServer for TaskRpcImpl {
         token: String,
         uuid: Uuid,
     ) -> SubscriptionResult {
+        // Task 订阅注册：鉴权 → 权限校验 → 建立会话 → 启动转发协程
+        // 1. 解析 TokenOrAuth 格式，失败则 reject 订阅
+        // 2. 获取 AuthProvider，校验 Task::Listen 权限（scope 为目标 Agent UUID）
+        // 3. 权限通过后 accept sink，向 TaskManager 注册 (uuid, reg_id, tx) 会话
+        // 4. spawn 协程从 mpsc 读取 TaskEvent → 序列化为 RawValue → 推送到 WebSocket sink
+        // 5. 断连或序列化失败时从 TaskManager 移除会话
         let (tk, un) = token_identity(&token);
         let span = tracing::info_span!(target: "task", "task::register_task", token_key = tk, username = un, uuid = %uuid);
         let _guard = span.enter();
@@ -276,10 +242,10 @@ impl RpcServer for TaskRpcImpl {
             return Ok(());
         };
 
-        // 获取 AuthProvider，未初始化则拒绝
-        let provider = auth_provider()
+        // 获取 PermissionChecker，未初始化则拒绝
+        let provider = ng_core::permission::permission_checker::get_permission_checker()
             .ok_or_else(|| {
-                jsonrpsee::types::ErrorObject::borrowed(101, "Auth provider not initialized", None)
+                jsonrpsee::types::ErrorObject::borrowed(101, "PermissionChecker not initialized", None)
             })
             .ok();
 
@@ -287,7 +253,7 @@ impl RpcServer for TaskRpcImpl {
             subscription_sink
                 .reject(jsonrpsee::types::ErrorObject::borrowed(
                     101,
-                    "Auth provider not initialized",
+                    "PermissionChecker not initialized",
                     None,
                 ))
                 .await;
@@ -388,7 +354,9 @@ impl RpcServer for TaskRpcImpl {
 type Peers = Arc<RwLock<HashMap<Uuid, (Uuid, mpsc::Sender<crate::types::TaskEvent>)>>>;
 
 /// Blocking waiter 表：task_id → oneshot 发送端，用于 `create_task_blocking` 等待结果
-type BlockingWaiters = Arc<RwLock<HashMap<u64, oneshot::Sender<crate::types::TaskEventResponse>>>>;
+/// 临界区无 .await，使用 std::sync::RwLock 避免 tokio async 开销
+type BlockingWaiters =
+    Arc<std::sync::RwLock<HashMap<u64, oneshot::Sender<crate::types::TaskEventResponse>>>>;
 
 /// 全局 TaskManager 单例，延迟初始化
 static GLOBAL_TASK_MANAGER: OnceLock<Arc<TaskManager>> = OnceLock::new();
@@ -406,13 +374,19 @@ pub struct TaskManager {
     blocking_waiters: BlockingWaiters,
 }
 
+impl Default for TaskManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TaskManager {
     /// 创建新的 TaskManager 实例
     #[must_use]
     pub fn new() -> Self {
         Self {
             peers: Arc::new(RwLock::new(HashMap::new())),
-            blocking_waiters: Arc::new(RwLock::new(HashMap::new())),
+            blocking_waiters: Arc::new(std::sync::RwLock::new(HashMap::new())),
         }
     }
 
@@ -476,30 +450,40 @@ impl TaskManager {
     }
 
     /// 注册一个 blocking waiter，等待指定 `task_id` 的结果
-    pub async fn register_blocking_waiter(
+    pub fn register_blocking_waiter(
         &self,
         task_id: u64,
     ) -> oneshot::Receiver<crate::types::TaskEventResponse> {
         let (tx, rx) = oneshot::channel();
-        self.blocking_waiters.write().await.insert(task_id, tx);
+        self.blocking_waiters
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(task_id, tx);
         debug!(target: "task", task_id = task_id, "blocking waiter registered");
         rx
     }
 
     /// 移除 blocking waiter（超时或取消时调用）
-    pub async fn remove_blocking_waiter(&self, task_id: u64) {
-        self.blocking_waiters.write().await.remove(&task_id);
+    pub fn remove_blocking_waiter(&self, task_id: u64) {
+        self.blocking_waiters
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&task_id);
     }
 
     /// 尝试通知 blocking waiter（upload_task_result 时调用）
     ///
     /// 返回 `true` 表示有 waiter 被通知，`false` 表示无人在等待
-    pub async fn notify_blocking_waiter(
+    pub fn notify_blocking_waiter(
         &self,
         task_id: u64,
         response: crate::types::TaskEventResponse,
     ) -> bool {
-        let value = self.blocking_waiters.write().await.remove(&task_id);
+        let value = self
+            .blocking_waiters
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&task_id);
         value.is_some_and(|tx| {
             let _ = tx.send(response);
             debug!(target: "task", task_id = task_id, "blocking waiter notified");

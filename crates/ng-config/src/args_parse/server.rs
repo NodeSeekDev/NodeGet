@@ -9,6 +9,7 @@ use palc::{Parser, Subcommand};
     long_about = "NodeGet is the next-generation server monitoring and management tools. nodeget-server is a part of it",
     after_long_help = "This Server is open-sourced on Github, powered by powerful Rust. Love from NodeGet"
 )]
+/// Server 命令行参数
 pub struct ServerArgs {
     /// 子命令（serve / init / roll-super-token / get-uuid / version）
     #[command(subcommand)]

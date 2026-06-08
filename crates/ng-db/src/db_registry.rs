@@ -22,9 +22,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::Notify;
-use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
@@ -60,7 +60,7 @@ pub struct DbRegistryManager {
 fn now_ms_u64() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("System time is before UNIX epoch")
         .as_millis() as u64
 }
 
@@ -80,6 +80,7 @@ impl DbRegistryManager {
     ///
     /// 若 `Mutex` 被 poison（仅当其他持有者在持锁期间 panic 时可能发生），或
     /// `OnceLock` 内部 `expect` 失败时会 panic
+    #[allow(clippy::unused_async)]
     pub async fn init(db_path: String) -> Arc<Self> {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
@@ -100,16 +101,12 @@ impl DbRegistryManager {
             *mgr_inner.cleanup_handle.lock().unwrap() = Some(handle);
             let _ = MGR.set(mgr_inner);
         });
-        Arc::clone(MGR.get().expect("DbRegistryManager not initialized"))
+        Arc::clone(MGR.get().expect("DbRegistryManager just set but get() returned None"))
     }
 
-    /// 获取全局单例引用，初始化前调用会 panic
-    ///
-    /// # Panics
-    ///
-    /// 若 `DbRegistryManager` 尚未初始化（即 `init` 未被调用）时会 panic
-    pub fn global() -> &'static Arc<Self> {
-        MGR.get().expect("DbRegistryManager not initialized")
+    /// 获取全局单例引用，初始化前调用返回 `None`
+    pub fn global() -> Option<&'static Arc<Self>> {
+        MGR.get()
     }
 
     /// 从主库 `db_registry` 表恢复已有连接到内存池
@@ -122,7 +119,8 @@ impl DbRegistryManager {
         let main_db = get_main_db()?;
         let entries = dbreg_entity::Entity::find().all(main_db).await?;
         let db_base = self.db_path.trim_end_matches('/');
-        let mut pools = self.pools.write().await;
+        // 锁外构建连接（磁盘 I/O），避免写锁阻塞所有池访问
+        let mut built: Vec<(String, Arc<TrackedConnection>)> = Vec::with_capacity(entries.len());
         for entry in entries {
             let name = &entry.name;
             let valid = !name.is_empty()
@@ -145,18 +143,25 @@ impl DbRegistryManager {
                         let _ = conn.execute_unprepared("PRAGMA busy_timeout = 5000;").await;
                         let _ = conn.execute_unprepared("PRAGMA foreign_keys = ON;").await;
                     }
-                    pools.insert(
+                    built.push((
                         name.clone(),
                         Arc::new(TrackedConnection {
                             conn,
                             last_used_ms: AtomicU64::new(now_ms_u64()),
                         }),
-                    );
+                    ));
                     info!(target: "db", name = %name, "Restored database connection from registry");
                 }
                 Err(e) => {
                     error!(target: "db", name = %name, error = %e, "Failed to restore database connection");
                 }
+            }
+        }
+        // 锁内仅做快速 HashMap 插入
+        {
+            let mut pools = self.pools.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (name, tracked) in built {
+                pools.insert(name, tracked);
             }
         }
         Ok(())
@@ -166,17 +171,20 @@ impl DbRegistryManager {
     ///
     /// 退出条件：`cancelled` 标志设为 true 或收到 `cancel_notify` 信号
     async fn start_cleanup_loop(&self) {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_mins(1));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             if self.cancelled.load(Ordering::SeqCst) {
                 info!(target: "db", "DbRegistry cleanup loop stopped");
                 break;
             }
             tokio::select! {
+                biased;
                 () = self.cancel_notify.notified() => {
                     info!(target: "db", "DbRegistry cleanup loop stopped");
                     break;
                 }
-                () = tokio::time::sleep(std::time::Duration::from_mins(1)) => {
+                _ = ticker.tick() => {
                     if let Err(e) = self.cleanup_expired().await {
                         warn!(target: "db", error = %e, "DbRegistry cleanup failed, will retry next cycle");
                     }
@@ -195,31 +203,27 @@ impl DbRegistryManager {
         let main_db = get_main_db()?;
         // 先在读锁下收集候选条目，释放锁后再做 DB 查询和过期判定，避免长时间持锁
         let candidates: Vec<(String, u64)> = {
-            let pools = self.pools.read().await;
+            let pools = self.pools.read().unwrap_or_else(std::sync::PoisonError::into_inner);
             pools
                 .iter()
                 .map(|(name, tracked)| (name.clone(), tracked.last_used_ms.load(Ordering::Relaxed)))
                 .collect()
         };
-        // 不持锁进行 DB 查询和过期判定
+        // 一次性加载全部 db_registry 行，避免 N+1 查询
+        let all_entries: std::collections::HashMap<String, Option<i64>> = dbreg_entity::Entity::find()
+            .all(main_db)
+            .await?
+            .into_iter()
+            .map(|e| (e.name, e.max_lifetime_ms))
+            .collect();
+        // 不持锁进行过期判定
         let mut to_remove = Vec::new();
         for (name, last_used) in candidates {
-            match dbreg_entity::Entity::find()
-                .filter(dbreg_entity::Column::Name.eq(&name))
-                .one(main_db)
-                .await
-            {
-                Ok(Some(m)) => {
-                    if let Some(lifetime_ms) = m.max_lifetime_ms {
-                        let elapsed_ms = now_ms_u64().saturating_sub(last_used) as i64;
-                        if elapsed_ms >= lifetime_ms {
-                            to_remove.push(name);
-                        }
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    warn!(target: "db", name = %name, error = %e, "Failed to query db_registry entry, skipping");
+            if let Some(&Some(lifetime_ms)) = all_entries.get(&name) {
+                #[allow(clippy::cast_possible_wrap)]
+                let elapsed_ms = now_ms_u64().saturating_sub(last_used) as i64;
+                if elapsed_ms >= lifetime_ms {
+                    to_remove.push(name);
                 }
             }
         }
@@ -245,8 +249,8 @@ impl DbRegistryManager {
     ///
     /// - `name` — 数据库名称
     /// - 返回值：连接池中是否存在该名称的连接
-    pub async fn has_conn(&self, name: &str) -> bool {
-        let pools = self.pools.read().await;
+    pub fn has_conn(&self, name: &str) -> bool {
+        let pools = self.pools.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         pools.contains_key(name)
     }
 
@@ -254,8 +258,8 @@ impl DbRegistryManager {
     ///
     /// - `name` — 数据库名称
     /// - 返回值：连接存在返回 `Some(DatabaseConnection)`，否则 `None`
-    pub async fn get_conn(&self, name: &str) -> Option<DatabaseConnection> {
-        let pools = self.pools.read().await;
+    pub fn get_conn(&self, name: &str) -> Option<DatabaseConnection> {
+        let pools = self.pools.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         pools.get(name).map(|tracked| {
             tracked.last_used_ms.store(now_ms_u64(), Ordering::Relaxed);
             tracked.conn.clone()
@@ -298,13 +302,22 @@ impl DbRegistryManager {
                 )
                 .await;
         }
+        #[allow(clippy::cast_possible_wrap)]
         let now_ms = now_ms_u64() as i64;
         let main_db = get_main_db()?;
         let existing = dbreg_entity::Entity::find()
             .filter(dbreg_entity::Column::Name.eq(name))
             .one(main_db)
             .await?;
-        if existing.is_none() {
+        if let Some(existing_model) = existing {
+            let current_conns = existing_model.db_connections.unwrap_or(0).saturating_add(1);
+            let mut active: dbreg_entity::ActiveModel = existing_model.into();
+            active.db_connections = Set(Some(current_conns));
+            if max_lifetime_ms.is_some() {
+                active.max_lifetime_ms = Set(max_lifetime_ms);
+            }
+            active.update(main_db).await?;
+        } else {
             let active = dbreg_entity::ActiveModel {
                 name: Set(name.to_owned()),
                 db_connections: Set(Some(1)),
@@ -314,18 +327,9 @@ impl DbRegistryManager {
             };
             let result = active.insert(main_db).await?;
             info!(target: "db", name = %result.name, id = result.id, "Database registered");
-        } else {
-            let existing_model = existing.unwrap();
-            let current_conns = existing_model.db_connections.unwrap_or(0).saturating_add(1);
-            let mut active: dbreg_entity::ActiveModel = existing_model.into();
-            active.db_connections = Set(Some(current_conns));
-            if max_lifetime_ms.is_some() {
-                active.max_lifetime_ms = Set(max_lifetime_ms);
-            }
-            active.update(main_db).await?;
         }
         {
-            let mut pools = self.pools.write().await;
+            let mut pools = self.pools.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             pools.insert(
                 name.to_owned(),
                 Arc::new(TrackedConnection {
@@ -353,7 +357,7 @@ impl DbRegistryManager {
     /// 当 `db_registry` 表查询或删除失败时返回错误
     pub async fn remove_conn(&self, name: &str) -> anyhow::Result<()> {
         {
-            let mut pools = self.pools.write().await;
+            let mut pools = self.pools.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             pools.remove(name);
         }
         let main_db = get_main_db()?;
@@ -361,26 +365,24 @@ impl DbRegistryManager {
             .filter(dbreg_entity::Column::Name.eq(name))
             .one(main_db)
             .await?
-        {
-            if let Err(e) = dbreg_entity::Entity::delete_by_id(model.id)
+            && let Err(e) = dbreg_entity::Entity::delete_by_id(model.id)
                 .exec(main_db)
                 .await
-            {
-                warn!(target: "db", name = %name, error = %e, "Failed to delete db_registry row");
-            }
+        {
+            warn!(target: "db", name = %name, error = %e, "Failed to delete db_registry row");
         }
         let db_file = self.get_db_path(name);
-        if std::path::Path::new(&db_file).exists() {
-            if let Err(e) = std::fs::remove_file(&db_file) {
-                warn!(target: "db", path = %db_file, error = %e, "Failed to delete db file");
-            }
+        if std::path::Path::new(&db_file).exists()
+            && let Err(e) = std::fs::remove_file(&db_file)
+        {
+            warn!(target: "db", path = %db_file, error = %e, "Failed to delete db file");
         }
         for ext in &["-wal", "-shm"] {
             let f = format!("{db_file}{ext}");
-            if std::path::Path::new(&f).exists() {
-                if let Err(e) = std::fs::remove_file(&f) {
-                    warn!(target: "db", path = %f, error = %e, "Failed to delete WAL/SHM file");
-                }
+            if std::path::Path::new(&f).exists()
+                && let Err(e) = std::fs::remove_file(&f)
+            {
+                warn!(target: "db", path = %f, error = %e, "Failed to delete WAL/SHM file");
             }
         }
         info!(target: "db", name = %name, "Database connection removed and files cleaned");
@@ -400,7 +402,7 @@ impl DbRegistryManager {
             .order_by(dbreg_entity::Column::Name, sea_orm::Order::Asc)
             .all(main_db)
             .await?;
-        let pools = self.pools.read().await;
+        let pools = self.pools.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(entries
             .iter()
             .map(|e| DbInfo {
@@ -431,10 +433,10 @@ impl DbRegistryManager {
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
                 Ok(Ok(())) => info!(target: "db", "DbRegistry cleanup loop exited cleanly"),
                 Ok(Err(e)) => {
-                    warn!(target: "db", error = %e, "DbRegistry cleanup loop task panicked")
+                    warn!(target: "db", error = %e, "DbRegistry cleanup loop task panicked");
                 }
                 Err(_) => {
-                    warn!(target: "db", "DbRegistry cleanup loop did not exit within 5s timeout")
+                    warn!(target: "db", "DbRegistry cleanup loop did not exit within 5s timeout");
                 }
             }
         }
@@ -522,16 +524,10 @@ fn try_column_as_json(r: &sea_orm::QueryResult, col: &str) -> serde_json::Value 
         return v.map_or(serde_json::Value::Null, serde_json::Value::Bool);
     }
     if let Ok(v) = r.try_get::<Option<Vec<u8>>>("", col) {
-        return match v {
-            Some(bytes) => {
-                if let Ok(j) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                    j
-                } else {
-                    serde_json::Value::String(hex::encode(&bytes))
-                }
-            }
-            None => serde_json::Value::Null,
-        };
+        return v.map_or(serde_json::Value::Null, |bytes| {
+            serde_json::from_slice::<serde_json::Value>(&bytes)
+                .unwrap_or_else(|_| serde_json::Value::String(hex::encode(&bytes)))
+        });
     }
     if let Ok(v) = r.try_get::<Option<serde_json::Value>>("", col) {
         return v.unwrap_or(serde_json::Value::Null);
@@ -550,17 +546,20 @@ pub fn json_to_sea_value(json: &serde_json::Value) -> sea_orm::Value {
     match json {
         serde_json::Value::Null => sea_orm::Value::Json(None),
         serde_json::Value::Bool(b) => sea_orm::Value::Bool(Some(*b)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                sea_orm::Value::BigInt(Some(i))
-            } else if let Some(u) = n.as_u64() {
-                sea_orm::Value::BigUnsigned(Some(u))
-            } else if let Some(f) = n.as_f64() {
-                sea_orm::Value::Double(Some(f))
-            } else {
-                sea_orm::Value::String(Some(n.to_string()))
-            }
-        }
+        serde_json::Value::Number(n) => n.as_i64().map_or_else(
+            || {
+                n.as_u64().map_or_else(
+                    || {
+                        n.as_f64().map_or_else(
+                            || sea_orm::Value::String(Some(n.to_string())),
+                            |f| sea_orm::Value::Double(Some(f)),
+                        )
+                    },
+                    |u| sea_orm::Value::BigUnsigned(Some(u)),
+                )
+            },
+            |i| sea_orm::Value::BigInt(Some(i)),
+        ),
         serde_json::Value::String(s) => sea_orm::Value::String(Some(s.clone())),
         serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
             sea_orm::Value::Json(Some(Box::new(json.clone())))

@@ -55,8 +55,8 @@ pub async fn create_task_blocking(
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-        let provider = crate::rpc::auth_provider()
-            .ok_or_else(|| NodegetError::Other("Auth provider not initialized".to_owned()))?;
+        let provider = ng_core::permission::permission_checker::get_permission_checker()
+            .ok_or_else(|| NodegetError::ConfigNotFound("PermissionChecker not initialized".to_owned()))?;
 
         let is_allowed = provider
             .check_token_limit(
@@ -108,7 +108,7 @@ pub async fn create_task_blocking(
         }
 
         // 关键：在 send_event 之前注册 waiter，避免 agent 极快返回时错过通知
-        let rx = manager.register_blocking_waiter(task_id_u64).await;
+        let rx = manager.register_blocking_waiter(task_id_u64);
 
         let task_event = TaskEvent {
             task_id: task_id_u64,
@@ -118,7 +118,7 @@ pub async fn create_task_blocking(
 
         if let Err(e) = manager.send_event(target_uuid, task_event).await {
             // 发送失败，清理 waiter 和 DB 记录
-            manager.remove_blocking_waiter(task_id_u64).await;
+            manager.remove_blocking_waiter(task_id_u64);
             let _ = task::Entity::delete_by_id(task_id).exec(db).await;
             error!(target: "task", error = %e.1, "Error sending task event");
             return Err(NodegetError::AgentConnectionError(format!(
@@ -143,7 +143,7 @@ pub async fn create_task_blocking(
                     .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
             }
             Ok(Err(_)) => {
-                manager.remove_blocking_waiter(task_id_u64).await;
+                manager.remove_blocking_waiter(task_id_u64);
                 error!(target: "task", task_id = task_id_u64, "blocking waiter channel closed unexpectedly");
                 Err(
                     NodegetError::Other("Blocking waiter channel closed unexpectedly".to_owned())
@@ -151,7 +151,7 @@ pub async fn create_task_blocking(
                 )
             }
             Err(_) => {
-                manager.remove_blocking_waiter(task_id_u64).await;
+                manager.remove_blocking_waiter(task_id_u64);
                 debug!(target: "task", task_id = task_id_u64, timeout_ms = timeout_ms, "blocking task timed out");
                 Err(NodegetError::Other(format!(
                     "Task {task_id_u64} timed out after {timeout_ms}ms"

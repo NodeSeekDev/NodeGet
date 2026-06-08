@@ -222,6 +222,7 @@ pub struct TaskEvent {
 /// 任务事件结果枚举，定义任务执行后的返回结果
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum TaskEventResult {
     /// Ping 结果，单位：毫秒
     Ping(f64),
@@ -305,4 +306,361 @@ pub struct TaskEventResponse {
     pub error_message: Option<String>,
     /// 任务事件结果，成功时填写
     pub task_event_result: Option<TaskEventResult>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_event_type_task_name() {
+        assert_eq!(TaskEventType::Ping("8.8.8.8".to_owned()).task_name(), "ping");
+        assert_eq!(TaskEventType::TcpPing("8.8.8.8".to_owned()).task_name(), "tcp_ping");
+        assert_eq!(TaskEventType::HttpPing("https://example.com".parse().unwrap()).task_name(), "http_ping");
+        assert_eq!(TaskEventType::WebShell(WebShellTask {
+            url: "ws://localhost".parse().unwrap(),
+            terminal_id: uuid::Uuid::nil(),
+        }).task_name(), "web_shell");
+        assert_eq!(TaskEventType::Execute(ExecuteTask {
+            cmd: "ls".to_owned(),
+            args: vec![],
+        }).task_name(), "execute");
+        assert_eq!(TaskEventType::HttpRequest(HttpRequestTask {
+            url: "https://example.com".parse().unwrap(),
+            method: "GET".to_owned(),
+            headers: BTreeMap::new(),
+            body: None,
+            body_base64: None,
+            ip: None,
+        }).task_name(), "http_request");
+        assert_eq!(TaskEventType::Dns(DnsTask {
+            domain: "example.com".to_owned(),
+            record_types: vec![DnsRecordType::A],
+            dns_server: None,
+        }).task_name(), "dns");
+        assert_eq!(TaskEventType::ReadConfig.task_name(), "read_config");
+        assert_eq!(TaskEventType::EditConfig("content".to_owned()).task_name(), "edit_config");
+        assert_eq!(TaskEventType::Ip.task_name(), "ip");
+        assert_eq!(TaskEventType::Version.task_name(), "version");
+        assert_eq!(TaskEventType::SelfUpdate("v1.0".to_owned()).task_name(), "self_update");
+    }
+
+    #[test]
+    fn task_event_type_is_ping_task() {
+        assert!(TaskEventType::Ping("8.8.8.8".to_owned()).is_ping_task());
+        assert!(TaskEventType::TcpPing("8.8.8.8".to_owned()).is_ping_task());
+        assert!(TaskEventType::HttpPing("https://example.com".parse().unwrap()).is_ping_task());
+        assert!(!TaskEventType::Ip.is_ping_task());
+        assert!(!TaskEventType::ReadConfig.is_ping_task());
+        assert!(!TaskEventType::Execute(ExecuteTask {
+            cmd: "ls".to_owned(),
+            args: vec![],
+        }).is_ping_task());
+    }
+
+    #[test]
+    fn task_event_type_permission_field() {
+        assert_eq!(TaskEventType::Ping("8.8.8.8".to_owned()).permission_field(), "allow_icmp_ping");
+        assert_eq!(TaskEventType::TcpPing("8.8.8.8".to_owned()).permission_field(), "allow_tcp_ping");
+        assert_eq!(TaskEventType::HttpPing("https://example.com".parse().unwrap()).permission_field(), "allow_http_ping");
+        assert_eq!(TaskEventType::WebShell(WebShellTask {
+            url: "ws://localhost".parse().unwrap(),
+            terminal_id: uuid::Uuid::nil(),
+        }).permission_field(), "allow_web_shell");
+        assert_eq!(TaskEventType::Execute(ExecuteTask {
+            cmd: "ls".to_owned(),
+            args: vec![],
+        }).permission_field(), "allow_execute");
+        assert_eq!(TaskEventType::HttpRequest(HttpRequestTask {
+            url: "https://example.com".parse().unwrap(),
+            method: "GET".to_owned(),
+            headers: BTreeMap::new(),
+            body: None,
+            body_base64: None,
+            ip: None,
+        }).permission_field(), "allow_http_request");
+        assert_eq!(TaskEventType::Dns(DnsTask {
+            domain: "example.com".to_owned(),
+            record_types: vec![],
+            dns_server: None,
+        }).permission_field(), "allow_dns");
+        assert_eq!(TaskEventType::ReadConfig.permission_field(), "allow_read_config");
+        assert_eq!(TaskEventType::EditConfig("".to_owned()).permission_field(), "allow_edit_config");
+        assert_eq!(TaskEventType::Ip.permission_field(), "allow_ip");
+        assert_eq!(TaskEventType::Version.permission_field(), "allow_version");
+        assert_eq!(TaskEventType::SelfUpdate("".to_owned()).permission_field(), "allow_self_update");
+    }
+
+    #[test]
+    fn task_event_type_result_from_duration_ping() {
+        let task = TaskEventType::Ping("8.8.8.8".to_owned());
+        let result = task.result_from_duration(Duration::from_millis(50));
+        assert!(result.is_some());
+        let TaskEventResult::Ping(ms) = result.unwrap() else {
+            panic!("expected Ping result");
+        };
+        assert!((ms - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn task_event_type_result_from_duration_tcp_ping() {
+        let task = TaskEventType::TcpPing("8.8.8.8".to_owned());
+        let result = task.result_from_duration(Duration::from_millis(30));
+        assert!(result.is_some());
+        let TaskEventResult::TcpPing(ms) = result.unwrap() else {
+            panic!("expected TcpPing result");
+        };
+        assert!((ms - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn task_event_type_result_from_duration_http_ping() {
+        let task = TaskEventType::HttpPing("https://example.com".parse().unwrap());
+        let result = task.result_from_duration(Duration::from_millis(100));
+        assert!(result.is_some());
+        let TaskEventResult::HttpPing(ms) = result.unwrap() else {
+            panic!("expected HttpPing result");
+        };
+        assert!((ms - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn task_event_type_result_from_duration_non_ping_returns_none() {
+        assert!(TaskEventType::Ip.result_from_duration(Duration::from_millis(10)).is_none());
+        assert!(TaskEventType::ReadConfig.result_from_duration(Duration::from_millis(10)).is_none());
+        assert!(TaskEventType::Dns(DnsTask {
+            domain: "example.com".to_owned(),
+            record_types: vec![],
+            dns_server: None,
+        }).result_from_duration(Duration::from_millis(10)).is_none());
+    }
+
+    #[test]
+    fn task_event_result_task_name() {
+        assert_eq!(TaskEventResult::Ping(50.0).task_name(), "ping");
+        assert_eq!(TaskEventResult::TcpPing(30.0).task_name(), "tcp_ping");
+        assert_eq!(TaskEventResult::HttpPing(100.0).task_name(), "http_ping");
+        assert_eq!(TaskEventResult::WebShell(true).task_name(), "web_shell");
+        assert_eq!(TaskEventResult::Execute("output".to_owned()).task_name(), "execute");
+        assert_eq!(TaskEventResult::ReadConfig("config".to_owned()).task_name(), "read_config");
+        assert_eq!(TaskEventResult::EditConfig(true).task_name(), "edit_config");
+        assert_eq!(TaskEventResult::Ip(None, None).task_name(), "ip");
+        assert_eq!(TaskEventResult::SelfUpdate(true).task_name(), "self_update");
+    }
+
+    #[test]
+    fn task_event_result_from_duration_static() {
+        let result = TaskEventResult::from_duration(
+            &TaskEventType::Ping("8.8.8.8".to_owned()),
+            Duration::from_millis(50),
+        );
+        assert!(result.is_some());
+        let result = TaskEventResult::from_duration(
+            &TaskEventType::Ip,
+            Duration::from_millis(50),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn task_event_serde_roundtrip() {
+        let event = TaskEvent {
+            task_id: 42,
+            task_token: "token123".to_owned(),
+            task_event_type: TaskEventType::Ping("8.8.8.8".to_owned()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: TaskEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+    }
+
+    #[test]
+    fn task_event_response_serde_roundtrip() {
+        let response = TaskEventResponse {
+            task_id: 42,
+            agent_uuid: uuid::Uuid::nil(),
+            task_token: "token123".to_owned(),
+            timestamp: 1_700_000_000,
+            success: true,
+            error_message: None,
+            task_event_result: Some(TaskEventResult::Ping(50.0)),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: TaskEventResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(response, parsed);
+    }
+
+    #[test]
+    fn dns_record_type_serde_roundtrip() {
+        let types = [
+            DnsRecordType::A,
+            DnsRecordType::Aaaa,
+            DnsRecordType::Cname,
+            DnsRecordType::Mx,
+            DnsRecordType::Txt,
+            DnsRecordType::Ns,
+            DnsRecordType::Srv,
+            DnsRecordType::Ptr,
+            DnsRecordType::Soa,
+            DnsRecordType::Caa,
+        ];
+        for t in types {
+            let json = serde_json::to_string(&t).unwrap();
+            let parsed: DnsRecordType = serde_json::from_str(&json).unwrap();
+            assert_eq!(t, parsed);
+        }
+    }
+
+    #[test]
+    fn dns_record_type_snake_case_rename() {
+        let json = serde_json::to_string(&DnsRecordType::Aaaa).unwrap();
+        assert!(json.contains("aaaa"));
+        let json = serde_json::to_string(&DnsRecordType::Cname).unwrap();
+        assert!(json.contains("cname"));
+    }
+
+    #[test]
+    fn dns_record_result_serde_roundtrip() {
+        let record = DnsRecordResult {
+            record_type: DnsRecordType::A,
+            time: 15.5,
+            data: "1.2.3.4".to_owned(),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let parsed: DnsRecordResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, parsed);
+    }
+
+    #[test]
+    fn http_request_task_result_serde_roundtrip() {
+        let result = HttpRequestTaskResult {
+            status: 200,
+            headers: vec![],
+            body: Some("ok".to_owned()),
+            body_base64: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: HttpRequestTaskResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, parsed);
+    }
+
+    #[test]
+    fn execute_task_serde_roundtrip() {
+        let task = ExecuteTask {
+            cmd: "echo".to_owned(),
+            args: vec!["hello".to_owned(), "world".to_owned()],
+        };
+        let json = serde_json::to_string(&task).unwrap();
+        let parsed: ExecuteTask = serde_json::from_str(&json).unwrap();
+        assert_eq!(task, parsed);
+    }
+
+    #[test]
+    fn http_request_task_serde_roundtrip() {
+        let task = HttpRequestTask {
+            url: "https://example.com/api".parse().unwrap(),
+            method: "POST".to_owned(),
+            headers: BTreeMap::new(),
+            body: Some("payload".to_owned()),
+            body_base64: None,
+            ip: None,
+        };
+        let json = serde_json::to_string(&task).unwrap();
+        let parsed: HttpRequestTask = serde_json::from_str(&json).unwrap();
+        assert_eq!(task, parsed);
+    }
+
+    #[test]
+    fn web_shell_task_serde_roundtrip() {
+        let task = WebShellTask {
+            url: "ws://localhost:3000/nodeget/rpc".parse().unwrap(),
+            terminal_id: uuid::Uuid::new_v4(),
+        };
+        let json = serde_json::to_string(&task).unwrap();
+        let parsed: WebShellTask = serde_json::from_str(&json).unwrap();
+        assert_eq!(task, parsed);
+    }
+
+    #[test]
+    fn dns_task_serde_roundtrip() {
+        let task = DnsTask {
+            domain: "example.com".to_owned(),
+            record_types: vec![DnsRecordType::A, DnsRecordType::Aaaa],
+            dns_server: Some("8.8.8.8:53".to_owned()),
+        };
+        let json = serde_json::to_string(&task).unwrap();
+        let parsed: DnsTask = serde_json::from_str(&json).unwrap();
+        assert_eq!(task, parsed);
+    }
+
+    #[test]
+    fn task_event_type_variants_serde_roundtrip() {
+        let variants: Vec<TaskEventType> = vec![
+            TaskEventType::Ping("8.8.8.8".to_owned()),
+            TaskEventType::TcpPing("8.8.8.8".to_owned()),
+            TaskEventType::HttpPing("https://example.com".parse().unwrap()),
+            TaskEventType::WebShell(WebShellTask {
+                url: "ws://localhost".parse().unwrap(),
+                terminal_id: uuid::Uuid::nil(),
+            }),
+            TaskEventType::Execute(ExecuteTask {
+                cmd: "ls".to_owned(),
+                args: vec!["-la".to_owned()],
+            }),
+            TaskEventType::HttpRequest(HttpRequestTask {
+                url: "https://example.com".parse().unwrap(),
+                method: "GET".to_owned(),
+                headers: BTreeMap::new(),
+                body: None,
+                body_base64: None,
+                ip: None,
+            }),
+            TaskEventType::Dns(DnsTask {
+                domain: "example.com".to_owned(),
+                record_types: vec![DnsRecordType::A],
+                dns_server: None,
+            }),
+            TaskEventType::ReadConfig,
+            TaskEventType::EditConfig("new config".to_owned()),
+            TaskEventType::Ip,
+            TaskEventType::Version,
+            TaskEventType::SelfUpdate("v2.0".to_owned()),
+        ];
+        for variant in variants {
+            let json = serde_json::to_string(&variant).unwrap();
+            let parsed: TaskEventType = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, parsed);
+        }
+    }
+
+    #[test]
+    fn task_event_result_variants_serde_roundtrip() {
+        let variants: Vec<TaskEventResult> = vec![
+            TaskEventResult::Ping(50.0),
+            TaskEventResult::TcpPing(30.0),
+            TaskEventResult::HttpPing(100.0),
+            TaskEventResult::WebShell(true),
+            TaskEventResult::Execute("output".to_owned()),
+            TaskEventResult::HttpRequest(HttpRequestTaskResult {
+                status: 200,
+                headers: vec![],
+                body: Some("ok".to_owned()),
+                body_base64: None,
+            }),
+            TaskEventResult::Dns(vec![DnsRecordResult {
+                record_type: DnsRecordType::A,
+                time: 15.5,
+                data: "1.2.3.4".to_owned(),
+            }]),
+            TaskEventResult::ReadConfig("config content".to_owned()),
+            TaskEventResult::EditConfig(true),
+            TaskEventResult::Ip(Some(Ipv4Addr::new(127, 0, 0, 1)), None),
+            TaskEventResult::SelfUpdate(true),
+        ];
+        for variant in variants {
+            let json = serde_json::to_string(&variant).unwrap();
+            let parsed: TaskEventResult = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, parsed);
+        }
+    }
 }

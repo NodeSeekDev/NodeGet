@@ -20,6 +20,10 @@ pub fn init(handle: tokio::runtime::Handle) {
 /// JS Worker 运行在专用的短生命周期 / current-thread Tokio Runtime 中，
 /// 涉及服务器服务或数据库连接池的调用必须在长生命周期的服务器 Runtime 上执行，
 /// 否则 runtime-bound 的 IO 资源可能被回收到错误的 executor。
+///
+/// # Errors
+///
+/// 若服务器 Runtime Handle 未初始化，或 spawn 出的任务执行失败，返回错误字符串。
 pub async fn spawn_on_server_runtime<F, T>(future: F) -> Result<T, String>
 where
     F: Future<Output = T> + Send + 'static,
@@ -41,6 +45,7 @@ where
 
 /// Drop 时自动 abort 尚未完成的 JoinHandle，防止泄露后台 task。
 struct AbortOnDrop<T> {
+    /// JoinHandle，drop 时自动 abort
     handle: tokio::task::JoinHandle<T>,
 }
 

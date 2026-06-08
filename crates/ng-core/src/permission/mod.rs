@@ -6,4 +6,6 @@
 
 pub mod create;
 pub mod data_structure;
+#[cfg(feature = "for-server")]
+pub mod permission_checker;
 pub mod token_auth;

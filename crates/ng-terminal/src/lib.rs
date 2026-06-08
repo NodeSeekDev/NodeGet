@@ -1,7 +1,7 @@
 //! ng-terminal: WebSocket terminal relay for NodeGet.
 //!
 //! ## `server` feature
-//! - [`auth`] — terminal permission checking via [`TokenPermissionChecker`] trait
+//! - [`auth`] — terminal permission checking via unified `PermissionChecker`
 //! - [`check_agent`] — verify agent is connected and authorized for terminal
 //! - [`router()`] — axum Router for WebSocket terminal endpoint
 //! - [`TerminalState`] — shared state for terminal sessions
@@ -16,9 +16,7 @@ mod check_agent;
 mod terminal;
 
 #[cfg(feature = "server")]
-pub use auth::{
-    TokenPermissionChecker, check_terminal_connect_permission, get_token_checker, set_token_checker,
-};
+pub use auth::check_terminal_connect_permission;
 #[cfg(feature = "server")]
 pub use check_agent::check_agent;
 #[cfg(feature = "server")]

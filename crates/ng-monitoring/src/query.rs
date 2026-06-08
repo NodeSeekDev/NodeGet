@@ -106,28 +106,51 @@ pub struct DynamicResponseItem {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum DynamicSummaryQueryField {
+    /// CPU 使用率（百分比）
     CpuUsage,
+    /// GPU 使用率（百分比）
     GpuUsage,
+    /// 已用交换空间（字节）
     UsedSwap,
+    /// 总交换空间（字节）
     TotalSwap,
+    /// 已用内存（字节）
     UsedMemory,
+    /// 总内存（字节）
     TotalMemory,
+    /// 可用内存（字节）
     AvailableMemory,
+    /// 1 分钟平均负载
     LoadOne,
+    /// 5 分钟平均负载
     LoadFive,
+    /// 15 分钟平均负载
     LoadFifteen,
+    /// 运行时间（秒）
     Uptime,
+    /// 启动时间（Unix 时间戳）
     BootTime,
+    /// 进程数
     ProcessCount,
+    /// 总磁盘空间（字节）
     TotalSpace,
+    /// 可用磁盘空间（字节）
     AvailableSpace,
+    /// 磁盘读取速度（字节/秒）
     ReadSpeed,
+    /// 磁盘写入速度（字节/秒）
     WriteSpeed,
+    /// TCP 连接数
     TcpConnections,
+    /// UDP 连接数
     UdpConnections,
+    /// 总接收字节数
     TotalReceived,
+    /// 总发送字节数
     TotalTransmitted,
+    /// 发送速度（字节/秒）
     TransmitSpeed,
+    /// 接收速度（字节/秒）
     ReceiveSpeed,
 }
 
@@ -319,7 +342,11 @@ pub fn apply_descaling_to_json_object(obj: &mut serde_json::Map<String, serde_js
 
 #[cfg(test)]
 mod tests {
-    use super::{DynamicSummaryQueryField, SCALED_SUMMARY_COLUMNS, apply_descaling_to_json_object};
+    use super::{
+        DynamicDataQuery, DynamicDataQueryField, DynamicSummaryQuery, DynamicSummaryQueryField,
+        QueryCondition, SCALED_SUMMARY_COLUMNS, StaticDataQuery, StaticDataQueryField,
+        apply_descaling_to_json_object,
+    };
     use serde_json::{Map, Number, Value};
 
     #[test]
@@ -429,5 +456,116 @@ mod tests {
         apply_descaling_to_json_object(&mut obj);
 
         assert_eq!(obj["cpu_usage"], Value::Null);
+    }
+
+    // ── Additional tests ────────────────────────────────────────────────
+
+    #[test]
+    fn query_condition_uuid_serde() {
+        let cond = QueryCondition::Uuid(uuid::Uuid::nil());
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: QueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn query_condition_timestamp_from_to() {
+        let cond = QueryCondition::TimestampFromTo(1000, 2000);
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: QueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn query_condition_limit() {
+        let cond = QueryCondition::Limit(500);
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: QueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn query_condition_last() {
+        let cond = QueryCondition::Last;
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: QueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn static_data_query_serde() {
+        let query = StaticDataQuery {
+            fields: vec![StaticDataQueryField::Cpu],
+            condition: vec![QueryCondition::Limit(100)],
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let parsed: StaticDataQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, parsed);
+    }
+
+    #[test]
+    fn dynamic_data_query_serde() {
+        let query = DynamicDataQuery {
+            fields: vec![DynamicDataQueryField::Cpu],
+            condition: vec![
+                QueryCondition::Uuid(uuid::Uuid::nil()),
+                QueryCondition::TimestampFromTo(0, 9999),
+            ],
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let parsed: DynamicDataQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, parsed);
+    }
+
+    #[test]
+    fn dynamic_summary_query_serde() {
+        let query = DynamicSummaryQuery {
+            fields: vec![
+                DynamicSummaryQueryField::CpuUsage,
+                DynamicSummaryQueryField::TotalMemory,
+            ],
+            condition: vec![QueryCondition::Last],
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let parsed: DynamicSummaryQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, parsed);
+    }
+
+    #[test]
+    fn dynamic_summary_query_field_column_name_matches_json_key() {
+        let fields = [
+            DynamicSummaryQueryField::CpuUsage,
+            DynamicSummaryQueryField::GpuUsage,
+            DynamicSummaryQueryField::UsedSwap,
+            DynamicSummaryQueryField::TotalSpace,
+            DynamicSummaryQueryField::ReceiveSpeed,
+        ];
+        for field in fields {
+            assert_eq!(field.column_name(), field.json_key());
+        }
+    }
+
+    #[test]
+    fn descaling_with_unsigned_integer() {
+        let mut obj = Map::new();
+        // Use a u64 value that exceeds i64 range but is valid u64
+        obj.insert("used_memory".to_owned(), Value::Number(1024i64.into()));
+        apply_descaling_to_json_object(&mut obj);
+        // used_memory is NOT a scaled column, should remain unchanged
+        assert_eq!(obj["used_memory"], Value::Number(1024i64.into()));
+    }
+
+    #[test]
+    fn descaling_with_float_value_in_scaled_column() {
+        let mut obj = Map::new();
+        obj.insert(
+            "cpu_usage".to_owned(),
+            Value::Number(Number::from_f64(534.0).unwrap()),
+        );
+        apply_descaling_to_json_object(&mut obj);
+        assert_eq!(
+            obj["cpu_usage"],
+            Value::Number(Number::from_f64(53.4).unwrap())
+        );
     }
 }

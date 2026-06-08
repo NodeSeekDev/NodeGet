@@ -23,11 +23,20 @@ mod rpc_nodeget;
 mod rpc_timing;
 mod subcommands;
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 /// 服务器主函数
 ///
 /// 构建多线程 Tokio 运行时，然后在异步上下文中执行 [`async_main`]。
 /// - `global_queue_interval(3)`：多线程调度器全局队列轮询间隔，平衡延迟与吞吐
 fn main() {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+    #[cfg(feature = "dhat-heap")]
+    println!("Dhat heap profiler enabled");
+
     println!("Starting nodeget-server");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -116,6 +125,8 @@ async fn async_main() {
                     );
                     continue;
                 }
+                ng_static::reload_static_path();
+                ng_static::clear_dav_handler_cache();
                 config = reloaded_config;
                 info!(target: "server", "Config hot reload applied");
             }

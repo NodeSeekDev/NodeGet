@@ -286,3 +286,386 @@ pub enum Db {
     /// 执行原生 SQL
     ExecSql,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    // ── Scope ───────────────────────────────────────────────────────
+
+    #[test]
+    fn scope_global() {
+        let s = Scope::Global;
+        assert_eq!(format!("{s:?}"), "Global");
+        assert_eq!(s, Scope::Global);
+    }
+
+    #[test]
+    fn scope_agent_uuid() {
+        let id = uuid::Uuid::new_v4();
+        let s = Scope::AgentUuid(id);
+        assert_eq!(s, Scope::AgentUuid(id));
+        assert_ne!(s, Scope::Global);
+    }
+
+    #[test]
+    fn scope_kv_namespace() {
+        let s = Scope::KvNamespace("ns".into());
+        assert_eq!(s, Scope::KvNamespace("ns".into()));
+    }
+
+    #[test]
+    fn scope_js_worker() {
+        let s = Scope::JsWorker("w".into());
+        assert_eq!(s, Scope::JsWorker("w".into()));
+    }
+
+    #[test]
+    fn scope_static_bucket() {
+        let s = Scope::StaticBucket("b".into());
+        assert_eq!(s, Scope::StaticBucket("b".into()));
+    }
+
+    #[test]
+    fn scope_db() {
+        let s = Scope::Db("mydb".into());
+        assert_eq!(s, Scope::Db("mydb".into()));
+    }
+
+    #[test]
+    fn scope_clone() {
+        let s = Scope::KvNamespace("ns".into());
+        assert_eq!(s.clone(), s);
+    }
+
+    #[test]
+    fn scope_hash_eq() {
+        let mut set = HashSet::new();
+        set.insert(Scope::Global);
+        assert!(set.contains(&Scope::Global));
+        assert!(!set.contains(&Scope::KvNamespace("x".into())));
+    }
+
+    #[test]
+    fn scope_serde_round_trip() {
+        let s = Scope::AgentUuid(uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap());
+        let json = serde_json::to_string(&s).unwrap();
+        let de: Scope = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, de);
+    }
+
+    // ── Permission ──────────────────────────────────────────────────
+
+    #[test]
+    fn permission_static_monitoring_read() {
+        let p = Permission::StaticMonitoring(StaticMonitoring::Read(
+            crate::monitoring::query::StaticDataQueryField::Cpu,
+        ));
+        assert_eq!(p.clone(), p);
+    }
+
+    #[test]
+    fn permission_static_monitoring_write() {
+        let p = Permission::StaticMonitoring(StaticMonitoring::Write);
+        assert_eq!(p, Permission::StaticMonitoring(StaticMonitoring::Write));
+    }
+
+    #[test]
+    fn permission_static_monitoring_delete() {
+        let p = Permission::StaticMonitoring(StaticMonitoring::Delete);
+        assert!(format!("{p:?}").contains("Delete"));
+    }
+
+    #[test]
+    fn permission_dynamic_monitoring() {
+        let p = Permission::DynamicMonitoring(DynamicMonitoring::Read(
+            crate::monitoring::query::DynamicDataQueryField::Ram,
+        ));
+        assert_eq!(p.clone(), p);
+    }
+
+    #[test]
+    fn permission_dynamic_monitoring_write_delete() {
+        assert_eq!(Permission::DynamicMonitoring(DynamicMonitoring::Write), Permission::DynamicMonitoring(DynamicMonitoring::Write));
+        assert_eq!(Permission::DynamicMonitoring(DynamicMonitoring::Delete), Permission::DynamicMonitoring(DynamicMonitoring::Delete));
+    }
+
+    #[test]
+    fn permission_dynamic_monitoring_summary() {
+        let p = Permission::DynamicMonitoringSummary(DynamicMonitoringSummary::Read);
+        assert_eq!(p.clone(), p);
+        assert_eq!(Permission::DynamicMonitoringSummary(DynamicMonitoringSummary::Write), Permission::DynamicMonitoringSummary(DynamicMonitoringSummary::Write));
+        assert_eq!(Permission::DynamicMonitoringSummary(DynamicMonitoringSummary::Delete), Permission::DynamicMonitoringSummary(DynamicMonitoringSummary::Delete));
+    }
+
+    #[test]
+    fn permission_task_variants() {
+        assert_eq!(Permission::Task(Task::Create("t".into())), Permission::Task(Task::Create("t".into())));
+        assert_eq!(Permission::Task(Task::Read("t".into())), Permission::Task(Task::Read("t".into())));
+        assert_eq!(Permission::Task(Task::Write("t".into())), Permission::Task(Task::Write("t".into())));
+        assert_eq!(Permission::Task(Task::Delete("t".into())), Permission::Task(Task::Delete("t".into())));
+        assert_eq!(Permission::Task(Task::Listen), Permission::Task(Task::Listen));
+    }
+
+    #[test]
+    fn permission_crontab() {
+        assert_eq!(Permission::Crontab(Crontab::Read), Permission::Crontab(Crontab::Read));
+        assert_eq!(Permission::Crontab(Crontab::Write), Permission::Crontab(Crontab::Write));
+        assert_eq!(Permission::Crontab(Crontab::Delete), Permission::Crontab(Crontab::Delete));
+    }
+
+    #[test]
+    fn permission_crontab_result() {
+        assert_eq!(Permission::CrontabResult(CrontabResult::Read("c".into())), Permission::CrontabResult(CrontabResult::Read("c".into())));
+        assert_eq!(Permission::CrontabResult(CrontabResult::Delete("c".into())), Permission::CrontabResult(CrontabResult::Delete("c".into())));
+    }
+
+    #[test]
+    fn permission_kv() {
+        assert_eq!(Permission::Kv(Kv::ListAllNamespace), Permission::Kv(Kv::ListAllNamespace));
+        assert_eq!(Permission::Kv(Kv::ListAllKeys), Permission::Kv(Kv::ListAllKeys));
+        assert_eq!(Permission::Kv(Kv::Read("ns".into())), Permission::Kv(Kv::Read("ns".into())));
+        assert_eq!(Permission::Kv(Kv::Write("ns".into())), Permission::Kv(Kv::Write("ns".into())));
+        assert_eq!(Permission::Kv(Kv::Delete("ns".into())), Permission::Kv(Kv::Delete("ns".into())));
+    }
+
+    #[test]
+    fn permission_terminal() {
+        assert_eq!(Permission::Terminal(Terminal::Connect), Permission::Terminal(Terminal::Connect));
+    }
+
+    #[test]
+    fn permission_nodeget() {
+        assert_eq!(Permission::NodeGet(NodeGet::GetRtPool), Permission::NodeGet(NodeGet::GetRtPool));
+        assert_eq!(Permission::NodeGet(NodeGet::ExecSql), Permission::NodeGet(NodeGet::ExecSql));
+    }
+
+    #[test]
+    fn permission_nodeget_deprecated_variants() {
+        // Deprecated variants still construct correctly
+        #[expect(deprecated)]
+        let _p1 = Permission::NodeGet(NodeGet::ListAllAgentUuid);
+        #[expect(deprecated)]
+        let _p2 = Permission::NodeGet(NodeGet::DeleteAgentUuid);
+    }
+
+    #[test]
+    fn permission_monitoring_uuid() {
+        assert_eq!(Permission::MonitoringUuid(MonitoringUuid::List), Permission::MonitoringUuid(MonitoringUuid::List));
+        assert_eq!(Permission::MonitoringUuid(MonitoringUuid::Delete), Permission::MonitoringUuid(MonitoringUuid::Delete));
+    }
+
+    #[test]
+    fn permission_js_worker() {
+        assert_eq!(Permission::JsWorker(JsWorker::ListAllJsWorker), Permission::JsWorker(JsWorker::ListAllJsWorker));
+        assert_eq!(Permission::JsWorker(JsWorker::Create), Permission::JsWorker(JsWorker::Create));
+        assert_eq!(Permission::JsWorker(JsWorker::Read), Permission::JsWorker(JsWorker::Read));
+        assert_eq!(Permission::JsWorker(JsWorker::Write), Permission::JsWorker(JsWorker::Write));
+        assert_eq!(Permission::JsWorker(JsWorker::Delete), Permission::JsWorker(JsWorker::Delete));
+        assert_eq!(Permission::JsWorker(JsWorker::RunDefinedJsWorker), Permission::JsWorker(JsWorker::RunDefinedJsWorker));
+        assert_eq!(Permission::JsWorker(JsWorker::RunRawJsWorker), Permission::JsWorker(JsWorker::RunRawJsWorker));
+    }
+
+    #[test]
+    fn permission_js_result() {
+        assert_eq!(Permission::JsResult(JsResult::Read("w".into())), Permission::JsResult(JsResult::Read("w".into())));
+        assert_eq!(Permission::JsResult(JsResult::Delete("w".into())), Permission::JsResult(JsResult::Delete("w".into())));
+    }
+
+    #[test]
+    fn permission_static_bucket() {
+        assert_eq!(Permission::StaticBucket(StaticBucket::Read), Permission::StaticBucket(StaticBucket::Read));
+        assert_eq!(Permission::StaticBucket(StaticBucket::Write), Permission::StaticBucket(StaticBucket::Write));
+        assert_eq!(Permission::StaticBucket(StaticBucket::Delete), Permission::StaticBucket(StaticBucket::Delete));
+    }
+
+    #[test]
+    fn permission_static_bucket_file() {
+        assert_eq!(Permission::StaticBucketFile(StaticBucketFile::Read), Permission::StaticBucketFile(StaticBucketFile::Read));
+        assert_eq!(Permission::StaticBucketFile(StaticBucketFile::Write), Permission::StaticBucketFile(StaticBucketFile::Write));
+        assert_eq!(Permission::StaticBucketFile(StaticBucketFile::Delete), Permission::StaticBucketFile(StaticBucketFile::Delete));
+        assert_eq!(Permission::StaticBucketFile(StaticBucketFile::List), Permission::StaticBucketFile(StaticBucketFile::List));
+    }
+
+    #[test]
+    fn permission_db() {
+        assert_eq!(Permission::Db(Db::List), Permission::Db(Db::List));
+        assert_eq!(Permission::Db(Db::Read), Permission::Db(Db::Read));
+        assert_eq!(Permission::Db(Db::Create), Permission::Db(Db::Create));
+        assert_eq!(Permission::Db(Db::Update), Permission::Db(Db::Update));
+        assert_eq!(Permission::Db(Db::Delete), Permission::Db(Db::Delete));
+        assert_eq!(Permission::Db(Db::ExecSql), Permission::Db(Db::ExecSql));
+    }
+
+    #[test]
+    fn permission_serde_round_trip() {
+        let p = Permission::Kv(Kv::Read("myns".into()));
+        let json = serde_json::to_string(&p).unwrap();
+        let de: Permission = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, de);
+    }
+
+    #[test]
+    fn permission_different_variants_not_equal() {
+        let a = Permission::Crontab(Crontab::Read);
+        let b = Permission::Crontab(Crontab::Write);
+        assert_ne!(a, b);
+    }
+
+    // ── Limit ───────────────────────────────────────────────────────
+
+    #[test]
+    fn limit_construction_and_fields() {
+        let l = Limit {
+            scopes: vec![Scope::Global, Scope::KvNamespace("ns".into())],
+            permissions: vec![Permission::Kv(Kv::Read("ns".into()))],
+        };
+        assert_eq!(l.scopes.len(), 2);
+        assert_eq!(l.permissions.len(), 1);
+    }
+
+    #[test]
+    fn limit_clone_eq() {
+        let l = Limit {
+            scopes: vec![Scope::Global],
+            permissions: vec![Permission::Terminal(Terminal::Connect)],
+        };
+        assert_eq!(l.clone(), l);
+    }
+
+    #[test]
+    fn limit_empty_scopes_and_permissions() {
+        let l = Limit {
+            scopes: vec![],
+            permissions: vec![],
+        };
+        assert!(l.scopes.is_empty());
+        assert!(l.permissions.is_empty());
+    }
+
+    #[test]
+    fn limit_serde_round_trip() {
+        let l = Limit {
+            scopes: vec![Scope::Db("mydb".into())],
+            permissions: vec![Permission::Db(Db::ExecSql)],
+        };
+        let json = serde_json::to_string(&l).unwrap();
+        let de: Limit = serde_json::from_str(&json).unwrap();
+        assert_eq!(l, de);
+    }
+
+    // ── Token ───────────────────────────────────────────────────────
+
+    #[test]
+    fn token_construction_and_fields() {
+        let t = Token {
+            version: 1,
+            token_key: "abc".into(),
+            timestamp_from: Some(1000),
+            timestamp_to: Some(2000),
+            token_limit: vec![Limit {
+                scopes: vec![Scope::Global],
+                permissions: vec![Permission::NodeGet(NodeGet::ExecSql)],
+            }],
+            username: Some("admin".into()),
+        };
+        assert_eq!(t.version, 1);
+        assert_eq!(t.token_key, "abc");
+        assert_eq!(t.timestamp_from, Some(1000));
+        assert_eq!(t.timestamp_to, Some(2000));
+        assert_eq!(t.token_limit.len(), 1);
+        assert_eq!(t.username, Some("admin".into()));
+    }
+
+    #[test]
+    fn token_optional_fields_none() {
+        let t = Token {
+            version: 2,
+            token_key: "k".into(),
+            timestamp_from: None,
+            timestamp_to: None,
+            token_limit: vec![],
+            username: None,
+        };
+        assert!(t.timestamp_from.is_none());
+        assert!(t.timestamp_to.is_none());
+        assert!(t.token_limit.is_empty());
+        assert!(t.username.is_none());
+    }
+
+    #[test]
+    fn token_eq() {
+        let t1 = Token {
+            version: 1,
+            token_key: "k".into(),
+            timestamp_from: None,
+            timestamp_to: None,
+            token_limit: vec![],
+            username: None,
+        };
+        let t2 = Token {
+            version: 1,
+            token_key: "k".into(),
+            timestamp_from: None,
+            timestamp_to: None,
+            token_limit: vec![],
+            username: None,
+        };
+        assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn token_different_not_eq() {
+        let t1 = Token {
+            version: 1,
+            token_key: "k1".into(),
+            timestamp_from: None,
+            timestamp_to: None,
+            token_limit: vec![],
+            username: None,
+        };
+        let t2 = Token {
+            version: 2,
+            token_key: "k2".into(),
+            timestamp_from: None,
+            timestamp_to: None,
+            token_limit: vec![],
+            username: None,
+        };
+        assert_ne!(t1, t2);
+    }
+
+    #[test]
+    fn token_serde_round_trip() {
+        let t = Token {
+            version: 3,
+            token_key: "serde_key".into(),
+            timestamp_from: Some(100),
+            timestamp_to: Some(200),
+            token_limit: vec![Limit {
+                scopes: vec![Scope::JsWorker("w".into())],
+                permissions: vec![Permission::JsWorker(JsWorker::Read)],
+            }],
+            username: Some("user".into()),
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let de: Token = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, de);
+    }
+
+    #[test]
+    fn token_debug() {
+        let t = Token {
+            version: 1,
+            token_key: "k".into(),
+            timestamp_from: None,
+            timestamp_to: None,
+            token_limit: vec![],
+            username: None,
+        };
+        let debug = format!("{t:?}");
+        assert!(debug.contains("Token"));
+        assert!(debug.contains("token_key"));
+    }
+}

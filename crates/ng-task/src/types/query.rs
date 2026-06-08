@@ -63,3 +63,125 @@ pub struct TaskResponseItem {
     /// 错误消息，成功时为 None
     pub error_message: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_query_condition_task_id_serde() {
+        let cond = TaskQueryCondition::TaskId(42);
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: TaskQueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn task_query_condition_uuid_serde() {
+        let cond = TaskQueryCondition::Uuid(uuid::Uuid::nil());
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: TaskQueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn task_query_condition_timestamp_range_serde() {
+        let cond = TaskQueryCondition::TimestampFromTo(1000, 2000);
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: TaskQueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn task_query_condition_timestamp_from_serde() {
+        let cond = TaskQueryCondition::TimestampFrom(1000);
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: TaskQueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn task_query_condition_timestamp_to_serde() {
+        let cond = TaskQueryCondition::TimestampTo(2000);
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: TaskQueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn task_query_condition_status_flags_serde() {
+        for cond in [
+            TaskQueryCondition::IsSuccess,
+            TaskQueryCondition::IsFailure,
+            TaskQueryCondition::IsRunning,
+        ] {
+            let json = serde_json::to_string(&cond).unwrap();
+            let parsed: TaskQueryCondition = serde_json::from_str(&json).unwrap();
+            assert_eq!(cond, parsed);
+        }
+    }
+
+    #[test]
+    fn task_query_condition_type_serde() {
+        let cond = TaskQueryCondition::Type("ping".to_owned());
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: TaskQueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn task_query_condition_cron_source_serde() {
+        let cond = TaskQueryCondition::CronSource("my_cron".to_owned());
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: TaskQueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn task_query_condition_limit_serde() {
+        let cond = TaskQueryCondition::Limit(500);
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: TaskQueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn task_query_condition_last_serde() {
+        let cond = TaskQueryCondition::Last;
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: TaskQueryCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(cond, parsed);
+    }
+
+    #[test]
+    fn task_data_query_serde_roundtrip() {
+        let query = TaskDataQuery {
+            condition: vec![
+                TaskQueryCondition::Uuid(uuid::Uuid::nil()),
+                TaskQueryCondition::TimestampFromTo(0, 9999),
+                TaskQueryCondition::Limit(100),
+            ],
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let parsed: TaskDataQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query, parsed);
+    }
+
+    #[test]
+    fn task_data_query_empty_conditions() {
+        let query = TaskDataQuery {
+            condition: vec![],
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        let parsed: TaskDataQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(query.condition.len(), 0);
+        assert_eq!(parsed.condition.len(), 0);
+    }
+
+    #[test]
+    fn task_query_condition_snake_case_rename() {
+        let cond = TaskQueryCondition::IsSuccess;
+        let json = serde_json::to_string(&cond).unwrap();
+        assert!(json.contains("is_success"));
+    }
+}

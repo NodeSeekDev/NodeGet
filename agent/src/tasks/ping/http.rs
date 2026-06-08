@@ -2,6 +2,7 @@
 //!
 //! 向目标 URL 发送 HTTP GET 请求，测量请求往返耗时。
 
+use log::warn;
 use ng_core::error::NodegetError;
 use reqwest::Client;
 use std::sync::OnceLock;
@@ -39,15 +40,21 @@ pub async fn httping_target(target: url::Url) -> Result<std::time::Duration> {
             Client::builder()
                 .timeout(PING_TIMEOUT)
                 .build()
-                .map_err(|e| NodegetError::Other(format!("Failed to build HTTP ping client: {e}")))
+                .map_err(|e| {
+                    warn!(target: "task", "HTTP Ping 客户端构建失败: error={e}");
+                    NodegetError::Other(format!("Failed to build HTTP ping client: {e}"))
+                })
         })
         .await?;
 
     let start = std::time::Instant::now();
     client
-        .get(target)
+        .get(target.clone())
         .send()
         .await
         .map(|_| start.elapsed())
-        .map_err(|e| NodegetError::Other(format!("Failed to http ping target: {e}")))
+        .map_err(|e| {
+            warn!(target: "task", "HTTP Ping 请求失败: url={target}, error={e}");
+            NodegetError::Other(format!("Failed to http ping target: {e}"))
+        })
 }

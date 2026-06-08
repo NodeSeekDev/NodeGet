@@ -2,6 +2,11 @@
 //!
 //! 批量查询多台设备的静态监控最新值。优先从内存 last-cache 获取，
 //! 缓存未命中的部分通过 UNION ALL 查询数据库，最后合并结果。
+//!
+//! ## 性能优化
+//!
+//! 全字段查询（请求所有 3 个字段）使用 `get_static_last_raw()` 直接获取
+//! 预序列化字符串（`Arc<str>`），跳过 Map 构造、键分配和 Value 克隆。
 
 use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::query::StaticDataQueryField;
@@ -23,8 +28,25 @@ use sea_orm::{
 };
 use serde_json::value::RawValue;
 use std::collections::HashSet;
-use tracing::{debug, error};
+use std::sync::Arc;
+use tracing::{debug, error, warn};
 use uuid::Uuid;
+
+/// 静态监控全部可查询字段，用于判断是否为全字段查询。
+const ALL_STATIC_FIELDS: &[StaticDataQueryField] = &[
+    StaticDataQueryField::Cpu,
+    StaticDataQueryField::System,
+    StaticDataQueryField::Gpu,
+];
+
+/// 查询结果的统一表示，支持零拷贝和序列化两种来源。
+#[derive(Clone)]
+enum StaticResult {
+    /// 预序列化的 JSON 字符串（全字段缓存命中）
+    Raw(Arc<str>),
+    /// 需要序列化的 JSON Value（筛选字段或 DB 结果）
+    Value(serde_json::Value),
+}
 
 /// 批量查询多台设备的静态监控最新值。
 ///
@@ -39,11 +61,13 @@ use uuid::Uuid;
 /// 3. 优先从 `MonitoringLastCache` 获取缓存命中
 /// 4. 缓存未命中的部分构建 UNION ALL 语句查询 DB
 /// 5. 合并缓存与 DB 结果，序列化返回
+#[allow(clippy::too_many_lines)]
 pub async fn static_data_multi_last_query(
     token: String,
     uuids: Vec<Uuid>,
     fields: Vec<StaticDataQueryField>,
 ) -> RpcResult<Box<RawValue>> {
+    let is_all_fields = is_all_static_fields(&fields);
     let process_logic = async {
         debug!(target: "monitoring", uuids_count = uuids.len(), fields_count = fields.len(), "Static multi-last query request received");
 
@@ -83,6 +107,7 @@ pub async fn static_data_multi_last_query(
         };
 
         if !is_allowed {
+            warn!(target: "monitoring", "权限拒绝: 缺少 StaticMonitoring Read 权限");
             return Err(NodegetError::PermissionDenied(
                 "Permission Denied: Insufficient StaticMonitoring Read permissions".to_owned(),
             )
@@ -92,7 +117,7 @@ pub async fn static_data_multi_last_query(
         debug!(target: "monitoring", uuids_count = deduped_uuids.len(), fields_count = fields.len(), "Static multi-last query permission check passed");
 
         let db = AgentRpcImpl::get_db()?;
-        let uuid_cache = MonitoringUuidCache::global();
+        let uuid_cache = MonitoringUuidCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringUuidCache not initialized".to_owned()))?;
 
         // Resolve UUIDs to uuid_ids
         let mut uuid_id_pairs: Vec<(Uuid, i16)> = Vec::with_capacity(deduped_uuids.len());
@@ -106,13 +131,22 @@ pub async fn static_data_multi_last_query(
         }
 
         // ── Fast path: in-memory last-cache (partial hit merge) ─────
-        let last_cache = crate::monitoring_last_cache::MonitoringLastCache::global();
-        let mut results: Vec<Option<serde_json::Value>> = vec![None; uuid_id_pairs.len()];
+        let last_cache = crate::monitoring_last_cache::MonitoringLastCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringLastCache not initialized".to_owned()))?;
+        let mut results: Vec<Option<StaticResult>> = vec![None; uuid_id_pairs.len()];
         let mut misses: Vec<(usize, i16)> = Vec::new();
         for (idx, (uuid, uuid_id)) in uuid_id_pairs.iter().enumerate() {
-            match last_cache.get_static_last(uuid, &fields) {
-                Some(v) => results[idx] = Some(v),
-                None => misses.push((idx, *uuid_id)),
+            if is_all_fields {
+                // 全字段查询：使用预序列化字符串，跳过 Map 构造和 Value 克隆
+                match last_cache.get_static_last_raw(uuid) {
+                    Some(s) => results[idx] = Some(StaticResult::Raw(s)),
+                    None => misses.push((idx, *uuid_id)),
+                }
+            } else {
+                // 筛选字段查询：使用 Value 路径
+                match last_cache.get_static_last(uuid, &fields) {
+                    Some(v) => results[idx] = Some(StaticResult::Value(v)),
+                    None => misses.push((idx, *uuid_id)),
+                }
             }
         }
 
@@ -138,7 +172,7 @@ pub async fn static_data_multi_last_query(
                 .map_err(|e| NodegetError::SerializationError(format!("Parse DB results: {e}")))?;
             for (i, val) in miss_values.into_iter().enumerate() {
                 let idx = misses[i].0;
-                results[idx] = Some(val);
+                results[idx] = Some(StaticResult::Value(val));
             }
             debug!(target: "monitoring", cache_hits = uuid_id_pairs.len() - misses.len(), misses = misses.len(), "Static multi-last query partial cache hit");
         }
@@ -147,17 +181,22 @@ pub async fn static_data_multi_last_query(
         let mut output_buffer: Vec<u8> = Vec::with_capacity(results.len().saturating_mul(200));
         output_buffer.push(b'[');
         let mut first = true;
-        for value in results.into_iter().flatten() {
+        for result in results.into_iter().flatten() {
             if first {
                 first = false;
             } else {
                 output_buffer.push(b',');
             }
-            if let Err(e) = serde_json::to_writer(&mut output_buffer, &value) {
-                error!(target: "monitoring", error = %e, "Result serialization failed");
-                return Err(
-                    NodegetError::SerializationError(format!("Serialization failed: {e}")).into(),
-                );
+            match result {
+                StaticResult::Raw(s) => output_buffer.extend_from_slice(s.as_bytes()),
+                StaticResult::Value(v) => {
+                    if let Err(e) = serde_json::to_writer(&mut output_buffer, &v) {
+                        error!(target: "monitoring", error = %e, "Result serialization failed");
+                        return Err(
+                            NodegetError::SerializationError(format!("Serialization failed: {e}")).into(),
+                        );
+                    }
+                }
             }
         }
         output_buffer.push(b']');
@@ -185,6 +224,15 @@ pub async fn static_data_multi_last_query(
             ))
         }
     }
+}
+
+/// 判断是否请求了所有静态监控字段。
+///
+/// 使用集合等价判断，拒绝重复字段（如 [Cpu, Cpu, System] 不会被误判为全字段）。
+fn is_all_static_fields(fields: &[StaticDataQueryField]) -> bool {
+    let field_set: HashSet<_> = fields.iter().copied().collect();
+    let all_set: HashSet<_> = ALL_STATIC_FIELDS.iter().copied().collect();
+    field_set == all_set
 }
 
 /// UUID 列表去重，保持原始顺序。

@@ -34,9 +34,10 @@ pub async fn get(token: String, supertoken: Option<String>) -> RpcResult<Box<Raw
                 NodegetError::ParseError(format!("Failed to parse supertoken: {e}"))
             })?;
 
-            let is_super_token = check_super_token(&supertoken_or_auth)
-                .await
-                .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
+            let is_super_token = check_super_token(&supertoken_or_auth).await.map_err(|e| {
+                warn!(target: "token", "权限拒绝: {e}");
+                NodegetError::PermissionDenied(format!("{e}"))
+            })?;
 
             if !is_super_token {
                 warn!(target: "token", "non-supertoken attempted supertoken-only get query");
@@ -56,12 +57,8 @@ pub async fn get(token: String, supertoken: Option<String>) -> RpcResult<Box<Raw
             get_token(&token_or_auth).await?
         };
 
-        let json_str = serde_json::to_string(&token_info).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize token info: {e}"))
-        })?;
-
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        serde_json::value::to_raw_value(&token_info)
+            .map_err(|e| NodegetError::from(e).into())
     };
 
     // 统一错误转换：anyhow → NodegetError → JSON-RPC ErrorObject

@@ -38,7 +38,9 @@ pub async fn js_nodeget(json: String) -> StdResult<String, Error> {
 
         let items_len = items.len();
         let results = spawn_on_server_runtime(async move {
-            let rpc_module = get_js_worker_service().get_rpc_module().await;
+            let service = get_js_worker_service()
+                .ok_or_else(|| "JsWorkerService not initialized".to_string())?;
+            let rpc_module = service.get_rpc_module().await;
             let mut results = Vec::with_capacity(items_len);
             for item in &items {
                 let req_str = item.get();
@@ -63,10 +65,13 @@ pub async fn js_nodeget(json: String) -> StdResult<String, Error> {
     } else {
         // 单条请求
         trace!(target: "js_runtime", "processing raw JSON-RPC request from JS");
-        let json = trimmed.to_owned();
+        // 若 trim 未改变内容，直接复用原始 String，避免分配
+        let json = if trimmed.len() == json.len() { json } else { trimmed.to_owned() };
 
         let response = spawn_on_server_runtime(async move {
-            let rpc_module = get_js_worker_service().get_rpc_module().await;
+            let service = get_js_worker_service()
+                .ok_or_else(|| "JsWorkerService not initialized".to_string())?;
+            let rpc_module = service.get_rpc_module().await;
             let (resp, _stream) = rpc_module
                 .raw_json_request(&json, RPC_BUF_SIZE)
                 .await

@@ -4,8 +4,8 @@
 
 use ng_core::error::NodegetError;
 use ng_core::permission::data_structure::{CrontabResult, Permission, Scope};
+use ng_core::permission::permission_checker::require_permission_checker;
 use ng_core::permission::token_auth::TokenOrAuth;
-use ng_token::check_token_limit;
 use tracing::{trace, warn};
 
 /// 检查 CrontabResult 读权限。
@@ -26,11 +26,12 @@ pub async fn check_crontab_result_read_permission(
 
     // 构建 Scope —— CrontabResult 权限仅在 Global Scope 下生效
     let scope = Scope::Global;
+    let checker = require_permission_checker()?;
 
     // 先检查全局读权限（`*` 通配符表示所有 cron_name）
     let global_read_perm = Permission::CrontabResult(CrontabResult::Read("*".to_owned()));
     let has_global_read =
-        check_token_limit(&token_or_auth, vec![scope.clone()], vec![global_read_perm]).await?;
+        checker.check_token_limit(&token_or_auth, vec![scope.clone()], vec![global_read_perm]).await?;
 
     if has_global_read {
         return Ok(());
@@ -38,7 +39,7 @@ pub async fn check_crontab_result_read_permission(
 
     // 检查是否有特定 cron_name 的读权限
     let specific_read_perm = Permission::CrontabResult(CrontabResult::Read(cron_name.to_owned()));
-    let has_specific_read = check_token_limit(
+    let has_specific_read = checker.check_token_limit(
         &token_or_auth,
         vec![scope.clone()],
         vec![specific_read_perm],
@@ -75,10 +76,11 @@ pub async fn check_crontab_result_delete_permission(
 
     // 构建 Scope —— CrontabResult 权限仅在 Global Scope 下生效
     let scope = Scope::Global;
+    let checker = require_permission_checker()?;
 
     // 检查全局删除权限
     let global_delete_perm = Permission::CrontabResult(CrontabResult::Delete("*".to_owned()));
-    let has_global_delete = check_token_limit(
+    let has_global_delete = checker.check_token_limit(
         &token_or_auth,
         vec![scope.clone()],
         vec![global_delete_perm],
@@ -93,7 +95,7 @@ pub async fn check_crontab_result_delete_permission(
     if let Some(name) = cron_name {
         let specific_delete_perm =
             Permission::CrontabResult(CrontabResult::Delete(name.to_owned()));
-        let has_specific_delete = check_token_limit(
+        let has_specific_delete = checker.check_token_limit(
             &token_or_auth,
             vec![scope.clone()],
             vec![specific_delete_perm],

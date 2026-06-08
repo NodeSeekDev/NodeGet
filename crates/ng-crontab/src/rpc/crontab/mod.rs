@@ -20,6 +20,28 @@ mod edit;
 mod get;
 mod set_enable;
 
+/// 校验 crontab 名称合法性。
+///
+/// 只允许字母、数字、下划线、短横线。禁止路径分隔符及控制字符。
+fn validate_name(name: &str) -> anyhow::Result<()> {
+    if name.is_empty() {
+        return Err(ng_core::error::NodegetError::InvalidInput("name cannot be empty".to_owned()).into());
+    }
+    if name.len() > 128 {
+        return Err(ng_core::error::NodegetError::InvalidInput("name too long (max 128 chars)".to_owned()).into());
+    }
+    let valid = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !valid {
+        return Err(ng_core::error::NodegetError::InvalidInput(
+            "name contains invalid characters (only [A-Za-z0-9_-] are allowed)".to_owned(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// `crontab` RPC trait 定义，使用 jsonrpsee `#[rpc]` 宏自动生成 Server 端调度代码。
 /// 命名空间为 `crontab`，分隔符为 `_`（自定义 jsonrpsee fork）。
 #[rpc(server, namespace = "crontab")]
@@ -131,4 +153,138 @@ impl RpcServer for CrontabRpcImpl {
 /// 构建并返回 `crontab` RPC 模块。
 pub fn rpc_module() -> jsonrpsee::RpcModule<CrontabRpcImpl> {
     CrontabRpcImpl.into_rpc()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ng_core::error::NodegetError;
+
+    // ── validate_name: happy path ────────────────────────────────
+
+    #[test]
+    fn validate_name_valid_simple() {
+        assert!(validate_name("mycron").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_with_underscore() {
+        assert!(validate_name("my_cron").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_with_dash() {
+        assert!(validate_name("my-cron").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_mixed() {
+        assert!(validate_name("cron_1-2").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_all_alphanumeric() {
+        assert!(validate_name("abc123").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_single_char() {
+        assert!(validate_name("a").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_single_digit() {
+        assert!(validate_name("1").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_uppercase() {
+        assert!(validate_name("CronABC").is_ok());
+    }
+
+    #[test]
+    fn validate_name_accepts_exactly_128_chars() {
+        let name = "a".repeat(128);
+        assert!(validate_name(&name).is_ok());
+    }
+
+    // ── validate_name: empty ──────────────────────────────────────
+
+    #[test]
+    fn validate_name_rejects_empty() {
+        let result = validate_name("");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("empty")));
+    }
+
+    // ── validate_name: too long ────────────────────────────────────
+
+    #[test]
+    fn validate_name_rejects_too_long() {
+        let long_name = "a".repeat(129);
+        let result = validate_name(&long_name);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("128")));
+    }
+
+    // ── validate_name: invalid characters ──────────────────────────
+
+    #[test]
+    fn validate_name_rejects_dot() {
+        assert!(validate_name("cron.name").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_space() {
+        assert!(validate_name("my cron").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_slash() {
+        assert!(validate_name("path/cron").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_backslash() {
+        assert!(validate_name("path\\cron").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_asterisk() {
+        assert!(validate_name("cron*").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_unicode() {
+        assert!(validate_name("定时任务").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_special_chars() {
+        for ch in ['!', '@', '#', '$', '%', '&', '(', ')', '=', '+', '[', ']', '{', '}', '|', ';', ':', '\'', '"', '<', '>', ',', '?', '.', ' '] {
+            let name = format!("a{ch}b");
+            assert!(validate_name(&name).is_err(), "expected rejection for char '{ch}'");
+        }
+    }
+
+    #[test]
+    fn validate_name_rejects_dotdot() {
+        assert!(validate_name("..").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_leading_dash() {
+        // dash is allowed, so this should pass
+        assert!(validate_name("-cron").is_ok());
+    }
+
+    #[test]
+    fn validate_name_rejects_leading_underscore() {
+        // underscore is allowed
+        assert!(validate_name("_cron").is_ok());
+    }
 }

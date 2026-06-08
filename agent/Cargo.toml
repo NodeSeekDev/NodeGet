@@ -58,10 +58,10 @@ portable-pty = "0.9.0"
 sysinfo = { version = "0.38.4", default-features = false, features = ["multithread", "disk", "network", "system"] }
 # Raw bindings to libc functions (for reading information)
 libc = "0.2.175"
-# Virtualization detection
-heim-virt = "0.1.0-alpha.1"
 ## Nvidia GPU Support
 nvml-wrapper = "0.12.1"
+## Virt Detect
+vmaware = "0.1.0"
 
 ## Windows-specific features
 [target.'cfg(target_os = "windows")'.dependencies]

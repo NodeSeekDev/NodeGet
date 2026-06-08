@@ -66,6 +66,8 @@ pub struct MonitoringBufferConfig {
     pub flush_interval_ms: Option<u64>,
     /// 单次最大批量大小，默认 1000
     pub max_batch_size: Option<usize>,
+    /// Channel 容量，默认 10000
+    pub channel_capacity: Option<usize>,
 }
 
 /// 日志配置。
@@ -165,5 +167,177 @@ impl ServerConfig {
         // 3. 解析原始配置（无需替换）
         let config: Self = toml::from_str(&content)?;
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_config_minimal_toml() {
+        let toml_str = r#"
+server_uuid = "550e8400-e29b-41d4-a716-446655440000"
+ws_listener = "0.0.0.0:3000"
+
+[database]
+database_url = "sqlite://./db/nodeget.db"
+"#;
+        let config: ServerConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.server_uuid,
+            uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
+        );
+        assert_eq!(config.ws_listener, "0.0.0.0:3000");
+        assert_eq!(config.database.database_url, "sqlite://./db/nodeget.db");
+        assert!(config.jsonrpc_max_connections.is_none());
+        assert!(config.enable_unix_socket.is_none());
+        assert!(config.logging.is_none());
+        assert!(config.monitoring_buffer.is_none());
+        assert!(config.max_request_body_size.is_none());
+        assert!(config.max_response_body_size.is_none());
+        assert!(config.tls_cert.is_none());
+        assert!(config.tls_key.is_none());
+        assert!(config.static_path.is_none());
+        assert!(config.db_path.is_none());
+    }
+
+    #[test]
+    fn server_config_full_toml() {
+        let toml_str = r#"
+server_uuid = "550e8400-e29b-41d4-a716-446655440000"
+ws_listener = "0.0.0.0:3000"
+jsonrpc_max_connections = 200
+enable_unix_socket = true
+unix_socket_path = "/tmp/nodeget.sock"
+max_request_body_size = 5242880
+max_response_body_size = 52428800
+tls_cert = "/etc/tls/cert.pem"
+tls_key = "/etc/tls/key.pem"
+static_path = "./files/"
+db_path = "./data/"
+
+[database]
+database_url = "postgres://user:pass@localhost/nodeget"
+connect_timeout_ms = 5000
+acquire_timeout_ms = 10000
+idle_timeout_ms = 600000
+max_lifetime_ms = 1800000
+max_connections = 20
+
+[logging]
+log_filter = "info,db=warn"
+json_log_file = "/var/log/nodeget.json"
+json_log_filter = "debug"
+memory_log_capacity = 1000
+memory_log_filter = "trace"
+
+[monitoring_buffer]
+flush_interval_ms = 1000
+max_batch_size = 500
+"#;
+        let config: ServerConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.jsonrpc_max_connections, Some(200));
+        assert_eq!(config.enable_unix_socket, Some(true));
+        assert_eq!(config.unix_socket_path, Some("/tmp/nodeget.sock".to_owned()));
+        assert_eq!(config.max_request_body_size, Some(5242880));
+        assert_eq!(config.max_response_body_size, Some(52428800));
+        assert_eq!(config.tls_cert, Some("/etc/tls/cert.pem".to_owned()));
+        assert_eq!(config.tls_key, Some("/etc/tls/key.pem".to_owned()));
+        assert_eq!(config.static_path, Some("./files/".to_owned()));
+        assert_eq!(config.db_path, Some("./data/".to_owned()));
+
+        let db = &config.database;
+        assert_eq!(db.database_url, "postgres://user:pass@localhost/nodeget");
+        assert_eq!(db.connect_timeout_ms, Some(5000));
+        assert_eq!(db.acquire_timeout_ms, Some(10000));
+        assert_eq!(db.idle_timeout_ms, Some(600000));
+        assert_eq!(db.max_lifetime_ms, Some(1800000));
+        assert_eq!(db.max_connections, Some(20));
+
+        let logging = config.logging.unwrap();
+        assert_eq!(logging.log_filter, Some("info,db=warn".to_owned()));
+        assert_eq!(logging.json_log_file, Some("/var/log/nodeget.json".to_owned()));
+        assert_eq!(logging.json_log_filter, Some("debug".to_owned()));
+        assert_eq!(logging.memory_log_capacity, Some(1000));
+        assert_eq!(logging.memory_log_filter, Some("trace".to_owned()));
+
+        let buffer = config.monitoring_buffer.unwrap();
+        assert_eq!(buffer.flush_interval_ms, Some(1000));
+        assert_eq!(buffer.max_batch_size, Some(500));
+    }
+
+    #[test]
+    fn monitoring_buffer_config_defaults() {
+        let toml_str = r#"
+[monitoring_buffer]
+"#;
+        let config: MonitoringBufferConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.flush_interval_ms.is_none());
+        assert!(config.max_batch_size.is_none());
+    }
+
+    #[test]
+    fn database_config_required_fields() {
+        let toml_str = r#"
+database_url = "sqlite://./db/nodeget.db"
+"#;
+        let config: DatabaseConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.database_url, "sqlite://./db/nodeget.db");
+        assert!(config.connect_timeout_ms.is_none());
+        assert!(config.max_connections.is_none());
+    }
+
+    #[test]
+    fn logging_config_partial() {
+        let toml_str = r#"
+log_filter = "debug"
+"#;
+        let config: LoggingConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.log_filter, Some("debug".to_owned()));
+        assert!(config.json_log_file.is_none());
+        assert!(config.json_log_filter.is_none());
+        assert!(config.memory_log_capacity.is_none());
+        assert!(config.memory_log_filter.is_none());
+    }
+
+    #[test]
+    fn server_config_missing_database_fails() {
+        let toml_str = r#"
+server_uuid = "550e8400-e29b-41d4-a716-446655440000"
+ws_listener = "0.0.0.0:3000"
+"#;
+        let result: Result<ServerConfig, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn server_config_missing_ws_listener_fails() {
+        let toml_str = r#"
+server_uuid = "550e8400-e29b-41d4-a716-446655440000"
+
+[database]
+database_url = "sqlite://./db/nodeget.db"
+"#;
+        let result: Result<ServerConfig, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn server_config_roundtrip_json() {
+        // Use serde_json for roundtrip since toml::to_string needs the "display" feature
+        let toml_str = r#"
+server_uuid = "550e8400-e29b-41d4-a716-446655440000"
+ws_listener = "0.0.0.0:3000"
+
+[database]
+database_url = "sqlite://./db/nodeget.db"
+"#;
+        let config: ServerConfig = toml::from_str(toml_str).unwrap();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ServerConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.server_uuid, deserialized.server_uuid);
+        assert_eq!(config.ws_listener, deserialized.ws_listener);
+        assert_eq!(config.database.database_url, deserialized.database.database_url);
     }
 }

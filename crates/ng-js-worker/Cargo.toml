@@ -21,6 +21,7 @@ server = [
     "ng-infra/server",
     "ng-db/server",
     "ng-js-runtime/server",
+    "ng-core/for-server",
 ]
 
 [dependencies]

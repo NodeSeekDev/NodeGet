@@ -20,6 +20,7 @@ use ng_config::config::agent::AgentConfig;
 use ng_core::utils::JsonError;
 use ng_task::TaskEvent;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinSet;
 use tokio::time;
@@ -30,7 +31,7 @@ use tokio_tungstenite::tungstenite::Message;
 /// 新代码请直接用 [`crate::config_access::get_agent_config`]。
 #[deprecated(note = "use crate::config_access::get_agent_config instead")]
 #[allow(dead_code)]
-pub fn get_agent_config_safe() -> anyhow::Result<AgentConfig> {
+pub fn get_agent_config_safe() -> anyhow::Result<Arc<AgentConfig>> {
     get_agent_config().map_err(Into::into)
 }
 
@@ -114,7 +115,8 @@ pub async fn handle_error_message() {
 
     let mut tasks = JoinSet::new();
 
-    for server in agent_config.server.unwrap_or_default() {
+    for server in agent_config.server.as_deref().unwrap_or_default() {
+        let server = server.clone();
         tasks.spawn(async move {
             let mut rx = match subscribe_to(server.name.as_str()).await {
                 Ok(rx) => rx,
@@ -128,10 +130,10 @@ pub async fn handle_error_message() {
 
             loop {
                 while let Some(join_result) = per_message_tasks.try_join_next() {
-                    if let Err(e) = join_result {
-                        if !e.is_cancelled() {
-                            warn!("[{}] Error handler task failed: {e}", server.name);
-                        }
+                    if let Err(e) = join_result
+                        && !e.is_cancelled()
+                    {
+                        warn!("[{}] Error handler task failed: {e}", server.name);
                     }
                 }
 

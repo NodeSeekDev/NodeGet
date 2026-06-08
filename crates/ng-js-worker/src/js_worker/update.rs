@@ -18,7 +18,7 @@ use ng_js_runtime::runtime_pool;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde_json::Value;
 use serde_json::value::RawValue;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 /// 更新指定 JS Worker。
 ///
@@ -40,6 +40,7 @@ use tracing::{debug, trace};
 /// 4. 重新编译字节码
 /// 5. 更新 `js_worker` 表（含 update_at 时间戳）
 /// 6. 驱逐运行时池中的旧 Worker
+#[allow(clippy::too_many_arguments)]
 pub async fn update(
     token: String,
     name: String,
@@ -55,6 +56,7 @@ pub async fn update(
     let process_logic = async {
         let name = name.trim().to_owned();
         if name.is_empty() {
+            warn!(target: "js_worker", "验证失败: name 为空");
             return Err(NodegetError::InvalidInput("name cannot be empty".to_owned()).into());
         }
         debug!(target: "js_worker", name = %name, "processing js_worker update request");
@@ -66,6 +68,7 @@ pub async fn update(
         debug!(target: "js_worker", name = %name, "js_worker update permission check passed");
 
         if js_script_base64.trim().is_empty() {
+            warn!(target: "js_worker", name = %name, "验证失败: js_script_base64 为空");
             return Err(
                 NodegetError::InvalidInput("js_script_base64 cannot be empty".to_owned()).into(),
             );
@@ -79,6 +82,7 @@ pub async fn update(
         })?;
 
         if js_script.trim().is_empty() {
+            warn!(target: "js_worker", name = %name, "验证失败: 解码后 js_script 为空");
             return Err(
                 NodegetError::InvalidInput("Decoded js_script cannot be empty".to_owned()).into(),
             );
@@ -102,6 +106,7 @@ pub async fn update(
                 .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
             if existing_route.is_some() {
+                warn!(target: "js_worker", name = %name, route_name = %route_name, "验证失败: route_name 已存在");
                 return Err(NodegetError::InvalidInput(format!(
                     "route_name already exists: {route_name}"
                 ))
@@ -152,9 +157,7 @@ pub async fn update(
             "update_at": updated.update_at
         });
 
-        let json_str = serde_json::to_string(&response)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&response)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

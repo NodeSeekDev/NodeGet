@@ -17,8 +17,8 @@ use tracing::warn;
 
 /// 缓存中的单条定时任务条目，预解析了 cron 表达式和类型。
 pub struct CachedCrontab {
-    /// 数据库行模型（Arc 共享，避免深拷贝）
-    pub model: Arc<crontab::Model>,
+    /// 数据库行模型，外层 Arc<CachedCrontab> 已提供共享，无需内层 Arc
+    pub model: crontab::Model,
     /// 预编译的 cron 调度对象，用于判断下次触发时间
     pub schedule: Schedule,
     /// 预解析的定时任务类型（Agent / Server）
@@ -29,21 +29,25 @@ pub struct CachedCrontab {
 struct CrontabCacheInner {
     /// 按 ID 索引的定时任务缓存
     by_id: HashMap<i64, Arc<CachedCrontab>>,
-    /// 单独追踪 last_run_time，避免为更新时间戳而深拷贝整个 CachedCrontab。
-    /// 键为 crontab id，值为毫秒时间戳。优先于 model.last_run_time 生效。
-    last_run_times: RwLock<HashMap<i64, i64>>,
 }
 
 /// 基于 DB 的 Crontab 全量缓存，提供按 ID 查询、启用条目枚举、
 /// last_run_time 原子更新等操作。
+///
+/// `last_run_times` 使用独立的 RwLock，与 `inner` 互不阻塞：
+/// - 更新 last_run_time 只需写锁 `last_run_times`，不会阻塞 `by_id` 的读操作
+/// - 读取 by_id 只需读锁 `inner`，不会被 last_run_time 更新阻塞
 pub struct CrontabCache {
+    /// 内部缓存数据，RwLock 保护并发读写
     inner: RwLock<CrontabCacheInner>,
+    /// 单独追踪 last_run_time，避免为更新时间戳而深拷贝整个 CachedCrontab。
+    /// 键为 crontab id，值为毫秒时间戳。优先于 model.last_run_time 生效。
+    /// 独立 RwLock 与 inner 互不阻塞，消除原来同锁内的读写竞争。
+    last_run_times: RwLock<HashMap<i64, i64>>,
 }
 
 /// 从 RwLock 获取读锁，若锁被 poisoned 则恢复并继续（而非 panic）。
-fn recover_read(
-    lock: &RwLock<CrontabCacheInner>,
-) -> std::sync::RwLockReadGuard<'_, CrontabCacheInner> {
+fn recover_read<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
     lock.read().unwrap_or_else(|e| {
         tracing::warn!(target: "crontab_cache", "lock poisoned during read, recovering");
         e.into_inner()
@@ -51,9 +55,7 @@ fn recover_read(
 }
 
 /// 从 RwLock 获取写锁，若锁被 poisoned 则恢复并继续（而非 panic）。
-fn recover_write(
-    lock: &RwLock<CrontabCacheInner>,
-) -> std::sync::RwLockWriteGuard<'_, CrontabCacheInner> {
+fn recover_write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
     lock.write().unwrap_or_else(|e| {
         tracing::warn!(target: "crontab_cache", "lock poisoned during write, recovering");
         e.into_inner()
@@ -77,8 +79,8 @@ impl DbBackedCache for CrontabCache {
         Self {
             inner: RwLock::new(CrontabCacheInner {
                 by_id,
-                last_run_times: RwLock::new(HashMap::new()),
             }),
+            last_run_times: RwLock::new(HashMap::new()),
         }
     }
 
@@ -103,7 +105,7 @@ impl CrontabCache {
     /// 解析失败的条目（无效 cron 表达式或无效 cron_type）会被跳过并记录警告日志。
     fn build_maps(models: Vec<crontab::Model>) -> HashMap<i64, Arc<CachedCrontab>> {
         let mut by_id = HashMap::with_capacity(models.len());
-        for model in models {
+        for mut model in models {
             // 解析 cron 表达式为 Schedule 对象
             let schedule = match Schedule::from_str(&model.cron_expression) {
                 Ok(s) => s,
@@ -119,26 +121,28 @@ impl CrontabCache {
                 }
             };
 
-            // 反序列化 cron_type JSON 字段
-            let cron_type = match serde_json::from_value::<CronType>(model.cron_type.clone()) {
-                Ok(ct) => ct,
-                Err(e) => {
-                    warn!(
-                        target: "crontab",
-                        job_id = model.id,
-                        job_name = %model.name,
-                        error = %e,
-                        "invalid cron_type during cache build, skipping"
-                    );
-                    continue;
-                }
-            };
+            // 取走 cron_type 所有权直接解析，避免 clone 整个 Value
+            // 缓存中通过 CachedCrontab.cron_type 访问，model.cron_type 不再被读取
+            let cron_type =
+                match serde_json::from_value::<CronType>(std::mem::take(&mut model.cron_type)) {
+                    Ok(ct) => ct,
+                    Err(e) => {
+                        warn!(
+                            target: "crontab",
+                            job_id = model.id,
+                            job_name = %model.name,
+                            error = %e,
+                            "invalid cron_type during cache build, skipping"
+                        );
+                        continue;
+                    }
+                };
 
             let id = model.id;
             by_id.insert(
                 id,
                 Arc::new(CachedCrontab {
-                    model: Arc::new(model),
+                    model,
                     schedule,
                     cron_type,
                 }),
@@ -166,18 +170,13 @@ impl CrontabCache {
 
     /// 获取指定定时任务的有效 last_run_time。
     /// 优先从覆盖映射中读取（调度器实时更新），若不存在则回退到 model.last_run_time。
+    /// 仅读锁 `last_run_times`，不阻塞 `by_id` 的读操作。
     ///
     /// - `id` - 定时任务 ID
     /// - `model_last` - 数据库模型中的 last_run_time（毫秒时间戳）
     pub fn get_last_run_time(&self, id: i64, model_last: Option<i64>) -> Option<i64> {
-        let guard = recover_read(&self.inner);
+        let guard = recover_read(&self.last_run_times);
         guard
-            .last_run_times
-            .read()
-            .unwrap_or_else(|e| {
-                warn!(target: "crontab_cache", "last_run_times lock poisoned during read, recovering");
-                e.into_inner()
-            })
             .get(&id)
             .copied()
             .or(model_last)
@@ -185,15 +184,12 @@ impl CrontabCache {
 
     /// 更新指定定时任务的 last_run_time 到覆盖映射。
     /// 由调度器在触发任务后立即调用，保证下次调度时不会重复触发。
+    /// 仅写锁 `last_run_times`，不阻塞 `by_id` 的读操作。
     ///
     /// - `id` - 定时任务 ID
     /// - `timestamp` - 当前触发时间（毫秒时间戳）
     pub fn update_last_run_time(&self, id: i64, timestamp: i64) {
-        let guard = recover_read(&self.inner);
-        let mut lrt_guard = guard.last_run_times.write().unwrap_or_else(|e| {
-            warn!(target: "crontab_cache", "last_run_times lock poisoned during write, recovering");
-            e.into_inner()
-        });
-        lrt_guard.insert(id, timestamp);
+        let mut guard = recover_write(&self.last_run_times);
+        guard.insert(id, timestamp);
     }
 }

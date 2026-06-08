@@ -73,7 +73,6 @@ pub(crate) fn replace_auto_gen_uuid(content: &str, key: &str, uuid: &str) -> Str
                 {
                     let after_value = &rest[8..];
                     new_content.push_str(before);
-                    new_content.push(' ');
                     new_content.push(first_char);
                     new_content.push_str(uuid);
                     new_content.push_str(after_value);
@@ -86,4 +85,132 @@ pub(crate) fn replace_auto_gen_uuid(content: &str, key: &str, uuid: &str) -> Str
         new_content.push('\n');
     }
     new_content
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── deserialize_uuid_or_auto ────────────────────────────────────────
+
+    #[test]
+    fn deserialize_valid_uuid_succeeds() {
+        let uuid_str = "\"550e8400-e29b-41d4-a716-446655440000\"";
+        let result: Result<uuid::Uuid, _> = serde_json::from_str(uuid_str);
+        assert!(result.is_ok());
+        let parsed: uuid::Uuid = result.unwrap();
+        assert_eq!(
+            parsed,
+            uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
+        );
+    }
+
+    #[test]
+    fn deserialize_auto_gen_is_rejected() {
+        // deserialize_uuid_or_auto rejects "auto_gen" — the deserializer is
+        // used via serde, so we wrap it in a struct.
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Wrap {
+            #[serde(deserialize_with = "deserialize_uuid_or_auto")]
+            uuid: uuid::Uuid,
+        }
+        let toml_str = r#"uuid = "auto_gen""#;
+        let result: Result<Wrap, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn deserialize_auto_gen_case_insensitive_rejected() {
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Wrap {
+            #[serde(deserialize_with = "deserialize_uuid_or_auto")]
+            uuid: uuid::Uuid,
+        }
+        let toml_str = r#"uuid = "AUTO_GEN""#;
+        let result: Result<Wrap, _> = toml::from_str(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn deserialize_invalid_uuid_fails() {
+        let uuid_str = "\"not-a-valid-uuid\"";
+        let result: Result<uuid::Uuid, _> = serde_json::from_str(uuid_str);
+        assert!(result.is_err());
+    }
+
+    // ── replace_auto_gen_uuid ───────────────────────────────────────────
+
+    #[test]
+    fn replace_auto_gen_replaces_double_quoted() {
+        let content = "server_uuid = \"auto_gen\"\nws_listener = \"0.0.0.0:3000\"\n";
+        let result = replace_auto_gen_uuid(content, "server_uuid", "550e8400-e29b-41d4-a716-446655440000");
+        assert!(result.contains("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(!result.contains("auto_gen"));
+        assert!(result.contains("ws_listener"));
+    }
+
+    #[test]
+    fn replace_auto_gen_replaces_single_quoted() {
+        let content = "agent_uuid = 'auto_gen'\n";
+        let result = replace_auto_gen_uuid(content, "agent_uuid", "550e8400-e29b-41d4-a716-446655440000");
+        assert!(result.contains("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    #[test]
+    fn replace_auto_gen_preserves_comments() {
+        let content = "# this is a comment\nserver_uuid = \"auto_gen\"\n";
+        let result = replace_auto_gen_uuid(content, "server_uuid", "550e8400-e29b-41d4-a716-446655440000");
+        assert!(result.contains("# this is a comment"));
+    }
+
+    #[test]
+    fn replace_auto_gen_preserves_empty_lines() {
+        let content = "\nserver_uuid = \"auto_gen\"\n\n";
+        let result = replace_auto_gen_uuid(content, "server_uuid", "550e8400-e29b-41d4-a716-446655440000");
+        assert!(result.contains("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    #[test]
+    fn replace_auto_gen_no_match_returns_unchanged() {
+        let content = "server_uuid = \"550e8400-e29b-41d4-a716-446655440000\"\n";
+        let result = replace_auto_gen_uuid(content, "server_uuid", "new-uuid");
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn replace_auto_gen_case_insensitive() {
+        let content = "server_uuid = \"AUTO_GEN\"\n";
+        let result = replace_auto_gen_uuid(content, "server_uuid", "550e8400-e29b-41d4-a716-446655440000");
+        assert!(result.contains("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    #[test]
+    fn replace_auto_gen_key_case_insensitive() {
+        let content = "SERVER_UUID = \"auto_gen\"\n";
+        let result = replace_auto_gen_uuid(content, "server_uuid", "550e8400-e29b-41d4-a716-446655440000");
+        assert!(result.contains("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    #[test]
+    fn replace_auto_gen_preserves_leading_whitespace() {
+        let content = "  server_uuid = \"auto_gen\"\n";
+        let result = replace_auto_gen_uuid(content, "server_uuid", "550e8400-e29b-41d4-a716-446655440000");
+        assert!(result.contains("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    #[test]
+    fn replace_auto_gen_ignores_non_auto_gen_value() {
+        let content = "server_uuid = \"some-other-value\"\n";
+        let result = replace_auto_gen_uuid(content, "server_uuid", "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn replace_auto_gen_wrong_key_ignored() {
+        let content = "agent_uuid = \"auto_gen\"\n";
+        let result = replace_auto_gen_uuid(content, "server_uuid", "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(result, content);
+    }
 }

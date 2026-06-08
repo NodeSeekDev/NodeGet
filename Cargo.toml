@@ -20,7 +20,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.5.6"
+version = "0.5.10"
 license = "AGPL-3"
 edition = "2024"
 repository = "https://github.com/NodeSeekDev/NodeGet"
@@ -30,9 +30,9 @@ serde = { version = "1.0.228", default-features = false, features = ["std", "der
 serde_json = { version = "1.0.150", default-features = false, features = ["std", "raw_value"] }
 tokio = { version = "1.52.3", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 anyhow = { version = "1.0.102", default-features = false }
-jsonrpsee = { git = "https://github.com/infinitefield/jsonrpsee.git", default-features = false, features = ["server", "macros"] }
+jsonrpsee = { git = "https://github.com/infinitefield/jsonrpsee.git", default-features = false, features = ["macros", "server-core"] }
 axum = { version = "0.8.9", default-features = false, features = ["tokio", "ws", "http1", "query"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "json"] }
 uuid = { version = "1.23.2", default-features = false, features = ["std", "serde", "v4", "v5", "fast-rng"] }
 thiserror = { version = "2.0.18", default-features = false }
 rand = { version = "0.10.1", default-features = false, features = ["std", "thread_rng"] }
@@ -58,9 +58,11 @@ llrt_stream_web = { git = "https://github.com/awslabs/llrt.git", default-feature
 llrt_util = { git = "https://github.com/awslabs/llrt.git", default-features = false }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "json", "fmt", "ansi", "chrono", "tracing-log"] }
 log = { version = "0.4.31", default-features = false, features = ["std"] }
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tower = { version = "0.5.3", default-features = false }
-axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
+dhat = { version = "0.3.3"}
+arc-swap = { version = "1.9", default-features = false }
 
 # Internal crates
 ng-core = { path = "crates/ng-core" }
@@ -86,6 +88,7 @@ rquickjs-sys = { git = "https://github.com/delskayn/rquickjs.git" }
 [profile]
 dev = { opt-level = 0, debug = true, debug-assertions = true, overflow-checks = true, lto = false, panic = "unwind", incremental = true, codegen-units = 256, rpath = false }
 release = { opt-level = 3, debug = false, debug-assertions = false, overflow-checks = false, lto = false, panic = "unwind", incremental = false, codegen-units = 16, rpath = false }
-profiling = { inherits = "release", debug = true }
+release_debug = { inherits = "release", debug = true }
 fastest = { inherits = "dev", opt-level = 0, debug = 0, debug-assertions = true, overflow-checks = true, lto = false, panic = "unwind", incremental = true, codegen-units = 512, rpath = false }
 minimal = { inherits = "release", opt-level = "z", lto = true, codegen-units = 1, panic = "abort", debug = false, strip = true, debug-assertions = false, overflow-checks = false }
+minimal_debug = { inherits = "release", opt-level = "z", lto = true, codegen-units = 1, panic = "abort", debug = true, strip = true, debug-assertions = false, overflow-checks = false }

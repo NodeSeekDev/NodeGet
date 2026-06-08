@@ -7,7 +7,7 @@ use sea_orm::{DatabaseBackend, DatabaseConnection, FromQueryResult, Statement};
 use serde::Serialize;
 use serde_json::value::RawValue;
 use std::collections::BTreeMap;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// 排除的系统表名前缀/模式，不纳入用户存储统计
 const EXCLUDED_TABLES: &[&str] = &["seaql_migrations"];
@@ -50,15 +50,19 @@ pub async fn database_storage(token: String) -> jsonrpsee::core::RpcResult<Box<R
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-        let provider = crate::rpc::auth_provider()
-            .ok_or_else(|| NodegetError::Other("Auth provider not initialized".to_owned()))?;
+        let provider = ng_core::permission::permission_checker::get_permission_checker()
+            .ok_or_else(|| NodegetError::ConfigNotFound("PermissionChecker not initialized".to_owned()))?;
 
         let is_super = provider
             .check_super_token(&token_or_auth)
             .await
-            .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
+            .map_err(|e| {
+                warn!(target: "db", "权限拒绝: {e}");
+                NodegetError::PermissionDenied(format!("{e}"))
+            })?;
 
         if !is_super {
+            warn!(target: "db", "权限拒绝: 需要 Super Token 权限");
             return Err(NodegetError::PermissionDenied(
                 "Permission Denied: Super token required".to_owned(),
             )
@@ -84,10 +88,7 @@ pub async fn database_storage(token: String) -> jsonrpsee::core::RpcResult<Box<R
         let response = DatabaseStorageResponse { tables, total };
         debug!(target: "server", total_bytes = total, "Database storage query completed");
 
-        let json_str = serde_json::to_string(&response)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&response)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
@@ -158,6 +159,7 @@ async fn query_postgres(db: &DatabaseConnection) -> anyhow::Result<BTreeMap<Stri
 /// 表名发现查询结果行
 #[derive(FromQueryResult)]
 struct TableNameRow {
+    /// 表名
     table_name: String,
 }
 
@@ -187,7 +189,7 @@ async fn query_sqlite(db: &DatabaseConnection) -> anyhow::Result<BTreeMap<String
     let discover_sql = format!(
         "SELECT name AS table_name FROM sqlite_master WHERE type = 'table'{not_in_clause} ORDER BY name"
     );
-    let values: Vec<sea_orm::Value> = excluded.into_iter().map(|s| s.into()).collect();
+    let values: Vec<sea_orm::Value> = excluded.into_iter().map(std::convert::Into::into).collect();
     let table_names: Vec<String> = TableNameRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         &discover_sql,

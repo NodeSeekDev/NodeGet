@@ -27,7 +27,7 @@ use tracing::debug;
 ///
 /// 注意：使用 `query_all_raw` 统一执行所有 SQL 类型（SELECT/DML/DDL/PRAGMA/CTE），
 /// 无 RETURNING 子句的 DML 返回 `data: []` + `row_count: 0`
-pub(crate) async fn exec_sql_inner(
+pub async fn exec_sql_inner(
     db_name: &str,
     sql: &str,
     params: Option<serde_json::Value>,
@@ -35,10 +35,11 @@ pub(crate) async fn exec_sql_inner(
 ) -> anyhow::Result<Box<RawValue>> {
     check_db_permission(token, db_name, DbPermission::ExecSql).await?;
 
-    let mgr = DbRegistryManager::global();
+    let mgr = DbRegistryManager::global().ok_or_else(|| {
+        NodegetError::ConfigNotFound("DbRegistryManager not initialized".to_owned())
+    })?;
     let db_conn = mgr
         .get_conn(db_name)
-        .await
         .ok_or_else(|| NodegetError::DatabaseError(format!("Database '{db_name}' not found")))?;
 
     let sea_params = match params {
@@ -72,8 +73,7 @@ pub(crate) async fn exec_sql_inner(
         "truncated": truncated,
     });
 
-    let json_str = serde_json::to_string(&resp)?;
-    RawValue::from_string(json_str)
+    serde_json::value::to_raw_value(&resp)
         .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
 }
 

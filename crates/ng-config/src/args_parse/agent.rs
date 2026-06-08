@@ -10,6 +10,7 @@ use palc::Parser;
     long_about = "NodeGet is the next-generation server monitoring and management tools. nodeget-agent is a part of it",
     after_long_help = "This Agent is open-sourced on Github, powered by powerful Rust. Love from NodeGet"
 )]
+/// Agent 命令行参数
 pub struct AgentArgs {
     /// 配置文件路径，默认 `config.toml`
     #[arg(long, short, default_value_t = DEFAULT_AGENT_CONFIG_PATH.to_owned())]

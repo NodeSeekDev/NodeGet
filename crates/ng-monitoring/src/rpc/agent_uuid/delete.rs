@@ -9,7 +9,7 @@ use ng_core::permission::data_structure::{MonitoringUuid, Permission, Scope};
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_token::get::check_token_limit;
 use serde_json::value::RawValue;
-use tracing::debug;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 /// 软删除指定 Agent UUID。
@@ -36,27 +36,32 @@ pub async fn delete_agent_uuid(token: String, agent_uuid: Uuid) -> RpcResult<Box
         .await?;
 
         if !is_allowed {
+            warn!(target: "monitoring", %agent_uuid, "权限拒绝: 缺少 MonitoringUuid::Delete 权限");
             return Err(anyhow::anyhow!(NodegetError::PermissionDenied(
                 "Permission Denied: Missing MonitoringUuid::Delete permission".to_owned(),
             )));
         }
         debug!(target: "rpc", %agent_uuid, "delete_agent_uuid: permission check passed");
 
-        let deleted = MonitoringUuidCache::global()
+        let deleted = MonitoringUuidCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringUuidCache not initialized".to_owned()))?
             .soft_delete(agent_uuid)
             .await
             .map_err(|e| {
                 NodegetError::DatabaseError(format!("Failed to soft delete agent UUID: {e}"))
             })?;
 
-        let json_str = if deleted {
-            r#"{"success":true,"message":"Agent UUID soft-deleted"}"#.to_owned()
+        let raw = if deleted {
+            serde_json::value::to_raw_value(&serde_json::json!({
+                "success": true,
+                "message": "Agent UUID soft-deleted"
+            }))
         } else {
-            r#"{"success":false,"message":"Agent UUID not found"}"#.to_owned()
+            serde_json::value::to_raw_value(&serde_json::json!({
+                "success": false,
+                "message": "Agent UUID not found"
+            }))
         };
-
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        raw.map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
     match process_logic.await {

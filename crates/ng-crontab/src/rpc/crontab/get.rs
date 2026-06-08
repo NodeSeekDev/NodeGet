@@ -37,7 +37,9 @@ pub async fn get(token: String) -> RpcResult<Box<RawValue>> {
             .await
             .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
 
-        let cache = CrontabCache::global();
+        let cache = CrontabCache::global().ok_or_else(|| {
+            NodegetError::ConfigNotFound("CrontabCache not initialized".to_owned())
+        })?;
         let entries = cache.get_all_entries();
 
         // Super-token 直接返回全部条目，无需权限过滤
@@ -55,11 +57,7 @@ pub async fn get(token: String) -> RpcResult<Box<RawValue>> {
                 })
                 .collect();
 
-            let json_str = serde_json::to_string(&crontabs).map_err(|e| {
-                NodegetError::SerializationError(format!("Failed to serialize crontabs: {e}"))
-            })?;
-
-            return RawValue::from_string(json_str)
+            return serde_json::value::to_raw_value(&crontabs)
                 .map_err(|e| NodegetError::SerializationError(e.to_string()).into());
         }
 
@@ -99,11 +97,7 @@ pub async fn get(token: String) -> RpcResult<Box<RawValue>> {
 
         // 根据 Token 的 Scope 过滤可见条目
         let crontabs = filter_entries_by_token(&entries, &token_info, cache);
-        let json_str = serde_json::to_string(&crontabs).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize crontabs: {e}"))
-        })?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&crontabs)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

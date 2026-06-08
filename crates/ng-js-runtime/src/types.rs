@@ -86,3 +86,168 @@ pub struct RuntimePoolInfo {
     /// 各 Worker 的详细状态列表
     pub workers: Vec<RuntimePoolWorkerInfo>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_type_as_str() {
+        assert_eq!(RunType::Call.as_str(), "call");
+        assert_eq!(RunType::Cron.as_str(), "cron");
+        assert_eq!(RunType::Route.as_str(), "route");
+        assert_eq!(RunType::InlineCall.as_str(), "inline_call");
+    }
+
+    #[test]
+    fn run_type_handler_name() {
+        assert_eq!(RunType::Call.handler_name(), "onCall");
+        assert_eq!(RunType::Cron.handler_name(), "onCron");
+        assert_eq!(RunType::Route.handler_name(), "onRoute");
+        assert_eq!(RunType::InlineCall.handler_name(), "onInlineCall");
+    }
+
+    #[test]
+    fn run_type_serde_roundtrip() {
+        let variants = [
+            (RunType::Call, "call"),
+            (RunType::Cron, "cron"),
+            (RunType::Route, "route"),
+            (RunType::InlineCall, "inline_call"),
+        ];
+        for (rt, expected_name) in variants {
+            let json = serde_json::to_string(&rt).unwrap();
+            let parsed: RunType = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed.as_str(), expected_name);
+        }
+    }
+
+    #[test]
+    fn run_type_serde_snake_case() {
+        let json = serde_json::to_string(&RunType::InlineCall).unwrap();
+        assert!(json.contains("inline_call"));
+        let json = serde_json::to_string(&RunType::Call).unwrap();
+        assert!(json.contains("call"));
+    }
+
+    #[test]
+    fn compile_mode_default_is_bytecode() {
+        assert!(matches!(CompileMode::default(), CompileMode::Bytecode));
+    }
+
+    #[test]
+    fn compile_mode_serde_roundtrip() {
+        let bytecode_json = serde_json::to_string(&CompileMode::Bytecode).unwrap();
+        assert!(bytecode_json.contains("bytecode"));
+        let parsed: CompileMode = serde_json::from_str(&bytecode_json).unwrap();
+        assert!(matches!(parsed, CompileMode::Bytecode));
+
+        let source_json = serde_json::to_string(&CompileMode::Source).unwrap();
+        assert!(source_json.contains("source"));
+        let parsed: CompileMode = serde_json::from_str(&source_json).unwrap();
+        assert!(matches!(parsed, CompileMode::Source));
+    }
+
+    #[test]
+    fn compile_mode_serde_snake_case() {
+        let json = serde_json::to_string(&CompileMode::Bytecode).unwrap();
+        assert!(json.contains("bytecode"));
+        let json = serde_json::to_string(&CompileMode::Source).unwrap();
+        assert!(json.contains("source"));
+    }
+
+    #[test]
+    fn compile_mode_bytecode_deserialize() {
+        let parsed: CompileMode = serde_json::from_str("\"bytecode\"").unwrap();
+        assert!(matches!(parsed, CompileMode::Bytecode));
+    }
+
+    #[test]
+    fn compile_mode_source_deserialize() {
+        let parsed: CompileMode = serde_json::from_str("\"source\"").unwrap();
+        assert!(matches!(parsed, CompileMode::Source));
+    }
+
+    #[test]
+    fn js_code_input_source_variant() {
+        let input = JsCodeInput::Source("console.log(1)".to_owned());
+        assert!(matches!(input, JsCodeInput::Source(_)));
+    }
+
+    #[test]
+    fn js_code_input_bytecode_variant() {
+        let input = JsCodeInput::Bytecode(vec![0x01, 0x02, 0x03]);
+        assert!(matches!(input, JsCodeInput::Bytecode(_)));
+    }
+
+    #[test]
+    fn runtime_pool_worker_info_serde_roundtrip() {
+        let info = RuntimePoolWorkerInfo {
+            script_name: "test_script".to_owned(),
+            active_requests: 3,
+            last_used_ms: 1_700_000_000,
+            idle_ms: 5000,
+            runtime_clean_time_ms: Some(60000),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: RuntimePoolWorkerInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info.script_name, parsed.script_name);
+        assert_eq!(info.active_requests, parsed.active_requests);
+        assert_eq!(info.last_used_ms, parsed.last_used_ms);
+        assert_eq!(info.idle_ms, parsed.idle_ms);
+        assert_eq!(info.runtime_clean_time_ms, parsed.runtime_clean_time_ms);
+    }
+
+    #[test]
+    fn runtime_pool_worker_info_none_clean_time() {
+        let info = RuntimePoolWorkerInfo {
+            script_name: "test".to_owned(),
+            active_requests: 0,
+            last_used_ms: 0,
+            idle_ms: 0,
+            runtime_clean_time_ms: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: RuntimePoolWorkerInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.runtime_clean_time_ms, None);
+    }
+
+    #[test]
+    fn runtime_pool_info_serde_roundtrip() {
+        let info = RuntimePoolInfo {
+            total_workers: 2,
+            workers: vec![
+                RuntimePoolWorkerInfo {
+                    script_name: "a".to_owned(),
+                    active_requests: 1,
+                    last_used_ms: 100,
+                    idle_ms: 10,
+                    runtime_clean_time_ms: None,
+                },
+                RuntimePoolWorkerInfo {
+                    script_name: "b".to_owned(),
+                    active_requests: 0,
+                    last_used_ms: 200,
+                    idle_ms: 50,
+                    runtime_clean_time_ms: Some(30000),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: RuntimePoolInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info.total_workers, parsed.total_workers);
+        assert_eq!(info.workers.len(), parsed.workers.len());
+    }
+
+    #[test]
+    fn runtime_pool_info_empty_workers() {
+        let info = RuntimePoolInfo {
+            total_workers: 0,
+            workers: vec![],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: RuntimePoolInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.total_workers, 0);
+        assert!(parsed.workers.is_empty());
+    }
+}

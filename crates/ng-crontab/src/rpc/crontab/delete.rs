@@ -10,7 +10,7 @@ use ng_db::entity::crontab;
 use ng_infra::server::RpcHelper;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::value::RawValue;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// 删除定时任务。
 ///
@@ -25,6 +25,9 @@ use tracing::debug;
 pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         debug!(target: "crontab", name = %name, "processing crontab delete request");
+        // 0. 校验 name 合法性（低成本操作，最先执行）
+        super::validate_name(&name)?;
+
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -38,6 +41,7 @@ pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
             .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
         let Some(model) = model else {
+            warn!(target: "crontab", name = %name, "未找到: Crontab 不存在");
             return Err(NodegetError::NotFound(format!("Crontab not found: {name}")).into());
         };
 
@@ -61,14 +65,13 @@ pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
             .map_err(|e| NodegetError::Other(format!("Failed to delete crontab: {e}")))?;
 
         if !deleted {
+            warn!(target: "crontab", name = %name, "未找到: Crontab 删除失败，任务不存在");
             return Err(NodegetError::NotFound(format!("Crontab not found: {name}")).into());
         }
 
         debug!(target: "crontab", name = %name, "Crontab deleted successfully");
 
-        let json_str = serde_json::to_string(&serde_json::json!({"success": deleted}))
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&serde_json::json!({"success": deleted}))
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
     };
 

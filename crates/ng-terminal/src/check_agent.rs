@@ -8,7 +8,7 @@ use ng_core::error::NodegetError;
 use ng_db::entity::task;
 use ng_task::TaskEventType;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use tracing::trace;
+use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
 /// 校验 Agent 是否有权通过 Terminal 连接。
@@ -52,6 +52,7 @@ pub async fn check_agent(
         .map_err(|e| NodegetError::DatabaseError(format!("Database error: {e}")))?;
 
     let Some(task_model) = task_model else {
+        debug!(target: "terminal", agent_uuid = %agent_uuid, task_id = task_id, "未找到匹配的任务记录");
         return Ok(false);
     };
 
@@ -62,6 +63,7 @@ pub async fn check_agent(
         })?;
 
     if !matches!(task_event_type, TaskEventType::WebShell(_)) {
+        warn!(target: "terminal", "权限拒绝: 非 WebShell 任务尝试连接 Terminal, agent_uuid={agent_uuid}, task_id={task_id}");
         return Err(NodegetError::PermissionDenied(
             "Terminal connection is only allowed for WebShell tasks".to_owned(),
         )

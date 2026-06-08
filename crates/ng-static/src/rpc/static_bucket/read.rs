@@ -27,12 +27,9 @@ pub async fn read(token: String, name: String) -> RpcResult<Box<RawValue>> {
             .await?
             .ok_or_else(|| NodegetError::NotFound(format!("Static '{name}' not found")))?;
 
-        let json_str = serde_json::to_string(&model).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize static: {e}"))
-        })?;
-
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
+        serde_json::value::to_raw_value(&model).map_err(|e| {
+            NodegetError::SerializationError(format!("Failed to serialize static: {e}")).into()
+        })
     };
 
     match process_logic.await {

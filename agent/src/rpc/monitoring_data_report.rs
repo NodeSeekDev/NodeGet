@@ -21,18 +21,18 @@ use std::time::Duration;
 use tokio::time::{MissedTickBehavior, interval};
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
-/// 若 `AGENT_CONFIG` 尚未就绪，等待其可用后返回一份快照。
+/// 若 `AGENT_CONFIG` 尚未就绪，等待其可用后返回一份 Arc 快照。
 ///
 /// 每次失败短暂 sleep 而不是 panic 退出任务，从而保证上报循环能在 reload/初始化瞬态后继续生效。
-///
-/// 返回可用的 [`AgentConfig`] 快照。
-async fn wait_for_agent_config() -> AgentConfig {
+async fn wait_for_agent_config() -> Arc<AgentConfig> {
+    let mut ticker = tokio::time::interval(Duration::from_secs(1));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         match get_agent_config() {
             Ok(cfg) => return cfg,
             Err(e) => {
                 warn!("Waiting for AGENT_CONFIG to become available: {e}");
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                ticker.tick().await;
             }
         }
     }
@@ -44,8 +44,8 @@ async fn wait_for_agent_config() -> AgentConfig {
 /// `Arc<str>` 的好处：
 ///   - `Arc::clone` 只是原子自增引用计数，O(1)；
 ///   - 下游 spawn 里拿到 `Arc<str>` 后直接 `&*arc` 拼 RPC 字符串，零额外分配。
-/// 对比起以前"先 `to_value` → 每个 server clone 一次 Value（递归深拷贝 HashMap/Vec）"
-/// 的做法，CPU 和 RSS `峰值都能显著降低（review_agent.md` #73）。
+///     对比起以前"先 `to_value` → 每个 server clone 一次 Value（递归深拷贝 HashMap/Vec）"
+///     的做法，CPU 和 RSS `峰值都能显著降低（review_agent.md` #73）。
 fn serialize_shared<T: Serialize>(data: &T) -> Option<Arc<str>> {
     match serde_json::to_string(data) {
         Ok(s) => Some(Arc::from(s.into_boxed_str())),
@@ -61,7 +61,7 @@ fn serialize_shared<T: Serialize>(data: &T) -> Option<Arc<str>> {
 /// 调用方已经分别持有"token（原样字符串）"和"`data_json`（合法 JSON 片段）"，
 /// 这里只需要按协议把它们拼进 params。token 会走 `serde_json::to_string` 以保证
 /// 正确转义，`data_json` 原样嵌入（上游来自 `serialize_shared`，已是合法 JSON）。
-fn build_rpc_with_raw_data(method: &str, token: &str, data_json: &str) -> String {
+pub fn build_rpc_with_raw_data(method: &str, token: &str, data_json: &str) -> String {
     // `serde_json::to_string(&str)` 对 String 绝不会失败；但保守起见兜底一个空串字面量。
     let token_json = serde_json::to_string(token).unwrap_or_else(|_| "\"\"".to_owned());
     format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":[{token_json},{data_json}]}}"#)
@@ -79,6 +79,8 @@ pub async fn handle_static_monitoring_data_report() {
     let mut interval_ms = initial_config.static_report_interval_ms_or_default();
     let mut ticker = interval(Duration::from_millis(interval_ms));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    // 消费首次立即触发，保持启动时有完整间隔延迟的原始行为
+    ticker.tick().await;
 
     loop {
         ticker.tick().await;
@@ -109,8 +111,9 @@ pub async fn handle_static_monitoring_data_report() {
 
         trace!("Static Monitoring Data: {static_json}");
 
-        for server in agent_config.server.unwrap_or_default() {
+        for server in agent_config.server.as_deref().unwrap_or_default() {
             let static_json = Arc::clone(&static_json);
+            let server = server.clone();
             tokio::spawn(async move {
                 let rpc =
                     build_rpc_with_raw_data("agent_report_static", &server.token, &static_json);
@@ -141,6 +144,8 @@ pub async fn handle_dynamic_monitoring_data_report() {
 
     let mut ticker = interval(Duration::from_millis(summary_interval_ms));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    // 消费首次立即触发，保持启动时有完整间隔延迟的原始行为
+    ticker.tick().await;
 
     let mut tick_count: u64 = 0;
 
@@ -184,8 +189,9 @@ pub async fn handle_dynamic_monitoring_data_report() {
         if let Some(summary_json) = serialize_shared(&summary_data) {
             trace!("Dynamic Monitoring Summary Data: {summary_json}");
 
-            for server in agent_config.server.clone().unwrap_or_default() {
+            for server in agent_config.server.as_deref().unwrap_or_default() {
                 let summary_json = Arc::clone(&summary_json);
+                let server = server.clone();
                 tokio::spawn(async move {
                     let rpc = build_rpc_with_raw_data(
                         "agent_report_dynamic_summary",
@@ -207,8 +213,9 @@ pub async fn handle_dynamic_monitoring_data_report() {
             if let Some(dynamic_json) = serialize_shared(&dynamic_monitoring_data) {
                 trace!("Dynamic Monitoring Data: {dynamic_json}");
 
-                for server in agent_config.server.unwrap_or_default() {
+                for server in agent_config.server.as_deref().unwrap_or_default() {
                     let dynamic_json = Arc::clone(&dynamic_json);
+                    let server = server.clone();
                     tokio::spawn(async move {
                         let rpc = build_rpc_with_raw_data(
                             "agent_report_dynamic",

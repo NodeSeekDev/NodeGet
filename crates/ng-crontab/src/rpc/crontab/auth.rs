@@ -10,8 +10,8 @@ use ng_core::error::NodegetError;
 use ng_core::permission::data_structure::{
     Crontab as CrontabPermission, JsWorker as JsWorkerPermission, Permission, Scope, Task,
 };
+use ng_core::permission::permission_checker::require_permission_checker;
 use ng_core::permission::token_auth::TokenOrAuth;
-use ng_token::check_token_limit;
 use serde_json::Value;
 use std::collections::HashSet;
 use tracing::{trace, warn};
@@ -74,17 +74,19 @@ pub async fn ensure_crontab_payload_write_permission(
     cron_type: &CronType,
 ) -> anyhow::Result<()> {
     trace!(target: "crontab", "checking crontab payload write permission");
+    let checker = require_permission_checker()?;
     let scopes = scopes_from_cron_type(cron_type);
     let mut permissions = write_permissions_from_cron_type(cron_type);
     if matches!(cron_type, CronType::Agent(_, _)) {
         if scopes.is_empty() {
             // 空 Agent 列表：仅需 Global Scope 的 Crontab::Write
-            let has_crontab_write = check_token_limit(
-                token_or_auth,
-                vec![Scope::Global],
-                vec![Permission::Crontab(CrontabPermission::Write)],
-            )
-            .await?;
+            let has_crontab_write = checker
+                .check_token_limit(
+                    token_or_auth,
+                    vec![Scope::Global],
+                    vec![Permission::Crontab(CrontabPermission::Write)],
+                )
+                .await?;
             if has_crontab_write {
                 return Ok(());
             }
@@ -95,7 +97,7 @@ pub async fn ensure_crontab_payload_write_permission(
             .into());
         }
 
-        let is_allowed = check_token_limit(token_or_auth, scopes, permissions).await?;
+        let is_allowed = checker.check_token_limit(token_or_auth, scopes, permissions).await?;
         if is_allowed {
             return Ok(());
         }
@@ -109,7 +111,7 @@ pub async fn ensure_crontab_payload_write_permission(
 
     // Server 类型：仅保留 Crontab::Write，无需 Task::Create
     permissions.retain(|perm| matches!(perm, Permission::Crontab(CrontabPermission::Write)));
-    let has_crontab_write = check_token_limit(token_or_auth, scopes, permissions).await?;
+    let has_crontab_write = checker.check_token_limit(token_or_auth, scopes, permissions).await?;
     if !has_crontab_write {
         warn!(target: "crontab", "crontab write permission denied in global scope");
         return Err(NodegetError::PermissionDenied(
@@ -127,12 +129,13 @@ pub async fn ensure_crontab_payload_write_permission(
             .into());
         }
 
-        let has_js_worker_run = check_token_limit(
-            token_or_auth,
-            vec![Scope::JsWorker(worker_name.clone())],
-            vec![Permission::JsWorker(JsWorkerPermission::RunDefinedJsWorker)],
-        )
-        .await?;
+        let has_js_worker_run = checker
+            .check_token_limit(
+                token_or_auth,
+                vec![Scope::JsWorker(worker_name.clone())],
+                vec![Permission::JsWorker(JsWorkerPermission::RunDefinedJsWorker)],
+            )
+            .await?;
 
         if !has_js_worker_run {
             warn!(target: "crontab", worker_name = %worker_name, "missing js_worker run permission for crontab server JsWorker type");
@@ -169,7 +172,8 @@ pub async fn ensure_crontab_scope_permission(
     } else {
         scopes
     };
-    let is_allowed = check_token_limit(token_or_auth, scopes, vec![permission]).await?;
+    let checker = require_permission_checker()?;
+    let is_allowed = checker.check_token_limit(token_or_auth, scopes, vec![permission]).await?;
 
     if is_allowed {
         Ok(())

@@ -36,7 +36,13 @@ pub async fn js_inline_call(
 
     let result_json = spawn_on_server_runtime(async move {
         get_js_worker_service()
-            .run_inline_call_and_record_result(js_worker_name, params_json, timeout_sec, inline_caller)
+            .ok_or_else(|| "JsWorkerService not initialized".to_string())?
+            .run_inline_call_and_record_result(
+                js_worker_name,
+                params_json,
+                timeout_sec,
+                inline_caller,
+            )
             .await
             .map_err(|e| e.to_string())
     })

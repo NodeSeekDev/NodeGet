@@ -10,12 +10,13 @@ use std::sync::RwLock;
 
 /// 缓存内部数据，按 `uuid_id` 存储最近一次的数据哈希。
 struct Inner {
-    /// `uuid_id` → 数据哈希（前 16 字节）
-    by_uuid_id: HashMap<i16, Vec<u8>>,
+    /// `uuid_id` → 数据哈希（前 16 字节，栈上固定大小，避免每条目堆分配）
+    by_uuid_id: HashMap<i16, [u8; 16]>,
 }
 
 /// 静态数据哈希去重缓存。
 pub struct StaticHashCache {
+    /// 内部哈希映射数据（`uuid_id` → 数据哈希），通过 `RwLock` 保证并发安全
     inner: RwLock<Inner>,
 }
 
@@ -38,6 +39,14 @@ fn recover_write(lock: &RwLock<Inner>) -> std::sync::RwLockWriteGuard<'_, Inner>
     })
 }
 
+/// 将字节切片截取为 16 字节数组，不足 16 字节补零。
+fn truncate_to_16(bytes: &[u8]) -> [u8; 16] {
+    let mut arr = [0u8; 16];
+    let len = bytes.len().min(16);
+    arr[..len].copy_from_slice(&bytes[..len]);
+    arr
+}
+
 impl StaticHashCache {
     /// 初始化全局单例。
     pub fn init() {
@@ -48,15 +57,9 @@ impl StaticHashCache {
         });
     }
 
-    /// 获取全局单例引用，未初始化时 panic。
-    ///
-    /// # Panics
-    ///
-    /// 若全局 `StaticHashCache` 未初始化（即未调用 `init()`）则 panic。
-    pub fn global() -> &'static Self {
-        CACHE
-            .get()
-            .expect("StaticHashCache not initialized — call StaticHashCache::init() first")
+    /// 获取全局单例引用，未初始化时返回 `None`。
+    pub fn global() -> Option<&'static Self> {
+        CACHE.get()
     }
 
     /// 判断指定设备的静态数据哈希是否与缓存中的相同（即数据重复）。
@@ -69,15 +72,15 @@ impl StaticHashCache {
         guard
             .by_uuid_id
             .get(&uuid_id)
-            .is_some_and(|cached| cached == data_hash)
+            .is_some_and(|cached| *cached == truncate_to_16(data_hash))
     }
 
     /// 更新指定设备的静态数据哈希缓存。
     ///
     /// - `uuid_id` — 设备数字 ID
     /// - `data_hash` — 新数据的哈希值
-    pub fn update(&self, uuid_id: i16, data_hash: Vec<u8>) {
+    pub fn update(&self, uuid_id: i16, data_hash: &[u8]) {
         let mut guard = recover_write(&self.inner);
-        guard.by_uuid_id.insert(uuid_id, data_hash);
+        guard.by_uuid_id.insert(uuid_id, truncate_to_16(data_hash));
     }
 }

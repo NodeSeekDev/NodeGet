@@ -6,7 +6,6 @@
 //!
 //! | 条目 | 来源 | 说明 |
 //! |------|------|------|
-//! | `AuthChecker` + `set_auth_checker` / `get_auth_checker` | 新增 | 全局认证注入 |
 //! | `load_from_db` | 迁移自 `server/src/cache/mod.rs` | 使用 `ng_db::get_db()` |
 //! | `DbBackedCache` trait | 迁移自 `server/src/cache/mod.rs` | 路径已调整 |
 //! | `make_global_cache!` 宏 | 迁移自 `server/src/cache/mod.rs` | `$crate::server::DbBackedCache` |
@@ -16,47 +15,12 @@
 //! | `RpcHelper` trait | 迁移自 `server/src/rpc/mod.rs` | 使用 `ng_db::get_db()` |
 
 use ng_core::error::NodegetError;
-use ng_core::permission::data_structure::Token;
 use sea_orm::{ActiveValue, DatabaseConnection, EntityTrait, ModelTrait, Set};
 use serde::Serialize;
 use serde_json::value::RawValue;
 use serde_json::{Value, to_value};
 use std::fmt;
 use std::future::Future;
-use std::sync::OnceLock;
-
-// ── AuthChecker trait + 全局注入 ──────────────────────────────────────
-
-/// 认证检查 trait。
-///
-/// 实现类验证原始 Token 字符串（`key:secret` 或 `username|password`），
-/// 并返回对应的 [`Token`] 元数据。
-pub trait AuthChecker: Send + Sync {
-    /// 认证原始 Token 字符串，返回 Token 元数据。
-    fn check(&self, raw_token: &str) -> anyhow::Result<Token>;
-}
-
-/// 全局 AuthChecker 单例（OnceLock 保证仅初始化一次）
-static AUTH_CHECKER: OnceLock<Box<dyn AuthChecker>> = OnceLock::new();
-
-/// 设置全局 AuthChecker。
-///
-/// 必须在 Server 启动阶段调用一次。
-pub fn set_auth_checker(checker: Box<dyn AuthChecker>) {
-    let _ = AUTH_CHECKER.set(checker);
-}
-
-/// 获取全局 AuthChecker。
-///
-/// # Panics
-///
-/// 若未初始化则 panic——必须先调用 [`set_auth_checker`]。
-pub fn get_auth_checker() -> &'static dyn AuthChecker {
-    AUTH_CHECKER
-        .get()
-        .expect("AuthChecker not initialized -- call set_auth_checker first")
-        .as_ref()
-}
 
 // ── 辅助函数：一行从 Entity 全量加载 Models ────────────────────────────
 
@@ -165,16 +129,9 @@ macro_rules! make_global_cache {
 
             /// 获取全局实例。
             ///
-            /// # Panics
-            ///
-            /// 若未调用 `init()` 则 panic。
-            pub fn global() -> &'static Self {
-                $global.get().expect(concat!(
-                    stringify!($ty),
-                    " not initialized — call ",
-                    stringify!($ty),
-                    "::init() first"
-                ))
+            /// 若未调用 `init()` 则返回 `None`。
+            pub fn global() -> Option<&'static Self> {
+                $global.get()
             }
 
             /// 从 DB 重新加载缓存数据。

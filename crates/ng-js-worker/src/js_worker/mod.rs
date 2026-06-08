@@ -31,7 +31,10 @@ mod update;
 
 /// `js-worker` RPC trait 定义。
 #[rpc(server, namespace = "js-worker")]
+#[allow(clippy::too_many_arguments)]
 pub trait Rpc {
+    /// 创建新的 JS Worker（编译字节码并入库）。
+    #[allow(clippy::too_many_arguments)]
     #[method(name = "create")]
     async fn create(
         &self,
@@ -47,6 +50,8 @@ pub trait Rpc {
         max_heap_size: Option<i64>,
     ) -> RpcResult<Box<RawValue>>;
 
+    /// 更新 JS Worker（重新编译字节码、驱逐旧 Runtime）。
+    #[allow(clippy::too_many_arguments)]
     #[method(name = "update")]
     async fn update(
         &self,
@@ -62,12 +67,15 @@ pub trait Rpc {
         max_heap_size: Option<i64>,
     ) -> RpcResult<Box<RawValue>>;
 
+    /// 删除 JS Worker（驱逐 Runtime 后从数据库移除）。
     #[method(name = "delete")]
     async fn delete(&self, token: String, name: String) -> RpcResult<Box<RawValue>>;
 
+    /// 读取指定 JS Worker 的详情。
     #[method(name = "read")]
     async fn read(&self, token: String, name: String) -> RpcResult<Box<RawValue>>;
 
+    /// 执行 JS Worker（支持字节码或源码模式）。
     #[method(name = "run")]
     async fn run(
         &self,
@@ -79,9 +87,11 @@ pub trait Rpc {
         compile_mode: Option<CompileMode>,
     ) -> RpcResult<Box<RawValue>>;
 
+    /// 获取运行时池状态快照。
     #[method(name = "get_rt_pool")]
     async fn get_rt_pool(&self, token: String) -> RpcResult<Box<RawValue>>;
 
+    /// 列出所有可见的 JS Worker 名称。
     #[method(name = "list_all_js_worker")]
     async fn list_all_js_worker(&self, token: String) -> RpcResult<Box<RawValue>>;
 }

@@ -24,6 +24,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260517_000001_add_enable_to_static::Migration),
             Box::new(m20260524_000000_create_db_registry::Migration),
             Box::new(m20260531_000000_rename_static_to_static_file::Migration),
+            Box::new(m20260608_000000_add_indexes::Migration),
         ]
     }
 }
@@ -45,3 +46,4 @@ mod m20260517_000000_add_soft_delete_to_monitoring_uuid;
 mod m20260517_000001_add_enable_to_static;
 mod m20260524_000000_create_db_registry;
 mod m20260531_000000_rename_static_to_static_file;
+mod m20260608_000000_add_indexes;

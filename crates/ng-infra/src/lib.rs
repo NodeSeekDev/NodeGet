@@ -13,7 +13,6 @@
 //! - [`TruncatedRaw`] — RawValue 截断 Display 包装
 //! - [`RpcHelper`] trait — DB 连接与序列化工具
 //! - [`token_identity`] — Token 字符串解析
-//! - [`AuthChecker`] trait + 全局注入
 
 pub mod dispatcher;
 pub mod permission;

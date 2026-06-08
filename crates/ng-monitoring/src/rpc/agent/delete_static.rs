@@ -17,7 +17,7 @@ use ng_infra::server::RpcHelper;
 use ng_token::get::check_token_limit;
 use sea_orm::{ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde_json::value::RawValue;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 /// 删除静态监控数据。
 ///
@@ -30,6 +30,7 @@ use tracing::{debug, error};
 /// 2. 解析条件中的 `Limit`/`Last` 标记和 `ResolvedCondition`
 /// 3. 若有 Limit/Last：先查询 ID 列表，再按 ID 批量删除
 /// 4. 否则：直接按条件构建 `delete_many` 并执行
+#[allow(clippy::too_many_lines)]
 pub async fn delete_static(
     token: String,
     conditions: Vec<QueryCondition>,
@@ -48,6 +49,7 @@ pub async fn delete_static(
         .await?;
 
         if !is_allowed {
+            warn!(target: "monitoring", "权限拒绝: 缺少 StaticMonitoring Delete 权限");
             return Err(NodegetError::PermissionDenied(
                 "Permission Denied: Missing StaticMonitoring Delete permission for requested scope"
                     .to_owned(),
@@ -174,13 +176,12 @@ pub async fn delete_static(
 
         debug!(target: "monitoring", rows_affected = rows_affected, conditions = conditions.len(), "Static monitoring delete completed");
 
-        let json_str = format!(
-            "{{\"success\":true,\"deleted\":{},\"condition_count\":{}}}",
-            rows_affected,
-            conditions.len()
-        );
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        serde_json::value::to_raw_value(&serde_json::json!({
+            "success": true,
+            "deleted": rows_affected,
+            "condition_count": conditions.len()
+        }))
+        .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
     match process_logic.await {

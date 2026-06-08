@@ -8,6 +8,7 @@
 //! 所有写操作完成后调用 `StaticCache::reload()` 刷新内存缓存。
 
 use anyhow::Context;
+use arc_swap::ArcSwap;
 use base64::Engine as _;
 use ng_core::error::NodegetError;
 use ng_db::entity::static_file as static_entity;
@@ -15,13 +16,25 @@ use ng_db::get_db;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use tracing::{debug, error, warn};
 
 use crate::FileInfo;
 use crate::cache::StaticCache;
 
-/// 获取配置文件中的 `static_path`，默认 `./static/`
-pub fn get_static_path() -> String {
+/// 缓存已解析的 `static_path`，避免每次请求都获取配置 RwLock 读锁并克隆 `Option<String>`。
+///
+/// 使用 `ArcSwap` 而非 `OnceLock`，支持配置热重载时通过 [`reload_static_path`] 更新值。
+/// 外层 `OnceLock` 用于延迟初始化，避免 `ArcSwap::from` 在 static 中非常量的问题。
+static STATIC_PATH: OnceLock<ArcSwap<String>> = OnceLock::new();
+
+/// 获取 STATIC_PATH 的引用，首次访问时初始化为空字符串
+fn static_path_ref() -> &'static ArcSwap<String> {
+    STATIC_PATH.get_or_init(|| ArcSwap::from(Arc::new(String::new())))
+}
+
+/// 从配置中读取 `static_path` 的实际值，默认 `./static/`
+fn read_static_path_from_config() -> String {
     ng_config::get_server_config()
         .and_then(|lock| lock.read().ok())
         .map_or_else(
@@ -33,6 +46,34 @@ pub fn get_static_path() -> String {
                     .unwrap_or_else(|| "./static/".to_owned())
             },
         )
+}
+
+/// 获取配置文件中的 `static_path`，默认 `./static/`
+///
+/// 首次调用从配置读取并缓存到 `STATIC_PATH`，后续调用直接返回缓存值，
+/// 避免每次静态文件请求都获取 `std::sync::RwLock` 读锁 + 克隆 `String`。
+/// 配置热重载后需调用 [`reload_static_path`] 以更新缓存。
+pub fn get_static_path() -> String {
+    let cached = static_path_ref().load();
+    if cached.is_empty() {
+        // 首次访问：从配置读取并写入缓存
+        let val = read_static_path_from_config();
+        // 可能并发初始化，compare_and_swap 风格：无论谁先写入都行
+        static_path_ref().store(Arc::new(val));
+        static_path_ref().load().to_string()
+    } else {
+        cached.to_string()
+    }
+}
+
+/// 热重载时刷新 `static_path` 缓存
+///
+/// 从当前全局配置重新读取 `static_path` 并更新缓存，
+/// 使后续 [`get_static_path`] 调用返回新值。
+/// 应在配置热重载成功后调用。
+pub fn reload_static_path() {
+    let val = read_static_path_from_config();
+    static_path_ref().store(Arc::new(val));
 }
 
 /// 校验 static name 的合法性
@@ -259,7 +300,7 @@ pub async fn create_static(
 /// 返回：命中时返回 `Some(model)`，未命中返回 `None`。
 /// 数据源为 [`StaticCache`]，不访问数据库。
 pub async fn read_static(name: &str) -> anyhow::Result<Option<static_entity::Model>> {
-    let cache = StaticCache::global();
+    let cache = StaticCache::global().ok_or_else(|| NodegetError::ConfigNotFound("StaticCache not initialized".to_owned()))?;
     let model = cache.get_by_name(name).map(|arc| (*arc).clone());
     debug!(target: "static", name = %name, found = model.is_some(), "read_static from cache");
     Ok(model)
@@ -407,6 +448,7 @@ pub async fn upload_file(
     validate_name(name)?;
     // 必须先存在对应的 static 配置，并拿到它的 path 字段
     let model = StaticCache::global()
+        .ok_or_else(|| NodegetError::ConfigNotFound("StaticCache not initialized".to_owned()))?
         .get_by_name(name)
         .ok_or_else(|| NodegetError::NotFound(format!("Static '{name}' not found")))?;
 
@@ -452,6 +494,7 @@ pub async fn upload_file(
 pub async fn read_file(name: &str, file_path: &str) -> anyhow::Result<String> {
     validate_name(name)?;
     let model = StaticCache::global()
+        .ok_or_else(|| NodegetError::ConfigNotFound("StaticCache not initialized".to_owned()))?
         .get_by_name(name)
         .ok_or_else(|| NodegetError::NotFound(format!("Static '{name}' not found")))?;
 
@@ -485,6 +528,7 @@ pub async fn read_file(name: &str, file_path: &str) -> anyhow::Result<String> {
 pub async fn delete_file(name: &str, file_path: &str) -> anyhow::Result<()> {
     validate_name(name)?;
     let model = StaticCache::global()
+        .ok_or_else(|| NodegetError::ConfigNotFound("StaticCache not initialized".to_owned()))?
         .get_by_name(name)
         .ok_or_else(|| NodegetError::NotFound(format!("Static '{name}' not found")))?;
 
@@ -520,6 +564,7 @@ pub async fn delete_file(name: &str, file_path: &str) -> anyhow::Result<()> {
 pub async fn list_file(name: &str) -> anyhow::Result<Vec<FileInfo>> {
     validate_name(name)?;
     let model = StaticCache::global()
+        .ok_or_else(|| NodegetError::ConfigNotFound("StaticCache not initialized".to_owned()))?
         .get_by_name(name)
         .ok_or_else(|| NodegetError::NotFound(format!("Static '{name}' not found")))?;
 
@@ -544,6 +589,7 @@ pub async fn list_file(name: &str) -> anyhow::Result<Vec<FileInfo>> {
 pub async fn rename_file(name: &str, from: &str, to: &str) -> anyhow::Result<()> {
     validate_name(name)?;
     let model = StaticCache::global()
+        .ok_or_else(|| NodegetError::ConfigNotFound("StaticCache not initialized".to_owned()))?
         .get_by_name(name)
         .ok_or_else(|| NodegetError::NotFound(format!("Static '{name}' not found")))?;
 
@@ -583,7 +629,7 @@ pub async fn rename_file(name: &str, from: &str, to: &str) -> anyhow::Result<()>
 /// 数据源是 [`StaticCache`]，不访问数据库、不涉及磁盘 I/O。
 pub async fn list_all_names() -> Vec<String> {
     let mut names: Vec<String> = StaticCache::global()
-        .get_all()
+        .map_or_else(Vec::new, |c| c.get_all())
         .iter()
         .map(|m| m.name.clone())
         .collect();
@@ -788,6 +834,364 @@ mod tests {
         assert_eq!(files[0].path, "a.txt");
         assert_eq!(files[0].size, 1);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ── validate_name tests ──────────────────────────────────────
+
+    #[test]
+    fn validate_name_valid_simple() {
+        assert!(validate_name("mybucket").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_with_underscore() {
+        assert!(validate_name("my_bucket").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_with_dash() {
+        assert!(validate_name("my-bucket").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_with_dot() {
+        assert!(validate_name("bucket.v2").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_all_chars() {
+        assert!(validate_name("A-z_0.9").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_numeric() {
+        assert!(validate_name("12345").is_ok());
+    }
+
+    #[test]
+    fn validate_name_valid_single_char() {
+        assert!(validate_name("a").is_ok());
+    }
+
+    #[test]
+    fn validate_name_rejects_empty() {
+        let result = validate_name("");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("empty")));
+    }
+
+    #[test]
+    fn validate_name_rejects_too_long() {
+        let long_name = "a".repeat(129);
+        let result = validate_name(&long_name);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("128")));
+    }
+
+    #[test]
+    fn validate_name_accepts_exactly_128_chars() {
+        let name = "a".repeat(128);
+        assert!(validate_name(&name).is_ok());
+    }
+
+    #[test]
+    fn validate_name_rejects_dot() {
+        let result = validate_name(".");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("'.'") || msg.contains("'..'")));
+    }
+
+    #[test]
+    fn validate_name_rejects_dotdot() {
+        let result = validate_name("..");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_all_dots() {
+        let result = validate_name("...");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_slash() {
+        assert!(validate_name("a/b").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_backslash() {
+        assert!(validate_name("a\\b").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_space() {
+        assert!(validate_name("my bucket").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_unicode() {
+        assert!(validate_name("存储桶").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_special_chars() {
+        for ch in ['!', '@', '#', '$', '%', '&', '(', ')', '=', '+', '[', ']', '{', '}', '|', ';', ':', '\'', '"', '<', '>', ',', '?'] {
+            let name = format!("a{ch}b");
+            assert!(validate_name(&name).is_err(), "expected rejection for char '{ch}'");
+        }
+    }
+
+    #[test]
+    fn validate_name_rejects_leading_slash() {
+        assert!(validate_name("/bucket").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_trailing_slash() {
+        assert!(validate_name("bucket/").is_err());
+    }
+
+    #[test]
+    fn validate_name_accepts_dot_in_middle() {
+        assert!(validate_name("v1.2.3").is_ok());
+    }
+
+    // ── validate_sub_path tests ──────────────────────────────────
+
+    #[test]
+    fn validate_sub_path_valid_single_segment() {
+        assert!(validate_sub_path("sites").is_ok());
+    }
+
+    #[test]
+    fn validate_sub_path_valid_multi_segment() {
+        assert!(validate_sub_path("sites/blog-2026").is_ok());
+    }
+
+    #[test]
+    fn validate_sub_path_valid_with_dots() {
+        assert!(validate_sub_path("v1.0/release").is_ok());
+    }
+
+    #[test]
+    fn validate_sub_path_valid_deep_nesting() {
+        assert!(validate_sub_path("a/b/c/d/e").is_ok());
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_empty() {
+        let result = validate_sub_path("");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("empty")));
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_too_long() {
+        // Need >512 chars. Use 128-char segments (max allowed by validate_name) to exceed total limit.
+        let segment = "a".repeat(128);
+        // 5 segments of 128 chars + 4 separators = 640 + 4 = 644 chars
+        let long_path = vec![segment.as_str(); 5].join("/");
+        assert!(long_path.len() > 512);
+        let result = validate_sub_path(&long_path);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("512")));
+    }
+
+    #[test]
+    fn validate_sub_path_accepts_exactly_512_chars() {
+        // Each segment is max 128 chars (validate_name), so use multiple short segments
+        // "a/b" pattern: each segment 1 char, with separators, total near 512
+        let mut path = String::new();
+        // 256 segments of "a" separated by "/" = 256 + 255 = 511 chars
+        for i in 0..256 {
+            if i > 0 { path.push('/'); }
+            path.push('a');
+        }
+        assert_eq!(path.len(), 511); // 256 chars + 255 separators
+        assert!(validate_sub_path(&path).is_ok());
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_513_chars() {
+        // Build a path that exceeds 512 chars
+        let mut path = String::new();
+        for i in 0..257 {
+            if i > 0 { path.push('/'); }
+            path.push('a');
+        }
+        // 257 chars + 256 separators = 513
+        assert_eq!(path.len(), 513);
+        assert!(validate_sub_path(&path).is_err());
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_parent_dir() {
+        let result = validate_sub_path("../etc/passwd");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("..")));
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_mid_parent_dir() {
+        assert!(validate_sub_path("sites/../etc").is_err());
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_leading_slash() {
+        let result = validate_sub_path("/absolute");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("absolute")));
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_backslash() {
+        assert!(validate_sub_path("sites\\blog").is_err());
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_segment_with_dot_only() {
+        // Each segment goes through validate_name, which rejects all-dot segments
+        assert!(validate_sub_path("sites/...").is_err());
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_segment_dotdot() {
+        assert!(validate_sub_path("sites/..").is_err());
+    }
+
+    #[test]
+    fn validate_sub_path_curdir_is_ignored() {
+        // "." (CurDir) components are skipped, not validated as segments
+        // "sites/." resolves to just having "sites" as valid component — accepted
+        assert!(validate_sub_path("sites/.").is_ok());
+    }
+
+    #[test]
+    fn validate_sub_path_only_curdir_no_valid_component() {
+        // A path of only "." has no Normal components → rejected
+        assert!(validate_sub_path(".").is_err());
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_segment_with_space() {
+        assert!(validate_sub_path("sites/my blog").is_err());
+    }
+
+    #[test]
+    fn validate_sub_path_trailing_slash_accepted() {
+        // "sites/" — trailing slash produces no additional Normal component,
+        // but "sites" already counts as a valid component → accepted
+        assert!(validate_sub_path("sites/").is_ok());
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_only_curdir() {
+        // "./." — no Normal components, only CurDir
+        assert!(validate_sub_path("./.").is_err());
+    }
+
+    #[test]
+    fn validate_sub_path_rejects_only_slash() {
+        assert!(validate_sub_path("/").is_err());
+    }
+
+    #[test]
+    fn validate_sub_path_accepts_dot_in_segment_name() {
+        assert!(validate_sub_path("v1.2/site").is_ok());
+    }
+
+    // ── resolve_safe_file_path tests ─────────────────────────────
+
+    #[test]
+    fn resolve_safe_file_path_simple() {
+        let result = resolve_safe_file_path("/data/static", "sites", "index.html");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from("/data/static/sites/index.html"));
+    }
+
+    #[test]
+    fn resolve_safe_file_path_nested() {
+        let result = resolve_safe_file_path("/data/static", "sites", "docs/readme.md");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from("/data/static/sites/docs/readme.md"));
+    }
+
+    #[test]
+    fn resolve_safe_file_path_with_parent_traversal() {
+        let result = resolve_safe_file_path("/data/static", "sites", "../../../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_safe_file_path_with_exact_escape() {
+        // Trying to escape the base directory with enough ../
+        let result = resolve_safe_file_path("/data/static", "sites", "../../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_safe_file_path_with_single_parent() {
+        // One ../ should pop back to /data/static which is still valid base
+        // Actually: base = /data/static/sites, pop = /data/static, then push "foo"
+        // result = /data/static/foo — but that's NOT under /data/static/sites
+        let result = resolve_safe_file_path("/data/static", "sites", "../foo");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_safe_file_path_with_leading_slash() {
+        let result = resolve_safe_file_path("/data/static", "sites", "/etc/passwd");
+        // Leading slash is RootDir component which is ignored, then "etc/passwd" resolves normally
+        // Actually RootDir is skipped, so it resolves to /data/static/sites/etc/passwd
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn resolve_safe_file_path_with_curdir() {
+        let result = resolve_safe_file_path("/data/static", "sites", "./index.html");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from("/data/static/sites/index.html"));
+    }
+
+    #[test]
+    fn resolve_safe_file_path_empty_file_path() {
+        let result = resolve_safe_file_path("/data/static", "sites", "");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from("/data/static/sites"));
+    }
+
+    #[test]
+    fn resolve_safe_file_path_invalid_sub_path() {
+        let result = resolve_safe_file_path("/data/static", "../etc", "passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_safe_file_path_complex_traversal() {
+        let result = resolve_safe_file_path("/data/static", "a/b", "../../c/../../../etc");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_safe_file_path_stays_within_base() {
+        let result = resolve_safe_file_path("/data/static", "sites", "sub/file.txt");
+        assert!(result.is_ok());
+        let resolved = result.unwrap();
+        assert!(resolved.starts_with("/data/static/sites"));
     }
 
     #[cfg(unix)]

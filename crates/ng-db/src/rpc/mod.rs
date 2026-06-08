@@ -1,12 +1,11 @@
 //! RPC 层公共基础设施
 //!
-//! 提供 `AuthProvider` trait 与全局注入、RPC 日志宏（`rpc_exec!`）、
-//! 请求追踪工具（`token_identity`、`TruncatedRaw`）、`RpcHelper` trait 和错误转换函数。
+//! 提供 RPC 日志宏（`rpc_exec!`）、请求追踪工具（`token_identity`、`TruncatedRaw`）、
+//! `RpcHelper` trait 和错误转换函数。
 //!
-//! 协作关系：
-//! - 服务端二进制在启动时调用 `set_auth_provider` 注入具体实现
-//! - 各 RPC 命名空间通过 `auth_provider()` 获取认证能力
-//! - `rpc_exec!` 宏统一包装 RPC 返回值的日志输出
+//! 权限校验已统一至 `ng_core::permission::permission_checker::PermissionChecker`，
+//! 各 RPC 命名空间通过 `ng_core::permission::permission_checker::get_permission_checker()`
+//! 获取认证能力。
 
 use crate::get_db;
 use ng_core::error::NodegetError;
@@ -15,49 +14,11 @@ use serde::Serialize;
 use serde_json::value::RawValue;
 use serde_json::{Value, to_value};
 use std::fmt;
-use std::sync::{Arc, OnceLock};
 
 #[cfg(feature = "server")]
 pub mod db;
 #[cfg(feature = "server")]
 pub mod nodeget;
-
-// ── AuthProvider trait 与全局注入 ──────────────────────────────────
-
-/// 认证与鉴权提供者 trait
-///
-/// 由服务端二进制注入具体实现（最终委托给 ng-token 的 Token 验证逻辑），
-/// 业务 Crate 依赖此 trait 解耦对 ng-token 的直接引用。
-#[cfg(feature = "server")]
-pub trait AuthProvider: Send + Sync + 'static {
-    fn check_token_limit(
-        &self,
-        token_or_auth: &ng_core::permission::token_auth::TokenOrAuth,
-        scopes: Vec<ng_core::permission::data_structure::Scope>,
-        permissions: Vec<ng_core::permission::data_structure::Permission>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>>;
-
-    fn check_super_token(
-        &self,
-        token_or_auth: &ng_core::permission::token_auth::TokenOrAuth,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>>;
-}
-
-/// `AuthProvider` 全局单例，服务端启动时通过 `set_auth_provider` 注入
-#[cfg(feature = "server")]
-static AUTH_PROVIDER: OnceLock<Arc<dyn AuthProvider>> = OnceLock::new();
-
-/// 注入 `AuthProvider` 实现，仅应在服务端启动时调用一次
-#[cfg(feature = "server")]
-pub fn set_auth_provider(provider: Arc<dyn AuthProvider>) {
-    let _ = AUTH_PROVIDER.set(provider);
-}
-
-/// 获取已注入的 AuthProvider，未初始化时返回 None
-#[cfg(feature = "server")]
-pub fn auth_provider() -> Option<&'static Arc<dyn AuthProvider>> {
-    AUTH_PROVIDER.get()
-}
 
 // ── RPC 追踪与日志工具 ────────────────────────────────────────────
 

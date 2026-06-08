@@ -10,7 +10,6 @@
 //! ## `server` feature
 //! - `TaskManager` — broadcast channel manager for task events
 //! - Task RPC namespace — `task.*` JSON-RPC methods
-//! - `TaskAuthProvider` — trait for auth checking (injected by server)
 //! - `MonitoringUuidProvider` — trait for UUID cache operations (injected by server)
 
 pub mod types;
@@ -29,6 +28,6 @@ pub mod rpc;
 
 #[cfg(feature = "server")]
 pub use rpc::{
-    MonitoringUuidProvider, TaskAuthProvider, TaskManager, auth_provider, monitoring_uuid_provider,
-    rpc_module, set_auth_provider, set_monitoring_uuid_provider,
+    MonitoringUuidProvider, TaskManager, monitoring_uuid_provider,
+    rpc_module, set_monitoring_uuid_provider,
 };

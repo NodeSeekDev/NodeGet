@@ -2,8 +2,8 @@
 //!
 //! `JsWorkerScheduler` 由 Server 二进制在启动时通过 `set_js_worker_scheduler` 注入，
 //! 解耦 ng-crontab 与 ng-js-worker 的内部模块结构。
-//! Agent 类型定时任务通过 `crontab_task` 函数下发：逐个 UUID 创建 Task 记录，
-//! 发送 TaskEvent，失败时回滚已插入的记录，最终写入 CrontabResult。
+//! Agent 类型定时任务通过 `crontab_task` 函数下发：批量构建 Task 记录，
+//! 并发发送 TaskEvent，失败时批量回滚，最终批量写入 CrontabResult。
 
 use crate::rpc::crontab::CrontabRpcImpl;
 use ng_core::error::NodegetError;
@@ -13,8 +13,9 @@ use ng_db::get_db;
 use ng_infra::server::RpcHelper;
 use ng_js_runtime::RunType;
 use ng_task::{TaskEvent, TaskEventType, TaskManager};
-use sea_orm::{ActiveValue, EntityTrait, Set};
-use tracing::{Instrument, debug, error, info, info_span, warn};
+use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set};
+use tokio::task::JoinSet;
+use tracing::{Instrument, error, info, info_span, warn};
 use uuid::Uuid;
 
 // ── JsWorkerScheduler trait 注入 ─────────────────────────────────────
@@ -56,12 +57,13 @@ pub fn js_worker_scheduler() -> Option<&'static std::sync::Arc<dyn JsWorkerSched
 
 // ── Agent 任务下发 ────────────────────────────────────────────────
 
-/// 向指定 Agent UUID 列表下发定时任务。
+/// 向指定 Agent UUID 列表批量下发定时任务。
 ///
-/// 1. 逐个 UUID 生成随机 token 并创建 task 数据库记录
-/// 2. 通过 TaskManager 发送 TaskEvent 到对应 Agent
-/// 3. 若发送失败，回滚已插入的 task 记录
-/// 4. 将每次下发的结果写入 crontab_result 表
+/// 1. 一次性序列化 `task_event_type`，批量构建所有 task ActiveModel
+/// 2. 单次 `insert_many` 写入 task 记录，从 `last_insert_id` 推算连续 ID
+/// 3. 并发发送 TaskEvent 到各 Agent（JoinSet 替代逐个 await）
+/// 4. 批量回滚发送失败的 task 记录
+/// 5. 单次 `insert_many` 写入 crontab_result
 ///
 /// - `cron_id` - 定时任务 ID
 /// - `cron_name` - 定时任务名称
@@ -93,6 +95,9 @@ pub async fn crontab_task(
         };
 
         let agent_count = uuids.len();
+        if agent_count == 0 {
+            return;
+        }
         info!(
             target: "crontab",
             agent_count,
@@ -100,139 +105,148 @@ pub async fn crontab_task(
             "dispatching task to agents"
         );
 
-        for uuid in uuids {
-            // 单个 Agent 的下发逻辑：创建记录 -> 发送事件 -> 失败回滚
-            let process_logic =
-                async {
-                    // 生成随机 token 用于任务认证
-                    let token = generate_random_string(10);
+        // 序列化一次，所有 task 记录共享
+        let task_event_type_value =
+            <CrontabRpcImpl as RpcHelper>::try_set_json(task_event_type.clone())
+                .map_err(|e| NodegetError::SerializationError(format!("{e}")));
 
-                    let in_data = task::ActiveModel {
-                        id: ActiveValue::default(),
-                        uuid: Set(uuid),
-                        token: Set(token.clone()),
-                        cron_source: Set(Some(cron_name.clone())),
-                        timestamp: Set(None),
-                        success: Set(None),
-                        error_message: Set(None),
-                        task_event_type: <CrontabRpcImpl as RpcHelper>::try_set_json(
-                            task_event_type.clone(),
-                        )
-                        .map_err(|e| NodegetError::SerializationError(format!("{e}")))?,
-                        task_event_result: Set(None),
-                    };
+        let task_event_type_value = match task_event_type_value {
+            Ok(v) => v,
+            Err(e) => {
+                error!(target: "crontab", error = %e, "failed to serialize task_event_type");
+                return;
+            }
+        };
 
-                    let result = task::Entity::insert(in_data).exec(db).await.map_err(|e| {
-                        error!(
-                            target: "crontab",
-                            agent_uuid = %uuid,
-                            error = %e,
-                            "database insert error"
-                        );
-                        NodegetError::DatabaseError(format!("Database insert error: {e}"))
-                    })?;
+        // 批量构建 task ActiveModel
+        let mut tokens: Vec<String> = Vec::with_capacity(agent_count);
+        let task_models: Vec<task::ActiveModel> = uuids
+            .iter()
+            .map(|uuid| {
+                let token = generate_random_string(10);
+                tokens.push(token.clone());
+                task::ActiveModel {
+                    id: ActiveValue::default(),
+                    uuid: Set(*uuid),
+                    token: Set(token),
+                    cron_source: Set(Some(cron_name.clone())),
+                    timestamp: Set(None),
+                    success: Set(None),
+                    error_message: Set(None),
+                    task_event_type: task_event_type_value.clone(),
+                    task_event_result: Set(None),
+                }
+            })
+            .collect();
 
-                    let task_id = result.last_insert_id;
-                    debug!(
-                        target: "crontab",
-                        agent_uuid = %uuid,
-                        task_id,
-                        "task record inserted"
-                    );
+        // 批量 INSERT（单次 DB 往返），auto-increment 保证 ID 连续
+        let insert_result = match task::Entity::insert_many(task_models).exec(db).await {
+            Ok(r) => r,
+            Err(e) => {
+                error!(target: "crontab", error = %e, "batch task insert error");
+                return;
+            }
+        };
 
-                    let task = TaskEvent {
-                        task_id: task_id.cast_unsigned(),
-                        task_token: token,
-                        task_event_type: task_event_type.clone(),
-                    };
+        // 从 last_insert_id 推算连续 task_id，无需额外 SELECT
+        let last_id = match insert_result.last_insert_id {
+            Some(id) => id,
+            None => {
+                error!(target: "crontab", "batch insert returned no last_insert_id");
+                return;
+            }
+        };
+        let base_id = last_id - (agent_count as i64 - 1);
 
-                    let manager = TaskManager::global();
+        // 并发发送任务事件
+        let manager = TaskManager::global();
+        let mut send_set = JoinSet::new();
 
-                    // 尝试发送任务事件到 Agent，失败时回滚已插入的记录
-                    match manager.send_event(uuid, task).await {
-                        Ok(()) => {
-                            info!(
-                                target: "crontab",
-                                agent_uuid = %uuid,
-                                task_id,
-                                "task event sent to agent"
-                            );
-                            Ok(task_id)
-                        }
-                        Err(e) => {
-                            // 发送失败：回滚已插入的 task 记录
-                            let _ = task::Entity::delete_by_id(task_id).exec(db).await.map_err(
-                                |del_err| {
-                                    error!(
-                                        target: "crontab",
-                                        agent_uuid = %uuid,
-                                        task_id,
-                                        error = %del_err,
-                                        "database delete error during rollback"
-                                    );
-                                    NodegetError::DatabaseError(format!(
-                                        "Database delete error: {del_err}"
-                                    ))
-                                },
-                            );
-                            error!(
-                                target: "crontab",
-                                agent_uuid = %uuid,
-                                task_id,
-                                error = %e.1,
-                                "failed to send task event to agent"
-                            );
-                            Err(NodegetError::AgentConnectionError(format!(
-                                "Error sending task event: {}",
-                                e.1
-                            )))
-                        }
-                    }
-                };
+        for (i, uuid) in uuids.iter().enumerate() {
+            let task_id = base_id + i as i64;
+            let task = TaskEvent {
+                task_id: task_id.cast_unsigned(),
+                task_token: tokens[i].clone(),
+                task_event_type: task_event_type.clone(),
+            };
+            let uuid = *uuid;
+            send_set.spawn(async move {
+                (uuid, task_id, manager.send_event(uuid, task).await)
+            });
+        }
 
-            // 执行下发逻辑并获取结果状态
-            let (success, message, task_id) = match process_logic.await {
-                Ok(new_id) => (
-                    true,
-                    format!("任务下发成功，Agent：[{uuid}]，relative_id：{new_id}"),
-                    Some(new_id),
-                ),
+        // 收集发送结果
+        let mut crontab_results: Vec<crontab_result::ActiveModel> = Vec::with_capacity(agent_count);
+        let mut failed_task_ids: Vec<i64> = Vec::new();
+
+        while let Some(res) = send_set.join_next().await {
+            let (uuid, task_id, send_result) = match res {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(target: "crontab", error = %e, "send task panicked");
+                    continue;
+                }
+            };
+
+            match send_result {
+                Ok(()) => {
+                    info!(target: "crontab", agent_uuid = %uuid, task_id, "task event sent to agent");
+                    crontab_results.push(crontab_result::ActiveModel {
+                        id: ActiveValue::NotSet,
+                        cron_id: Set(cron_id),
+                        cron_name: Set(cron_name.clone()),
+                        relative_id: Set(Some(task_id)),
+                        run_time: Set(Some(chrono::Utc::now().timestamp_millis())),
+                        success: Set(Some(true)),
+                        message: Set(Some(format!(
+                            "任务下发成功，Agent：[{uuid}]，relative_id：{task_id}"
+                        ))),
+                    });
+                }
                 Err(e) => {
                     warn!(
                         target: "crontab",
                         agent_uuid = %uuid,
-                        error = %e,
-                        "task dispatch failed"
+                        task_id,
+                        error = %e.1,
+                        "failed to send task event to agent"
                     );
-                    (
-                        false,
-                        format!("任务下发失败，Agent：[{uuid}]，错误：{e}"),
-                        None,
-                    )
+                    failed_task_ids.push(task_id);
+                    crontab_results.push(crontab_result::ActiveModel {
+                        id: ActiveValue::NotSet,
+                        cron_id: Set(cron_id),
+                        cron_name: Set(cron_name.clone()),
+                        relative_id: Set(None),
+                        run_time: Set(Some(chrono::Utc::now().timestamp_millis())),
+                        success: Set(Some(false)),
+                        message: Set(Some(format!(
+                            "任务下发失败，Agent：[{uuid}]，错误：{}",
+                            e.1
+                        ))),
+                    });
                 }
-            };
-
-            // 写入执行结果到 crontab_result 表
-            let crontab_log = crontab_result::ActiveModel {
-                id: ActiveValue::NotSet,
-                cron_id: Set(cron_id),
-                cron_name: Set(cron_name.clone()),
-                relative_id: Set(task_id),
-                run_time: Set(Some(chrono::Utc::now().timestamp_millis())),
-                success: Set(Some(success)),
-                message: Set(Some(message)),
-            };
-
-            if let Err(e) = crontab_result::Entity::insert(crontab_log).exec(db).await {
-                error!(
-                    target: "crontab",
-                    agent_uuid = %uuid,
-                    error = %e,
-                    "failed to save crontab_result"
-                );
             }
         }
+
+        // 批量回滚发送失败的 task 记录
+        if !failed_task_ids.is_empty()
+            && let Err(e) = task::Entity::delete_many()
+            .filter(task::Column::Id.is_in(failed_task_ids))
+            .exec(db)
+            .await
+        {
+            error!(target: "crontab", error = %e, "failed to batch delete failed task records");
+        }
+
+        // 批量写入 crontab_result（单次 DB 往返）
+        if !crontab_results.is_empty()
+            && let Err(e) = crontab_result::Entity::insert_many(crontab_results)
+            .exec(db)
+            .await
+        {
+            error!(target: "crontab", error = %e, "failed to batch save crontab_results");
+        }
     }
-    .instrument(span)
-    .await;
+        .instrument(span)
+        .await;
 }

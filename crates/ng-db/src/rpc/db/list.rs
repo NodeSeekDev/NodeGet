@@ -1,13 +1,13 @@
 //! `db.list` RPC 实现 — 列出所有用户数据库
 
 use crate::db_registry::DbRegistryManager;
-use crate::rpc::{auth_provider, to_rpc_error, token_identity};
+use crate::rpc::{to_rpc_error, token_identity};
 use jsonrpsee::core::RpcResult;
 use ng_core::error::NodegetError;
 use ng_core::permission::data_structure::{Db as DbPermission, Permission, Scope};
 use ng_core::permission::token_auth::TokenOrAuth;
 use serde_json::value::RawValue;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// 列出所有已注册数据库
 ///
@@ -24,8 +24,8 @@ pub async fn list(token: String) -> RpcResult<Box<RawValue>> {
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-        let provider = auth_provider()
-            .ok_or_else(|| NodegetError::Other("Auth provider not initialized".to_owned()))?;
+        let provider = ng_core::permission::permission_checker::get_permission_checker()
+            .ok_or_else(|| NodegetError::ConfigNotFound("PermissionChecker not initialized".to_owned()))?;
 
         let is_allowed = provider
             .check_token_limit(
@@ -36,13 +36,16 @@ pub async fn list(token: String) -> RpcResult<Box<RawValue>> {
             .await?;
 
         if !is_allowed {
+            warn!(target: "db", "权限拒绝: Db::List in Global scope");
             return Err(NodegetError::PermissionDenied(
                 "Permission Denied: Requires Db::List in Global scope".to_owned(),
             )
             .into());
         }
 
-        let mgr = DbRegistryManager::global();
+        let mgr = DbRegistryManager::global().ok_or_else(|| {
+            NodegetError::ConfigNotFound("DbRegistryManager not initialized".to_owned())
+        })?;
         let all = mgr.list_all().await?;
 
         debug!(target: "db", token_key = tk, username = un, count = all.len(), "database list");
@@ -52,8 +55,7 @@ pub async fn list(token: String) -> RpcResult<Box<RawValue>> {
             "data": all,
         });
 
-        let json_str = serde_json::to_string(&resp)?;
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&resp)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

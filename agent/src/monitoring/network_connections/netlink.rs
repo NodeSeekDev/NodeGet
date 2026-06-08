@@ -6,6 +6,7 @@
 //! 参考：linux/inet_diag.h、linux/sock_diag.h
 
 use libc::{c_void, close, recvfrom, sendto, sockaddr, sockaddr_nl, socket};
+use log::{error, warn};
 use std::io;
 use std::mem::{size_of, zeroed};
 use std::os::fd::RawFd;
@@ -26,12 +27,17 @@ const NLMSG_HDRLEN: usize = size_of::<libc::nlmsghdr>();
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct InetDiagSockId {
+    /// 源端口
     idiag_sport: u16,
+    /// 目标端口
     idiag_dport: u16,
     /// 源地址，长度足以容纳 IPv6（IPv4 仅使用 `[0]`）
     idiag_src: [u32; 4],
+    /// 目标地址
     idiag_dst: [u32; 4],
+    /// 接口索引
     idiag_if: u32,
+    /// 内核 Cookie（用于唯一标识 socket）
     idiag_cookie: [u32; 2],
 }
 
@@ -43,10 +49,13 @@ struct InetDiagReqV2 {
     family: u8,
     /// 传输协议（IPPROTO_TCP / IPPROTO_UDP）
     protocol: u8,
+    /// 扩展信息位掩码
     ext: u8,
+    /// 对齐填充
     pad: u8,
     /// 查询的状态位掩码
     states: u32,
+    /// Socket 标识查询条件
     id: InetDiagSockId,
 }
 
@@ -104,7 +113,9 @@ pub fn connections_count_with_protocol(family: u8, protocol: u8) -> io::Result<u
 fn netlink_inet_diag_only_count(request: &[u8]) -> io::Result<u64> {
     let fd = unsafe { socket(libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_SOCK_DIAG) };
     if fd < 0 {
-        return Err(io::Error::last_os_error());
+        let e = io::Error::last_os_error();
+        error!(target: "monitoring", "Netlink 错误: 创建 socket 失败: {e}");
+        return Err(e);
     }
     let _guard = FdGuard(fd);
 
@@ -125,7 +136,9 @@ fn netlink_inet_diag_only_count(request: &[u8]) -> io::Result<u64> {
         )
     };
     if ret < 0 {
-        return Err(io::Error::last_os_error());
+        let e = io::Error::last_os_error();
+        error!(target: "monitoring", "Netlink 错误: sendto 失败: {e}");
+        return Err(e);
     }
 
     // 准备读取缓冲区，按页大小分配
@@ -152,7 +165,9 @@ fn netlink_inet_diag_only_count(request: &[u8]) -> io::Result<u64> {
             )
         };
         if nr < 0 {
-            return Err(io::Error::last_os_error());
+            let e = io::Error::last_os_error();
+            error!(target: "monitoring", "Netlink 错误: recvfrom 失败: {e}");
+            return Err(e);
         }
         let nr = nr as usize;
         if nr < NLMSG_HDRLEN {
@@ -207,6 +222,7 @@ fn count_netlink_messages(mut b: &[u8]) -> io::Result<(u64, bool)> {
 /// 在严格对齐目标（如 ARMv7）上直接引用转换可能产生 SIGBUS。
 fn netlink_message_header(b: &[u8]) -> io::Result<(usize, bool)> {
     if b.len() < NLMSG_HDRLEN {
+        warn!(target: "monitoring", "Netlink 错误: 消息头部长度不足");
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     }
 
@@ -215,6 +231,7 @@ fn netlink_message_header(b: &[u8]) -> io::Result<(usize, bool)> {
     let l = nlm_align_of(len as i32) as usize;
 
     if len < NLMSG_HDRLEN || l > b.len() {
+        warn!(target: "monitoring", "Netlink 错误: 消息长度异常 len={len}, aligned={l}, buf_len={}", b.len());
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     }
 

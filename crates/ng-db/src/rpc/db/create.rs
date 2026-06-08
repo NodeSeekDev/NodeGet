@@ -46,7 +46,9 @@ pub async fn create(token: String, name: String) -> RpcResult<Box<RawValue>> {
         }
 
         // 通过 DbRegistryManager 创建 SQLite 文件并注册到 db_registry 表
-        let mgr = DbRegistryManager::global();
+        let mgr = DbRegistryManager::global().ok_or_else(|| {
+            NodegetError::ConfigNotFound("DbRegistryManager not initialized".to_owned())
+        })?;
         let _conn = mgr.create_conn(&name, None).await?;
 
         debug!(target: "db", token_key = tk, username = un, name = %name, "database created");
@@ -59,8 +61,7 @@ pub async fn create(token: String, name: String) -> RpcResult<Box<RawValue>> {
             }
         });
 
-        let json_str = serde_json::to_string(&resp)?;
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&resp)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

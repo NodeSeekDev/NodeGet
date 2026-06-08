@@ -39,8 +39,10 @@ pub async fn read(token: String, name: String) -> RpcResult<Box<RawValue>> {
         let model =
             model.ok_or_else(|| NodegetError::NotFound(format!("Database '{name}' not found")))?;
 
-        let mgr = DbRegistryManager::global();
-        let is_active = mgr.has_conn(&name).await;
+        let mgr = DbRegistryManager::global().ok_or_else(|| {
+            NodegetError::ConfigNotFound("DbRegistryManager not initialized".to_owned())
+        })?;
+        let is_active = mgr.has_conn(&name);
 
         debug!(target: "db", token_key = tk, username = un, name = %name, "database read");
 
@@ -54,8 +56,7 @@ pub async fn read(token: String, name: String) -> RpcResult<Box<RawValue>> {
             }
         });
 
-        let json_str = serde_json::to_string(&resp)?;
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&resp)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

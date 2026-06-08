@@ -12,7 +12,7 @@ use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilt
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::RwLock;
-use tracing::info;
+use tracing::{debug, info, trace};
 use uuid::Uuid;
 
 /// 缓存内部数据结构，持有两个方向的映射。
@@ -25,6 +25,7 @@ struct MonitoringUuidCacheInner {
 
 /// 监控 UUID 双向缓存，支持软删除标记。
 pub struct MonitoringUuidCache {
+    /// 内部双向映射数据（`UUID↔ID`），通过 `RwLock` 保证并发安全
     inner: RwLock<MonitoringUuidCacheInner>,
 }
 
@@ -179,9 +180,12 @@ impl MonitoringUuidCache {
             if let Some((id, soft_delete)) = guard.by_uuid.get(&uuid)
                 && !soft_delete
             {
+                trace!(target: "monitoring", %uuid, id, "get_or_insert: 缓存命中，UUID 活跃");
                 return Ok(*id);
             }
         }
+
+        trace!(target: "monitoring", %uuid, "get_or_insert: 缓存未命中，查询数据库");
 
         let db = ng_db::get_db().ok_or_else(|| {
             NodegetError::DatabaseError("Database connection not initialized".to_owned())
@@ -198,18 +202,24 @@ impl MonitoringUuidCache {
         if let Some(model) = existing {
             let id = model.id as i16;
             if model.soft_delete {
+                debug!(target: "monitoring", %uuid, id, "get_or_insert: 数据库中找到软删除条目，执行复活");
                 let mut active: monitoring_uuid::ActiveModel = model.into();
                 active.soft_delete = Set(false);
                 active.update(db).await.map_err(|e| {
                     NodegetError::DatabaseError(format!("Failed to resurrect monitoring_uuid: {e}"))
                 })?;
                 info!(target: "monitoring_uuid_cache", %uuid, "Resurrected soft-deleted uuid");
+            } else {
+                debug!(target: "monitoring", %uuid, id, "get_or_insert: 数据库中找到活跃条目，更新缓存");
             }
             let mut guard = recover_write(&self.inner);
             guard.by_uuid.insert(uuid, (id, false));
             guard.by_id.insert(id, (uuid, false));
+            drop(guard);
             return Ok(id);
         }
+
+        debug!(target: "monitoring", %uuid, "get_or_insert: 数据库中不存在，插入新记录");
 
         let new_model = monitoring_uuid::ActiveModel {
             id: ActiveValue::default(),
@@ -225,9 +235,11 @@ impl MonitoringUuidCache {
             })?;
 
         let id = result.last_insert_id as i16;
+        debug!(target: "monitoring", %uuid, id, "get_or_insert: 新记录插入成功");
         let mut guard = recover_write(&self.inner);
         guard.by_uuid.insert(uuid, (id, false));
         guard.by_id.insert(id, (uuid, false));
+        drop(guard);
         Ok(id)
     }
 
@@ -274,6 +286,7 @@ impl MonitoringUuidCache {
         let mut guard = recover_write(&self.inner);
         guard.by_uuid.insert(uuid, (id, true));
         guard.by_id.insert(id, (uuid, true));
+        drop(guard);
 
         info!(target: "monitoring_uuid_cache", %uuid, "Soft-deleted uuid");
         Ok(true)

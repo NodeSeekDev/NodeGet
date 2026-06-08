@@ -13,19 +13,22 @@
 use crate::AGENT_CONFIG;
 use ng_config::config::agent::AgentConfig;
 use ng_core::error::NodegetError;
+use std::sync::Arc;
 
-/// Return a cloned snapshot of the current [`AgentConfig`].
+/// Return an Arc snapshot of the current [`AgentConfig`].
+///
+/// `Arc::clone` 仅增加引用计数（O(1)），避免深拷贝含 `Vec<Server>` 等字段的结构体。
 ///
 /// # Errors
 ///
 /// * 若 [`crate::AGENT_CONFIG`] 尚未初始化（理论上只在启动阶段发生）。
 /// * 若 `RwLock` 被毒化（上一个写者在写期间 panic）。
-pub fn get_agent_config() -> Result<AgentConfig, NodegetError> {
+pub fn get_agent_config() -> Result<Arc<AgentConfig>, NodegetError> {
     AGENT_CONFIG
         .get()
         .ok_or_else(|| NodegetError::Other("Agent config not initialized".to_owned()))?
         .read()
-        .map(|guard| guard.clone())
+        .map(|guard| Arc::clone(&*guard))
         .map_err(|_| NodegetError::Other("AGENT_CONFIG lock poisoned".to_owned()))
 }
 
@@ -36,9 +39,12 @@ pub fn get_agent_config() -> Result<AgentConfig, NodegetError> {
 /// 同 `current_agent_uuid_string`。
 #[must_use]
 pub fn current_agent_uuid() -> uuid::Uuid {
-    current_agent_uuid_string()
-        .parse()
-        .expect("agent_uuid in config is not a valid UUID")
+    AGENT_CONFIG
+        .get()
+        .expect("Agent config not initialized")
+        .read()
+        .expect("AGENT_CONFIG lock poisoned")
+        .agent_uuid
 }
 /// 返回当前 Agent 的 UUID 字符串。
 ///

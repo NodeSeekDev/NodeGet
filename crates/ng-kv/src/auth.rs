@@ -1,65 +1,19 @@
 //! KV 权限校验。
 //!
 //! 提供 KV 存储的 RBAC 权限校验功能：
-//! - `TokenPermissionChecker` trait 及全局注入（`set_token_checker`、`get_token_checker`）
 //! - Key 校验（`validate_key`、`validate_key_pattern`）
 //! - 读写删权限检查（`check_kv_read_permission`、`check_kv_write_permission`、`check_kv_delete_permission`）
 //! - 命名空间级权限（`check_kv_delete_namespace_permission`、`check_kv_list_keys_permission`、`resolve_kv_list_namespace_permission`、`check_kv_create_permission`）
+//!
+//! 权限校验委托至全局 `ng_core::permission::permission_checker::PermissionChecker`。
 
 use ng_core::error::NodegetError;
-use ng_core::permission::data_structure::{Kv, Permission, Scope, Token};
+use ng_core::permission::data_structure::{Kv, Permission, Scope};
+use ng_core::permission::permission_checker::require_permission_checker as get_checker;
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_core::utils::get_local_timestamp_ms_i64;
 use std::collections::HashSet;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::OnceLock;
 use tracing::{debug, trace, warn};
-
-// ── TokenPermissionChecker trait + 全局注入 ────────────────────
-
-/// Token 权限检查 trait，由服务器二进制在启动时注入具体实现
-///
-/// 服务器 crate 必须实现此 trait，并通过 [`set_token_checker`] 在启动时注入
-pub trait TokenPermissionChecker: Send + Sync {
-    /// 检查 Token/Auth 是否满足给定的 scope 和 permission 约束
-    fn check_token_limit(
-        &self,
-        token_or_auth: &TokenOrAuth,
-        scopes: Vec<Scope>,
-        permissions: Vec<Permission>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + '_>>;
-
-    /// 检查 Token/Auth 是否为 SuperToken
-    fn check_super_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + '_>>;
-
-    /// 获取 Token/Auth 的元数据信息
-    fn get_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Token>> + Send + '_>>;
-}
-
-/// 全局 TokenPermissionChecker 单例，由服务器启动时通过 `set_token_checker` 注入
-static TOKEN_CHECKER: OnceLock<Box<dyn TokenPermissionChecker>> = OnceLock::new();
-
-/// 设置全局 Token 权限检查器，服务器启动时调用一次
-pub fn set_token_checker(checker: Box<dyn TokenPermissionChecker>) {
-    let _ = TOKEN_CHECKER.set(checker);
-}
-
-/// 获取全局 Token 权限检查器
-///
-/// 若未初始化则 panic，需确保先调用 [`set_token_checker`]
-pub fn get_token_checker() -> &'static dyn TokenPermissionChecker {
-    TOKEN_CHECKER
-        .get()
-        .expect("TokenPermissionChecker not initialized — call set_token_checker first")
-        .as_ref()
-}
 
 // ── KV 权限类型 ────────────────────────────────────────────────
 
@@ -137,7 +91,7 @@ pub async fn check_kv_read_permission(
     // 验证 key 不包含非法字符
     validate_key(key)?;
 
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -192,7 +146,7 @@ pub async fn check_kv_read_permission_with_pattern(
     trace!(target: "kv", namespace = %namespace, key_pattern = %key_pattern, "checking read permission with pattern");
     validate_key_pattern(key_pattern)?;
 
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -245,7 +199,7 @@ pub async fn check_kv_write_permission(
     // 验证 key 不包含非法字符
     validate_key(key)?;
 
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -301,7 +255,7 @@ pub async fn check_kv_delete_permission(
     // 验证 key 不包含非法字符
     validate_key(key)?;
 
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -352,7 +306,7 @@ pub async fn check_kv_delete_namespace_permission(
 ) -> anyhow::Result<()> {
     trace!(target: "kv", namespace = %namespace, "checking delete namespace permission");
 
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -383,7 +337,7 @@ pub async fn check_kv_delete_namespace_permission(
 /// 如果有权限返回 Ok(()，否则返回错误
 pub async fn check_kv_list_keys_permission(token: &str, namespace: &str) -> anyhow::Result<()> {
     trace!(target: "kv", namespace = %namespace, "checking list keys permission");
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -417,7 +371,7 @@ pub async fn resolve_kv_list_namespace_permission(
     token: &str,
 ) -> anyhow::Result<KvNamespaceListPermission> {
     trace!(target: "kv", "checking list namespace permission");
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -490,6 +444,141 @@ pub async fn resolve_kv_list_namespace_permission(
     Err(NodegetError::PermissionDenied("No permission to list KV namespaces".to_owned()).into())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── validate_key ──────────────────────────────────────────────
+
+    #[test]
+    fn validate_key_valid_simple() {
+        assert!(validate_key("mykey").is_ok());
+    }
+
+    #[test]
+    fn validate_key_valid_with_slash() {
+        assert!(validate_key("path/to/key").is_ok());
+    }
+
+    #[test]
+    fn validate_key_valid_with_spaces() {
+        assert!(validate_key("my key").is_ok());
+    }
+
+    #[test]
+    fn validate_key_valid_with_dots() {
+        assert!(validate_key("config.json").is_ok());
+    }
+
+    #[test]
+    fn validate_key_valid_with_dashes() {
+        assert!(validate_key("my-key-123").is_ok());
+    }
+
+    #[test]
+    fn validate_key_valid_empty() {
+        // validate_key does not check for empty — only checks '*'
+        assert!(validate_key("").is_ok());
+    }
+
+    #[test]
+    fn validate_key_rejects_asterisk() {
+        let result = validate_key("bad*key");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("*")));
+    }
+
+    #[test]
+    fn validate_key_rejects_prefix_wildcard() {
+        assert!(validate_key("*key").is_err());
+    }
+
+    #[test]
+    fn validate_key_rejects_suffix_wildcard() {
+        assert!(validate_key("key*").is_err());
+    }
+
+    #[test]
+    fn validate_key_rejects_standalone_wildcard() {
+        assert!(validate_key("*").is_err());
+    }
+
+    #[test]
+    fn validate_key_rejects_multiple_asterisks() {
+        assert!(validate_key("a*b*c").is_err());
+    }
+
+    #[test]
+    fn validate_key_valid_unicode() {
+        assert!(validate_key("键值").is_ok());
+    }
+
+    // ── validate_key_pattern ──────────────────────────────────────
+
+    #[test]
+    fn validate_key_pattern_valid_simple() {
+        assert!(validate_key_pattern("mykey").is_ok());
+    }
+
+    #[test]
+    fn validate_key_pattern_valid_suffix_wildcard() {
+        assert!(validate_key_pattern("metadata_*").is_ok());
+    }
+
+    #[test]
+    fn validate_key_pattern_valid_standalone_wildcard() {
+        assert!(validate_key_pattern("*").is_ok());
+    }
+
+    #[test]
+    fn validate_key_pattern_valid_prefix_then_wildcard() {
+        assert!(validate_key_pattern("abc_*").is_ok());
+    }
+
+    #[test]
+    fn validate_key_pattern_rejects_empty() {
+        let result = validate_key_pattern("");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("empty")));
+    }
+
+    #[test]
+    fn validate_key_pattern_rejects_prefix_wildcard() {
+        let result = validate_key_pattern("*key");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let nodeget_err = err.downcast_ref::<NodegetError>().unwrap();
+        assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("*")));
+    }
+
+    #[test]
+    fn validate_key_pattern_rejects_middle_wildcard() {
+        let result = validate_key_pattern("a*b");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_key_pattern_rejects_multiple_asterisks() {
+        let result = validate_key_pattern("a**b");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_key_pattern_rejects_double_wildcard_at_end() {
+        let result = validate_key_pattern("abc_**");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_key_pattern_valid_no_wildcard_complex() {
+        assert!(validate_key_pattern("config.json").is_ok());
+    }
+}
+
 /// 检查是否有创建命名空间的权限
 /// 只有 `SuperToken` 才有权限创建命名空间
 ///
@@ -500,7 +589,7 @@ pub async fn resolve_kv_list_namespace_permission(
 /// 如果有权限返回 Ok(()，否则返回错误
 pub async fn check_kv_create_permission(token: &str) -> anyhow::Result<()> {
     trace!(target: "kv", "checking create namespace permission");
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 

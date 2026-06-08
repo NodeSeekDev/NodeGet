@@ -33,6 +33,10 @@ pub const DEFAULT_MAX_STACK_SIZE_BYTES: usize = 1024 * 1024;
 /// `max_heap_size` 的应用层默认值（bytes）。与历史常量 `JS_RT_MEMORY_LIMIT_BYTES` 一致。
 pub const DEFAULT_MAX_HEAP_SIZE_BYTES: usize = JS_RT_MEMORY_LIMIT_BYTES;
 
+/// I/O drain 窗口（ms）。一次性 Runtime 的 current-thread 在 `block_on` 返回后
+/// 不再被轮询，此窗口让 hyper 连接 task 处理关闭信号，防止 TCP 停留在 `CLOSE_WAIT`。
+const DRAIN_IO_MS: u64 = 100;
+
 /// 来自 DB 的可选限制三元组，外加应用层默认兜底。
 ///
 /// 三个字段对应 `js_worker` 表的 `max_run_time` / `max_stack_size` / `max_heap_size`。
@@ -95,10 +99,7 @@ impl RuntimeLimits {
         caller_soft_timeout: Option<std::time::Duration>,
     ) -> std::time::Duration {
         let hard = std::time::Duration::from_millis(self.max_run_time_ms);
-        match caller_soft_timeout {
-            Some(soft) => hard.min(soft),
-            None => hard,
-        }
+        caller_soft_timeout.map_or(hard, |soft| hard.min(soft))
     }
 }
 
@@ -112,6 +113,7 @@ impl Default for RuntimeLimits {
 ///
 /// `set_memory_limit(0)` 在 `QuickJS` 里表示"无限"；我们始终传正数。
 /// `set_max_stack_size` 必须在第一次执行脚本之前调用才有意义。
+#[allow(clippy::future_not_send)]
 pub(crate) async fn apply_runtime_limits(rt: &AsyncRuntime, limits: RuntimeLimits) {
     rt.set_memory_limit(limits.max_heap_size_bytes).await;
     rt.set_max_stack_size(limits.max_stack_size_bytes).await;
@@ -125,6 +127,7 @@ pub(crate) async fn apply_runtime_limits(rt: &AsyncRuntime, limits: RuntimeLimit
 /// `store(true)`，`QuickJS` 下一个检查点就被打断。
 ///
 /// 这样即便脚本里写的是 `while(true){}` 这种无 await 纯 CPU 循环，也能被杀。
+#[allow(clippy::future_not_send)]
 pub(crate) async fn install_kill_handler(rt: &AsyncRuntime, kill_flag: Arc<AtomicBool>) {
     rt.set_interrupt_handler(Some(Box::new(move || kill_flag.load(Ordering::Relaxed))))
         .await;
@@ -142,7 +145,9 @@ pub(crate) async fn install_kill_handler(rt: &AsyncRuntime, kill_flag: Arc<Atomi
 
 /// 看门狗线程中一条活跃监控记录。
 struct ActiveWatch {
+    /// 截止时间（毫秒时间戳）
     deadline_ms: u64,
+    /// 强制终止标记
     kill_flag: Arc<AtomicBool>,
     /// 当 `cancel_tx` drop 时，`try_recv` 返回 `Disconnected`，表示执行完成、取消监控。
     cancel_rx: mpsc::Receiver<()>,
@@ -150,20 +155,28 @@ struct ActiveWatch {
 
 /// 看门狗请求：向常驻看门狗线程注册一条监控。
 struct WatchdogRegister {
+    /// 截止时间（毫秒时间戳）
     deadline_ms: u64,
+    /// 强制终止标记
     kill_flag: Arc<AtomicBool>,
+    /// 取消信号接收端
     cancel_rx: mpsc::Receiver<()>,
 }
 
 /// 全局看门狗管理器，持有向常驻看门狗线程发送注册请求的通道。
 struct WatchdogManager {
+    /// Watchdog 命令发送端
     sender: mpsc::Sender<WatchdogRegister>,
 }
 
 impl WatchdogManager {
     /// 注册一个看门狗监控请求，返回 `cancel_tx`。
     /// 执行完成后 `drop` `cancel_tx` 或 `send(())` 即可取消监控。
-    fn register(&self, kill_flag: Arc<AtomicBool>, duration: std::time::Duration) -> mpsc::Sender<()> {
+    fn register(
+        &self,
+        kill_flag: Arc<AtomicBool>,
+        duration: std::time::Duration,
+    ) -> mpsc::Sender<()> {
         let deadline_ms = now_ms() + duration.as_millis() as u64;
         let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
         // 注册失败（看门狗线程已退出）不影响正确性——看门狗是尽力辅助
@@ -214,10 +227,7 @@ fn init_watchdog_manager() -> WatchdogManager {
                 let nearest = active.iter().map(|w| w.deadline_ms).min();
 
                 // 4. Sleep 到最近的 deadline（或短间隔以检查新请求）
-                let sleep_ms = match nearest {
-                    Some(d) => (d.saturating_sub(now_ms())).min(50),
-                    None => 50, // 无活跃请求，短轮询间隔
-                };
+                let sleep_ms = nearest.map_or(50, |d| (d.saturating_sub(now_ms())).min(50));
                 if sleep_ms > 0 {
                     let _ = req_rx.recv_timeout(std::time::Duration::from_millis(sleep_ms));
                 }
@@ -246,7 +256,10 @@ static WATCHDOG_MANAGER: OnceLock<WatchdogManager> = OnceLock::new();
 ///
 /// 语义与原 `spawn_kill_watchdog` 一致：到时间仍未被 cancel 就 `store(true)`。
 /// 区别是使用常驻看门狗线程，不再每次 spawn/join。
-pub(crate) fn register_watchdog(kill_flag: Arc<AtomicBool>, duration: std::time::Duration) -> mpsc::Sender<()> {
+pub(crate) fn register_watchdog(
+    kill_flag: Arc<AtomicBool>,
+    duration: std::time::Duration,
+) -> mpsc::Sender<()> {
     let manager = WATCHDOG_MANAGER.get_or_init(init_watchdog_manager);
     manager.register(kill_flag, duration)
 }
@@ -379,6 +392,14 @@ globalThis.db = {
         return resp.result;
     },
 };
+// fetch 使用追踪：包装原生 fetch，记录是否被调用，用于条件性 I/O drain
+const __nodeget_orig_fetch = globalThis.fetch;
+if (__nodeget_orig_fetch) {
+    globalThis.fetch = function(...args) {
+        globalThis.__nodeget_fetch_used = true;
+        return __nodeget_orig_fetch.apply(this, args);
+    };
+}
 "#;
 
 /// 初始化 JS 运行时全局 API。
@@ -695,23 +716,17 @@ pub fn prepare_invoke_globals(
     match script_name {
         Some(name) => global.set("__nodeget_current_script_name", name.to_owned())?,
         None => {
-            let null_js = ctx.json_parse("null").map_err(|e| {
-                js_error("js_runner", format!("Failed to set script name in JS: {e}"))
-            })?;
-            global.set("__nodeget_current_script_name", null_js)?;
+            global.set(
+                "__nodeget_current_script_name",
+                JsValue::new_null(ctx.clone()),
+            )?;
         }
     }
 
     match inline_caller {
         Some(caller) => global.set("__nodeget_inline_caller", caller.to_owned())?,
         None => {
-            let null_js = ctx.json_parse("null").map_err(|e| {
-                js_error(
-                    "js_runner",
-                    format!("Failed to set inline caller in JS: {e}"),
-                )
-            })?;
-            global.set("__nodeget_inline_caller", null_js)?;
+            global.set("__nodeget_inline_caller", JsValue::new_null(ctx.clone()))?;
         }
     }
 
@@ -725,11 +740,11 @@ pub fn prepare_invoke_globals(
 fn cleanup_invoke_globals(ctx: &Ctx<'_>) {
     // 清理大对象全局变量，释放 JS 堆内存；失败时静默忽略（Runtime 即将销毁）
     ctx.eval::<(), _>(
-        r#"globalThis.__nodeget_run_params = null;
+        r"globalThis.__nodeget_run_params = null;
         globalThis.__nodeget_env = null;
         globalThis.__nodeget_entry = null;
         globalThis.inlineCall = null;
-        globalThis.__nodeget_inline_caller = null;"#,
+        globalThis.__nodeget_inline_caller = null;",
     )
     .ok();
 }
@@ -788,6 +803,7 @@ pub fn resolve_invoke_result<'js>(ctx: &Ctx<'js>, js_value: JsValue<'js>) -> Res
 ///
 /// # Errors
 /// 若构建宿主 Runtime 或 JS 执行失败，返回错误。
+#[allow(clippy::too_many_arguments)]
 pub fn js_runner(
     js_code: JsCodeInput,
     run_type: RunType,
@@ -888,10 +904,9 @@ pub fn js_runner(
         // 外层 tokio::time::timeout 捕捉 async 路径上的挂起（await 点停在
         // 远端 I/O 等）。两层共同保障 max_run_time_ms 兜得住。
         let cancel_tx = register_watchdog(Arc::clone(&kill_flag), effective_timeout);
-        let outcome = match tokio::time::timeout(effective_timeout, execute).await {
-            Ok(result) => result,
-            Err(_) => Err(js_error("js_runner", "JavaScript execution timed out")),
-        };
+        let outcome = tokio::time::timeout(effective_timeout, execute)
+            .await
+            .unwrap_or_else(|_| Err(js_error("js_runner", "JavaScript execution timed out")));
 
         // 执行完成或超时后，取消看门狗监控（常驻线程自动清理，无需 join）
         let _ = cancel_tx.send(());
@@ -901,13 +916,10 @@ pub fn js_runner(
         // Incoming 向 hyper 连接 task 发出异步关闭信号。
         drop(ctx);
 
-        // Route 模式需要短窗口让 tokio runtime 处理 hyper 关闭信号，
-        // 否则 current_thread runtime 在 block_on 返回后不再被轮询，
-        // TCP 连接将停留在 CLOSE_WAIT。非 Route 模式（inline_call/cron）
-        // 无需此延迟——跳过以减少延迟。
-        if matches!(run_type, RunType::Route) {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
+        // drain I/O 清理窗口：current_thread runtime 在 block_on 返回后不再被轮询，
+        // fetch() 产生的 Response Incoming body drop 向 hyper 连接 task 发出异步关闭信号，
+        // 需要 runtime 继续运转才能处理，否则 TCP 连接停留在 CLOSE_WAIT。
+        tokio::time::sleep(std::time::Duration::from_millis(DRAIN_IO_MS)).await;
 
         if kill_flag.load(Ordering::Relaxed) && outcome.is_err() {
             return Err(js_error(
@@ -1010,19 +1022,15 @@ pub fn js_runner_source_mode(
         };
 
         let cancel_tx = register_watchdog(Arc::clone(&kill_flag), effective_timeout);
-        let outcome = match tokio::time::timeout(effective_timeout, execute).await {
-            Ok(result) => result,
-            Err(_) => Err(js_error("js_runner", "JavaScript execution timed out")),
-        };
+        let outcome = tokio::time::timeout(effective_timeout, execute)
+            .await
+            .unwrap_or_else(|_| Err(js_error("js_runner", "JavaScript execution timed out")));
         let _ = cancel_tx.send(());
 
         // 同 js_runner()：释放 QuickJS 上下文以 drop 未消费的 fetch Response
-        // Incoming body。Route 模式需要短窗口让 hyper 连接 task 处理关闭信号，
-        // 非 Route 模式跳过此延迟。
+        // Incoming body，drain I/O 清理窗口防止 CLOSE_WAIT。
         drop(ctx);
-        if matches!(run_type, RunType::Route) {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
+        tokio::time::sleep(std::time::Duration::from_millis(DRAIN_IO_MS)).await;
 
         if kill_flag.load(Ordering::Relaxed) && outcome.is_err() {
             return Err(js_error(

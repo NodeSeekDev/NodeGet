@@ -23,6 +23,7 @@ mod update;
 #[derive(serde::Deserialize)]
 #[allow(dead_code)]
 struct NameParam {
+    /// 数据库名称
     name: String,
 }
 
@@ -30,7 +31,9 @@ struct NameParam {
 #[derive(serde::Deserialize)]
 #[allow(dead_code)]
 struct RenameParam {
+    /// 原数据库名称
     name: String,
+    /// 新数据库名称
     new_name: String,
 }
 
@@ -38,21 +41,27 @@ struct RenameParam {
 #[derive(serde::Deserialize)]
 #[allow(dead_code)]
 struct ExecSqlParam {
+    /// 数据库名称
     name: String,
+    /// SQL 语句
     sql: String,
     #[serde(default)]
+    /// SQL 参数（JSON 格式）
     params: Option<serde_json::Value>,
 }
 
 /// `db` RPC trait 定义，jsonrpsee 宏自动生成 `RpcServer` trait
 #[rpc(server, namespace = "db")]
 pub trait Rpc {
+    /// 创建用户数据库，需 `SuperToken` 权限
     #[method(name = "create")]
     async fn create(&self, token: String, name: String) -> RpcResult<Box<RawValue>>;
 
+    /// 查询用户数据库信息
     #[method(name = "read")]
     async fn read(&self, token: String, name: String) -> RpcResult<Box<RawValue>>;
 
+    /// 重命名用户数据库，需 `SuperToken` 权限
     #[method(name = "update")]
     async fn update(
         &self,
@@ -61,12 +70,15 @@ pub trait Rpc {
         new_name: String,
     ) -> RpcResult<Box<RawValue>>;
 
+    /// 删除用户数据库，需 `SuperToken` 权限
     #[method(name = "delete")]
     async fn delete(&self, token: String, name: String) -> RpcResult<Box<RawValue>>;
 
+    /// 列出所有用户数据库，需 `SuperToken` 权限
     #[method(name = "list")]
     async fn list(&self, token: String) -> RpcResult<Box<RawValue>>;
 
+    /// 在指定用户数据库上执行 SQL，需 Token 对应的数据库权限
     #[method(name = "exec_sql")]
     async fn exec_sql(
         &self,

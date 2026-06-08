@@ -114,7 +114,7 @@ impl StaticDataFromSystem {
                     id: (i + 1) as u32,
                     name: cpu.name().to_string(),
                     vendor_id: cpu.vendor_id().to_string(),
-                    brand: cpu.brand().to_string().trim().to_string(),
+                    brand: cpu.brand().trim().to_string(),
                 })
                 .collect::<Vec<_>>();
 

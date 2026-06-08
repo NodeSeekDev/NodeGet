@@ -11,6 +11,7 @@ use ng_db::entity::kv;
 use ng_db::get_db;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    sea_query::OnConflict,
 };
 use serde_json::Value;
 use tracing::{debug, error, warn};
@@ -113,37 +114,33 @@ pub async fn get_v_from_kv(namespace: String, key: String) -> Result<Option<Valu
 ///
 /// # 返回值
 /// 成功时返回 ()，失败返回错误
+///
+/// 命名空间必须事先通过 `create_kv` 创建，否则返回 DatabaseError。
+/// 使用 upsert 策略设置键值：
+/// INSERT key-value ON CONFLICT (namespace, key) DO UPDATE SET value
 pub async fn set_v_to_kv(namespace: String, key: String, value: Value) -> Result<()> {
     let db = get_db_conn()?;
+
+    // 确保命名空间已存在（与其他操作一致，避免绕过 RBAC 自动创建命名空间）
     ensure_namespace_exists(db, &namespace).await?;
 
-    let model = kv::Entity::find()
-        .filter(kv::Column::Namespace.eq(&namespace))
-        .filter(kv::Column::Key.eq(&key))
-        .one(db)
+    // upsert: INSERT ON CONFLICT (namespace, key) DO UPDATE SET value
+    let active_model = kv::ActiveModel {
+        namespace: Set(namespace.clone()),
+        key: Set(key.clone()),
+        value: Set(value),
+        ..Default::default()
+    };
+    kv::Entity::insert(active_model)
+        .on_conflict(
+            OnConflict::columns([kv::Column::Namespace, kv::Column::Key])
+                .update_column(kv::Column::Value)
+                .to_owned(),
+        )
+        .exec(db)
         .await?;
 
-    if let Some(record) = model {
-        let active_model = kv::ActiveModel {
-            id: Set(record.id),
-            namespace: Set(record.namespace),
-            key: Set(record.key),
-            value: Set(value),
-        };
-
-        active_model.update(db).await?;
-        debug!(target: "kv", namespace = %namespace, key = %key, "kv key updated");
-    } else {
-        let active_model = kv::ActiveModel {
-            namespace: Set(namespace.clone()),
-            key: Set(key.clone()),
-            value: Set(value),
-            ..Default::default()
-        };
-
-        active_model.insert(db).await?;
-        debug!(target: "kv", namespace = %namespace, key = %key, "kv key inserted");
-    }
+    debug!(target: "kv", namespace = %namespace, key = %key, "kv upsert completed");
     Ok(())
 }
 
@@ -220,15 +217,18 @@ pub async fn get_keys_from_kv(namespace: String) -> Result<Vec<String>> {
     let db = get_db_conn()?;
     ensure_namespace_exists(db, &namespace).await?;
 
-    let models = kv::Entity::find()
+    let keys: Vec<String> = kv::Entity::find()
+        .select_only()
+        .column(kv::Column::Key)
         .filter(kv::Column::Namespace.eq(&namespace))
         .order_by_asc(kv::Column::Key)
+        .into_tuple()
         .all(db)
         .await?;
 
-    let keys_count = models.len();
+    let keys_count = keys.len();
     debug!(target: "kv", namespace = %namespace, keys_count, "get_keys_from_kv completed");
-    Ok(models.into_iter().map(|model| model.key).collect())
+    Ok(keys)
 }
 
 /// 获取完整的 `KVStore`

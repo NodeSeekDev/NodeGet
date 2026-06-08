@@ -15,7 +15,7 @@ use ng_js_runtime::RunType;
 use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set};
 use std::time::Duration;
 use tokio::task::JoinSet;
-use tokio::time::sleep;
+use tokio::time::MissedTickBehavior;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
 /// 按名称删除定时任务，并刷新缓存。
@@ -88,8 +88,8 @@ static CRONTAB_WORKER_STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::ne
 
 /// 初始化定时任务调度协程（全局只启动一次）。
 ///
-/// 协程对齐分钟边界：计算当前秒数到下一分钟的等待时间，
-/// 每分钟唤醒后调用 [`process_crontab`] 处理到期任务。
+/// 协程每秒唤醒，从缓存读取已启用任务并判断是否有到期触发。
+/// 使用缓存避免每秒查询数据库，仅到期时才写入 DB 更新 last_run_time。
 pub fn init_crontab_worker() {
     info!(target: "crontab", "initializing crontab worker");
     if CRONTAB_WORKER_STARTED.set(()).is_err() {
@@ -98,19 +98,13 @@ pub fn init_crontab_worker() {
 
     tokio::spawn(async move {
         info!(target: "crontab", "scheduler started");
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        // 消费 interval 的首次立即触发，保持启动时有 1 秒延迟的原始行为
+        interval.tick().await;
         loop {
-            // 计算到下一分钟边界的等待秒数
-            let now = Utc::now();
-            let secs = now.timestamp().rem_euclid(60);
-            let wait = if secs == 0 { 60 } else { 60 - secs as u64 };
-            sleep(Duration::from_secs(wait)).await;
-            // 处理到期任务
+            interval.tick().await;
             process_crontab().await;
-            // 补偿等待：确保调度循环严格在分钟边界触发
-            let remaining = 60 - Utc::now().timestamp().rem_euclid(60) as u64;
-            if remaining > 0 && remaining < 60 {
-                sleep(Duration::from_secs(remaining)).await;
-            }
         }
     });
 }
@@ -128,7 +122,10 @@ async fn process_crontab() {
         return;
     };
 
-    let cache = CrontabCache::global();
+    let Some(cache) = CrontabCache::global() else {
+        error!(target: "crontab", "CrontabCache not initialized");
+        return;
+    };
     let jobs = cache.get_enabled_entries();
 
     let now = Utc::now();

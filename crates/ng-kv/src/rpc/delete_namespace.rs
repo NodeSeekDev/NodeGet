@@ -30,9 +30,7 @@ pub async fn delete_namespace(token: String, namespace: String) -> RpcResult<Box
 
         debug!(target: "kv", "delete_namespace completed");
 
-        let json_str = "{\"success\":true}".to_string();
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&serde_json::json!({"success": true}))
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
     };
 

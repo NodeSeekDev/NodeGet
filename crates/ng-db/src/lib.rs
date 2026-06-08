@@ -67,7 +67,7 @@ pub fn set_db(conn: sea_orm::DatabaseConnection) {
 pub unsafe fn take_and_close_db() {
     // SAFETY: 调用者保证无其他引用在使用中
     let db_ptr: *mut std::sync::OnceLock<std::mem::ManuallyDrop<sea_orm::DatabaseConnection>> =
-        &DB as *const _ as *mut _;
+        (&raw const DB).cast_mut();
     // SAFETY: 调用者保证独占访问
     if let Some(md) = unsafe { (*db_ptr).take() } {
         // ManuallyDrop::into_inner 恢复所有权并执行正常 drop

@@ -25,7 +25,8 @@ use ng_core::utils::error_message::generate_error_message;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
+use std::sync::RwLock;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -225,37 +226,37 @@ async fn handle_agent(
     let (tx_to_user, rx_from_agent) = mpsc::channel::<Message>(TERMINAL_CHANNEL_BUFFER_SIZE);
 
     // 存入 Map - 使用 Entry API 避免 TOCTOU 竞态条件
-    {
+    // std::sync::RwLockWriteGuard 不是 Send，必须在独立作用域内完成，
+    // 不能跨 .await 持有，因此先在同步块内完成插入判定，再在外面处理错误。
+    let insert_ok = {
         use std::collections::hash_map::Entry;
-        let mut sessions = state.sessions.write().await;
-
-        // Entry API 确保检查和插入是原子操作
+        let mut sessions = state.sessions.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         match sessions.entry(session_key.clone()) {
-            Entry::Occupied(_) => {
-                // session 已存在，返回错误
-                let error_json = generate_error_message(
-                    108,
-                    &format!(
-                        "Invalid Input: terminal_id '{terminal_id}' is already active for this agent"
-                    ),
-                );
-                if let Err(e) = socket
-                    .send(Message::Text(Utf8Bytes::from(error_json.to_string())))
-                    .await
-                {
-                    error!(target: "terminal", error = %e, "Failed to send error message to agent");
-                }
-                return;
-            }
+            Entry::Occupied(_) => false,
             Entry::Vacant(entry) => {
-                // session 不存在，安全插入
                 entry.insert(SessionSlots {
                     tx_to_agent,                        // User 将会获取这个 Sender 发送数据给 Agent
                     rx_from_agent: Some(rx_from_agent), // User 将会拿走这个 Receiver 接收 Agent 的数据
                     task_token,
                 });
+                true
             }
         }
+    };
+    if !insert_ok {
+        let error_json = generate_error_message(
+            108,
+            &format!(
+                "Invalid Input: terminal_id '{terminal_id}' is already active for this agent"
+            ),
+        );
+        if let Err(e) = socket
+            .send(Message::Text(Utf8Bytes::from(error_json.to_string())))
+            .await
+        {
+            error!(target: "terminal", error = %e, "Failed to send error message to agent");
+        }
+        return;
     }
 
     let (mut ws_sender, mut ws_receiver) = socket.split();
@@ -285,7 +286,7 @@ async fn handle_agent(
 
     // 清理会话映射：remove 本身幂等，无需先 contains_key 再删
     {
-        let mut sessions = state.sessions.write().await;
+        let mut sessions = state.sessions.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         sessions.remove(&session_key);
     }
     info!(target: "terminal", agent_uuid = %agent_uuid, terminal_id = %terminal_id, "Agent terminal disconnected");
@@ -329,6 +330,12 @@ async fn handle_user(
     // 检查 token 是否存在
     let Some(token) = token else {
         warn!(target: "terminal", "User connection rejected: missing token");
+        let _ = socket
+            .send(Message::Text(Utf8Bytes::from(
+                generate_error_message(108, "Invalid Input: Missing token for user terminal connection")
+                    .to_string(),
+            )))
+            .await;
         return;
     };
 
@@ -346,7 +353,12 @@ async fn handle_user(
     }
 
     // 获取会话槽位
-    let (tx_to_agent, rx_from_agent) = {
+    enum SlotResult {
+        Got(mpsc::Sender<Message>, mpsc::Receiver<Message>),
+        AlreadyAttached,
+        NotFound,
+    }
+    let slot_result = {
         let Ok(parsed_uuid) = Uuid::parse_str(&agent_uuid) else {
             warn!(target: "terminal", agent_uuid = %agent_uuid, "User connection rejected: invalid UUID format");
             return;
@@ -355,21 +367,42 @@ async fn handle_user(
             agent_uuid: parsed_uuid,
             terminal_id,
         };
-        let mut sessions = state.sessions.write().await;
+        let mut sessions = state.sessions.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(slots) = sessions.get_mut(&session_key) {
             if let Some(rx) = slots.rx_from_agent.take() {
-                (slots.tx_to_agent.clone(), rx)
+                SlotResult::Got(slots.tx_to_agent.clone(), rx)
             } else {
-                warn!(
-                    target: "terminal",
-                    agent_uuid = %agent_uuid,
-                    terminal_id = %terminal_id,
-                    "Terminal session already has an attached user"
-                );
-                return;
+                SlotResult::AlreadyAttached
             }
         } else {
+            SlotResult::NotFound
+        }
+    };
+    let (tx_to_agent, rx_from_agent) = match slot_result {
+        SlotResult::Got(tx, rx) => (tx, rx),
+        SlotResult::AlreadyAttached => {
+            warn!(
+                target: "terminal",
+                agent_uuid = %agent_uuid,
+                terminal_id = %terminal_id,
+                "Terminal session already has an attached user"
+            );
+            let _ = socket
+                .send(Message::Text(Utf8Bytes::from(
+                    generate_error_message(108, "Terminal session already has an attached user")
+                        .to_string(),
+                )))
+                .await;
+            return;
+        }
+        SlotResult::NotFound => {
             warn!(target: "terminal", agent_uuid = %agent_uuid, terminal_id = %terminal_id, "Terminal session not found");
+            let _ = socket
+                .send(Message::Text(Utf8Bytes::from(
+                    generate_error_message(108, "Terminal session not found")
+                        .to_string(),
+                )))
+                .await;
             return;
         }
     };
@@ -394,6 +427,7 @@ async fn handle_user(
     });
 
     tokio::select! {
+        biased;
         _ = recv_task => {},
         _ = send_task => {},
     }

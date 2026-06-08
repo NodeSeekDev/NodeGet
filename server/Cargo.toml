@@ -33,7 +33,7 @@ anyhow = { workspace = true }
 sea-orm = { workspace = true }
 
 # Server
-jsonrpsee = { workspace = true }
+jsonrpsee = { workspace = true, features = ["server"] }
 axum = { workspace = true }
 axum-server = { workspace = true }
 rustls = { workspace = true }
@@ -53,5 +53,12 @@ tracing-subscriber = { workspace = true }
 # JS Worker 路由处理
 base64 = { workspace = true }
 
+# 性能分析
+dhat = { workspace = true, optional = true }
+
+# 无锁原子替换（StreamLogManager 替代 RwLock）
+arc-swap = { workspace = true }
+
 [features]
 default = []
+dhat-heap = ["dhat"]

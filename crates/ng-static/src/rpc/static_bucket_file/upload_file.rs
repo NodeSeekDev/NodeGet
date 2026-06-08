@@ -34,9 +34,7 @@ pub async fn upload_file_rpc(
 
         upload_file(&name, &path, body, base64).await?;
 
-        let json_str = r#"{"success":true}"#.to_string();
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&serde_json::json!({"success": true}))
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
     };
 

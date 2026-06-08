@@ -60,6 +60,7 @@ pub async fn query_dns(task: &DnsTask) -> Result<Vec<DnsRecordResult>, NodegetEr
 /// - `dns_server` - 可选的自定义 DNS 服务器地址
 ///
 /// 指定服务器时使用 UDP 协议直连；未指定时读取系统 DNS 配置。
+#[allow(clippy::unused_async)]
 async fn build_resolver(dns_server: Option<&str>) -> Result<TokioAsyncResolver, NodegetError> {
     if let Some(server_str) = dns_server {
         let addr: SocketAddr = server_str.parse().map_err(|e| {

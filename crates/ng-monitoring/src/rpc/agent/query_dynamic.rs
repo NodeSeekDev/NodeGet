@@ -22,7 +22,7 @@ use sea_orm::{
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 /// 查询动态监控数据。
 ///
@@ -37,10 +37,13 @@ use tracing::{debug, error};
 /// 4. 应用排序和 Limit（默认 10000，上限 10000）
 /// 5. 流式执行查询，逐行转换 `uuid_id`→`uuid`、重命名字段
 /// 6. 手动拼接 JSON 数组字符串，返回 `RawValue`
+#[allow(clippy::too_many_lines)]
 pub async fn query_dynamic(
     token: String,
     dynamic_data_query: DynamicDataQuery,
 ) -> RpcResult<Box<RawValue>> {
+    const DEFAULT_LIMIT: u64 = 10_000;
+    const MAX_LIMIT: u64 = 10_000;
     let process_logic = async {
         debug!(target: "monitoring", conditions_count = dynamic_data_query.condition.len(), fields_count = dynamic_data_query.fields.len(), "Dynamic query request received");
 
@@ -93,6 +96,7 @@ pub async fn query_dynamic(
         };
 
         if !is_allowed {
+            warn!(target: "monitoring", "权限拒绝: 缺少 DynamicMonitoring Read 权限");
             return Err(NodegetError::PermissionDenied(
                 "Permission Denied: Insufficient DynamicMonitoring Read permissions".to_string(),
             )
@@ -102,7 +106,7 @@ pub async fn query_dynamic(
         debug!(target: "monitoring", conditions_count = dynamic_data_query.condition.len(), fields_count = dynamic_data_query.fields.len(), "Dynamic query permission check passed");
 
         let db = AgentRpcImpl::get_db()?;
-        let uuid_cache = MonitoringUuidCache::global();
+        let uuid_cache = MonitoringUuidCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringUuidCache not initialized".to_owned()))?;
 
         let query = dynamic_monitoring::Entity::find()
             .select_only()
@@ -178,8 +182,6 @@ pub async fn query_dynamic(
                 }
             });
 
-        const DEFAULT_LIMIT: u64 = 10_000;
-        const MAX_LIMIT: u64 = 10_000;
         let clamped_limit = limit_count.map(|l| std::cmp::min(l, MAX_LIMIT));
 
         let query = if is_last {

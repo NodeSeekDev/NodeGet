@@ -12,8 +12,10 @@
 use ng_config::config::server::MonitoringBufferConfig;
 use ng_db::entity::{dynamic_monitoring, dynamic_monitoring_summary, static_monitoring};
 use sea_orm::EntityTrait;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::OnceLock;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio::time::{Duration, interval};
 use tracing::{debug, error, trace, warn};
 
@@ -31,6 +33,9 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 10000;
 /// 全局 `MonitoringBuffers` 单例。
 static BUFFERS: OnceLock<MonitoringBuffers> = OnceLock::new();
 
+/// 全局 `flush_loop` `JoinHandle`，`flush_and_shutdown` 通过这些 handle 等待 flush 完成。
+static FLUSH_HANDLES: std::sync::Mutex<Option<[JoinHandle<()>; 3]>> = std::sync::Mutex::new(None);
+
 /// 持有三类监控数据的 `BufferSender`。
 pub struct MonitoringBuffers {
     /// 静态监控数据缓冲区
@@ -41,15 +46,9 @@ pub struct MonitoringBuffers {
     pub dynamic_summary: BufferSender<dynamic_monitoring_summary::ActiveModel>,
 }
 
-/// 获取全局 buffer 实例，未初始化时 panic。
-///
-/// # Panics
-///
-/// 若全局 `MonitoringBuffers` 未初始化（即未调用 `init()`）则 panic。
-pub fn get() -> &'static MonitoringBuffers {
-    BUFFERS
-        .get()
-        .expect("MonitoringBuffers not initialized — call monitoring_buffer::init() first")
+/// 获取全局 buffer 实例，未初始化时返回 `None`。
+pub fn get() -> Option<&'static MonitoringBuffers> {
+    BUFFERS.get()
 }
 
 /// 初始化全局 buffer 并启动三个后台 flush task。
@@ -59,6 +58,10 @@ pub fn get() -> &'static MonitoringBuffers {
 /// - 2. 创建三个 mpsc channel（static/dynamic/summary）
 /// - 3. 设置全局单例（重复调用时跳过）
 /// - 4. 为每个 channel 启动独立的 `flush_loop` tokio task
+///
+/// # Panics
+///
+/// Panics if the internal `FLUSH_HANDLES` Mutex is poisoned (i.e., a previous holder panicked).
 pub fn init(config: Option<&MonitoringBufferConfig>) {
     let flush_interval_ms = config
         .and_then(|c| c.flush_interval_ms)
@@ -66,23 +69,20 @@ pub fn init(config: Option<&MonitoringBufferConfig>) {
     let max_batch_size = config
         .and_then(|c| c.max_batch_size)
         .unwrap_or(DEFAULT_MAX_BATCH_SIZE);
+    let channel_capacity = config
+        .and_then(|c| c.channel_capacity)
+        .unwrap_or(DEFAULT_CHANNEL_CAPACITY);
 
     let flush_interval = Duration::from_millis(flush_interval_ms);
 
-    let (static_tx, static_rx) = mpsc::channel(DEFAULT_CHANNEL_CAPACITY);
-    let (dynamic_tx, dynamic_rx) = mpsc::channel(DEFAULT_CHANNEL_CAPACITY);
-    let (summary_tx, summary_rx) = mpsc::channel(DEFAULT_CHANNEL_CAPACITY);
+    let (static_tx, static_rx) = mpsc::channel(channel_capacity);
+    let (dynamic_tx, dynamic_rx) = mpsc::channel(channel_capacity);
+    let (summary_tx, summary_rx) = mpsc::channel(channel_capacity);
 
     let buffers = MonitoringBuffers {
-        static_mon: BufferSender {
-            tx: Mutex::new(Some(static_tx)),
-        },
-        dynamic_mon: BufferSender {
-            tx: Mutex::new(Some(dynamic_tx)),
-        },
-        dynamic_summary: BufferSender {
-            tx: Mutex::new(Some(summary_tx)),
-        },
+        static_mon: BufferSender::new(static_tx, channel_capacity),
+        dynamic_mon: BufferSender::new(dynamic_tx, channel_capacity),
+        dynamic_summary: BufferSender::new(summary_tx, channel_capacity),
     };
 
     if BUFFERS.set(buffers).is_err() {
@@ -90,39 +90,48 @@ pub fn init(config: Option<&MonitoringBufferConfig>) {
         return;
     }
 
-    // 启动三个后台 flush task
-    tokio::spawn(flush_loop::<
-        static_monitoring::Entity,
-        static_monitoring::ActiveModel,
-    >(
-        "static_monitoring",
-        static_rx,
-        flush_interval,
-        max_batch_size,
-    ));
-    tokio::spawn(flush_loop::<
-        dynamic_monitoring::Entity,
-        dynamic_monitoring::ActiveModel,
-    >(
-        "dynamic_monitoring",
-        dynamic_rx,
-        flush_interval,
-        max_batch_size,
-    ));
-    tokio::spawn(flush_loop::<
-        dynamic_monitoring_summary::Entity,
-        dynamic_monitoring_summary::ActiveModel,
-    >(
-        "dynamic_monitoring_summary",
-        summary_rx,
-        flush_interval,
-        max_batch_size,
-    ));
+    // 启动三个后台 flush task，保存 JoinHandle 用于 shutdown 时等待
+    // 各表列数：static_monitoring=8, dynamic_monitoring=11, dynamic_monitoring_summary=27
+    // 用于计算 SQLite 子批次大小 (999 / num_columns)
+    let handles = [
+        tokio::spawn(flush_loop::<
+            static_monitoring::Entity,
+            static_monitoring::ActiveModel,
+        >(
+            "static_monitoring",
+            static_rx,
+            flush_interval,
+            max_batch_size,
+            8,
+        )),
+        tokio::spawn(flush_loop::<
+            dynamic_monitoring::Entity,
+            dynamic_monitoring::ActiveModel,
+        >(
+            "dynamic_monitoring",
+            dynamic_rx,
+            flush_interval,
+            max_batch_size,
+            11,
+        )),
+        tokio::spawn(flush_loop::<
+            dynamic_monitoring_summary::Entity,
+            dynamic_monitoring_summary::ActiveModel,
+        >(
+            "dynamic_monitoring_summary",
+            summary_rx,
+            flush_interval,
+            max_batch_size,
+            27,
+        )),
+    ];
+    *FLUSH_HANDLES.lock().unwrap() = Some(handles);
 
     debug!(
         target: "monitoring",
         flush_interval_ms = flush_interval_ms,
         max_batch_size = max_batch_size,
+        channel_capacity = channel_capacity,
         "Monitoring write buffers initialized"
     );
 }
@@ -130,7 +139,11 @@ pub fn init(config: Option<&MonitoringBufferConfig>) {
 /// 刷新所有缓冲区并等待完成（用于 graceful shutdown）。
 ///
 /// Drop 掉所有 `sender` 使 `channel` 关闭，`flush_loop` 的 `rx.recv()` 返回 `None`，
-/// 触发最后一次 flush 后退出。等待 2 秒让 flush 完成。
+/// 触发最后一次 flush 后退出。通过 `JoinHandle` + timeout 等待 flush 完成，避免固定 sleep。
+///
+/// # Panics
+///
+/// Panics if the internal `FLUSH_HANDLES` Mutex is poisoned (i.e., a previous holder panicked).
 pub async fn flush_and_shutdown() {
     let Some(buffers) = BUFFERS.get() else {
         return;
@@ -139,43 +152,100 @@ pub async fn flush_and_shutdown() {
     buffers.static_mon.close();
     buffers.dynamic_mon.close();
     buffers.dynamic_summary.close();
-    // 等待 flush_loop 完成最后一批写入
-    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 通过 JoinHandle 并发等待所有 flush_loop 完成最终 flush，5 秒超时兜底
+    // 使用 join_all 并发等待，总超时 5 秒（而非每个 handle 顺序等待各 5 秒）
+    let handles_opt = FLUSH_HANDLES.lock().unwrap().take();
+    if let Some(handles) = handles_opt {
+        let timeout_dur = Duration::from_secs(5);
+        let result = tokio::time::timeout(timeout_dur, futures_util::future::join_all(handles)).await;
+        match result {
+            Ok(results) => {
+                for (i, res) in results.into_iter().enumerate() {
+                    if let Err(e) = res {
+                        warn!(target: "monitoring", handle_index = i, error = %e, "Flush loop task panicked");
+                    }
+                }
+            }
+            Err(_) => {
+                warn!(target: "monitoring", "Not all flush loops exited within 5s timeout");
+            }
+        }
+    }
     debug!(target: "monitoring", "Monitoring buffers shutdown complete");
 }
 
 // ── BufferSender ────────────────────────────────────────────────────
 
-/// mpsc Sender 的线程安全封装，支持优雅关闭。
+/// mpsc Sender 的线程安全封装，支持优雅关闭与丢弃计数。
 pub struct BufferSender<T> {
-    /// 内部 Sender 用 Mutex 包裹以实现 Sync，Option 用于 close 时 drop
-    tx: Mutex<Option<mpsc::Sender<T>>>,
+    /// 内部 Sender，close 时 take 出来 drop 以关闭 channel
+    tx: std::sync::Mutex<Option<mpsc::Sender<T>>>,
+    /// channel 容量，用于日志
+    cap: usize,
+    /// 累计丢弃数量
+    dropped: AtomicU64,
+    /// 是否已关闭（close 时置 true，send 的 fast-path 无需加锁）
+    closed: AtomicBool,
 }
 
 impl<T> BufferSender<T> {
-    /// 将一条 `ActiveModel` 送入缓冲区。
-    ///
-    /// 非阻塞，channel 满或已关闭时丢弃并告警。
-    pub fn send(&self, item: T) {
-        let guard = self
-            .tx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(tx) = guard.as_ref()
-            && let Err(_e) = tx.try_send(item)
-        {
-            warn!(target: "monitoring", "Buffer channel full or closed, dropping item");
+    /// 创建新的 `BufferSender`。
+    const fn new(tx: mpsc::Sender<T>, cap: usize) -> Self {
+        Self {
+            tx: std::sync::Mutex::new(Some(tx)),
+            cap,
+            dropped: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
         }
     }
 
+    /// 将一条 `ActiveModel` 送入缓冲区。
+    ///
+    /// 非阻塞，channel 满或已关闭时丢弃并告警（含累计丢弃计数）。
+    pub fn send(&self, item: T) {
+        // Fast-path：已关闭则直接返回，无需加锁
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        let send_result = {
+            let guard = self
+                .tx
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match guard.as_ref() {
+                Some(tx) => tx.try_send(item),
+                None => return,
+            }
+        };
+        if send_result.is_err() {
+            let count = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+            warn!(
+                target: "monitoring",
+                "monitoring data dropped (total: {count}), channel full (cap: {})",
+                self.cap
+            );
+        }
+    }
+
+    /// 返回累计丢弃的数据条数。
+    pub fn dropped_count(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+
     /// 关闭 sender（drop 内部的 Sender，使 channel 关闭）。
+    ///
+    /// `flush_loop` 的 `rx.recv()` 将收到 `None`，触发最后一次 flush 后退出。
     fn close(&self) {
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return; // already closed
+        }
+        debug!(target: "monitoring", "Closing buffer sender");
         let mut guard = self
             .tx
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        debug!(target: "monitoring", "Closing buffer sender");
-        guard.take(); // drop Sender，关闭 channel
+        guard.take(); // drop Sender → channel 关闭 → rx.recv() 返回 None
     }
 }
 
@@ -197,6 +267,7 @@ async fn flush_loop<E, A>(
     mut rx: mpsc::Receiver<A>,
     flush_interval: Duration,
     max_batch_size: usize,
+    num_columns: usize,
 ) where
     E: EntityTrait,
     A: sea_orm::ActiveModelTrait<Entity = E> + Send + 'static,
@@ -208,7 +279,7 @@ async fn flush_loop<E, A>(
     loop {
         // 等待 tick 或有新数据到达
         tokio::select! {
-            _ = ticker.tick() => {}
+            biased;
             item = rx.recv() => {
                 if let Some(model) = item {
                     buf.push(model);
@@ -222,12 +293,13 @@ async fn flush_loop<E, A>(
                 } else {
                     // channel 关闭，flush 剩余数据后退出
                     if !buf.is_empty() {
-                        do_flush::<E, A>(table_name, &mut buf).await;
+                        do_flush::<E, A>(table_name, &mut buf, num_columns).await;
                     }
                     debug!(target: "monitoring", table = table_name, "Flush loop exiting");
                     return;
                 }
             }
+            _ = ticker.tick() => {}
         }
 
         // drain 所有立即可用的消息（tick 分支也需要收集）
@@ -240,37 +312,84 @@ async fn flush_loop<E, A>(
 
         if !buf.is_empty() {
             trace!(target: "monitoring", table = table_name, buffered = buf.len(), "Flushing buffered items on tick");
-            do_flush::<E, A>(table_name, &mut buf).await;
+            do_flush::<E, A>(table_name, &mut buf, num_columns).await;
         }
     }
 }
+
+/// `SQLite` 单条 SQL 语句最多支持的绑定参数数量。
+const SQLITE_MAX_VARIABLE_NUMBER: usize = 999;
 
 /// 执行一次批量 INSERT，将缓冲区中的数据写入数据库。
 ///
 /// - `table_name` — 表名，用于日志
 /// - `buf` — 待写入的 `ActiveModel` 缓冲区，写入后清空
-async fn do_flush<E, A>(table_name: &str, buf: &mut Vec<A>)
+/// - `num_columns` — 每行 ActiveModel 的列数，用于计算 SQLite 子批次大小
+///
+/// 对于 SQLite，根据 `num_columns` 动态计算子批次大小：`999 / num_columns`，
+/// 确保单条 INSERT 的绑定参数不超过 SQLite 的 999 上限。
+/// 对于 PostgreSQL，直接整批写入（无参数数量限制）。
+async fn do_flush<E, A>(table_name: &str, buf: &mut Vec<A>, num_columns: usize)
 where
     E: EntityTrait,
     A: sea_orm::ActiveModelTrait<Entity = E> + Send + 'static,
 {
     let batch = std::mem::take(buf);
-    let count = batch.len();
-    if count == 0 {
+    let total = batch.len();
+    if total == 0 {
         return;
     }
 
     let Some(db) = ng_db::get_db() else {
-        error!(target: "monitoring", table = table_name, count = count, "DB not initialized, dropping batch");
+        error!(target: "monitoring", table = table_name, count = total, "DB not initialized, dropping batch");
         return;
     };
 
-    match E::insert_many(batch).exec(db).await {
-        Ok(_) => {
-            debug!(target: "monitoring", table = table_name, count = count, "Batch insert succeeded");
-        }
-        Err(e) => {
-            error!(target: "monitoring", table = table_name, count = count, error = %e, "Batch insert failed");
+    let is_sqlite = db.get_database_backend() == sea_orm::DatabaseBackend::Sqlite;
+
+    // SQLite 参数数量限制 (999)，根据列数动态计算每子批次最大行数
+    let chunk_size = if is_sqlite {
+        let sqlite_batch_limit = SQLITE_MAX_VARIABLE_NUMBER / num_columns.max(1);
+        sqlite_batch_limit.min(total)
+    } else {
+        total
+    };
+
+    let mut inserted: usize = 0;
+    let mut dropped: usize = 0;
+
+    let sub_batches: Vec<Vec<A>> = batch.chunks(chunk_size).map(<[A]>::to_vec).collect();
+    for sub_batch in sub_batches {
+        // SQLite: 子批次已按 999/num_columns 动态拆分，参数数量不会超限
+        // PostgreSQL: chunk_size == total，整批写入
+        // 两种后端均直接 insert_many，无需 clone；失败时整批丢弃并记录
+        let count = sub_batch.len();
+        match E::insert_many(sub_batch).exec(db).await {
+            Ok(_) => inserted += count,
+            Err(e) => {
+                error!(
+                    target: "monitoring",
+                    table = table_name,
+                    count,
+                    error = %e,
+                    "Batch insert failed, dropping batch"
+                );
+                dropped += count;
+            }
         }
     }
+
+    if dropped > 0 {
+        error!(
+            target: "monitoring",
+            table = table_name,
+            total,
+            inserted,
+            dropped,
+            "Batch insert completed with dropped rows"
+        );
+    } else {
+        debug!(target: "monitoring", table = table_name, count = total, "Batch insert succeeded");
+    }
 }
+

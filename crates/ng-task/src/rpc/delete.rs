@@ -91,8 +91,8 @@ pub async fn delete(
                 .collect()
         };
 
-        let provider = crate::rpc::auth_provider()
-            .ok_or_else(|| NodegetError::Other("Auth provider not initialized".to_owned()))?;
+        let provider = ng_core::permission::permission_checker::get_permission_checker()
+            .ok_or_else(|| NodegetError::ConfigNotFound("PermissionChecker not initialized".to_owned()))?;
 
         let is_allowed = provider
             .check_token_limit(&token_or_auth, scopes, permissions)

@@ -42,10 +42,10 @@ NodeGet/
 │   └── generate_entity.sh  # SeaORM entity generator (NOTE: output path needs update to crates/ng-db/src/entity)
 ├── agent/                 # Monitoring agent binary (monitoring, tasks, multi-server RPC)
 ├── crates/
-│   ├── ng-core/           # Errors, version, utils, NameValidator, Token/Scope/Permission/Limit/TokenOrAuth
+│   ├── ng-core/           # Errors, version, utils, NameValidator, Token/Scope/Permission/Limit/TokenOrAuth, PermissionChecker
 │   ├── ng-db/             # Entities (13 tables), DB connection global, DbRegistry, db RPC
 │   │   └── migration/     #   SeaORM migrations (17 steps)
-│   ├── ng-infra/          # DbBackedCache + make_global_cache!, AuthChecker, rpc_exec!, RpcHelper, token_identity
+│   ├── ng-infra/          # DbBackedCache + make_global_cache!, rpc_exec!, RpcHelper, token_identity
 │   ├── ng-config/         # ServerConfig, AgentConfig, CLI args, global config, read/edit_config RPC
 │   ├── ng-monitoring/     # Monitoring data structures, caches (UUID/Last/StaticHash), buffer, agent/agent-uuid RPC
 │   ├── ng-token/          # TokenCache, super-token, token generation/verification, token RPC
@@ -116,11 +116,7 @@ implementations at startup in `serve.rs`:
 
 | Injected Trait           | Defining Crate                              | Methods                                                          | Server Implementation                   |
 |--------------------------|---------------------------------------------|------------------------------------------------------------------|-----------------------------------------|
-| `AuthChecker`            | ng-infra                                    | `check(raw_token) → Token`                                       | `TokenAuthChecker` (ng-token)           |
-| `AuthProvider`           | ng-db                                       | `check_token_limit`, `check_super_token`                         | `ServerAuthProvider`                    |
-| `TokenPermissionChecker` | ng-kv, ng-static, ng-js-worker, ng-terminal | `check_token_limit`, `check_super_token`, (optional) `get_token` | Per-crate checker structs               |
-| `TaskAuthProvider`       | ng-task                                     | `check_token_limit`, `check_super_token`, `get_token`            | `TaskAuthProvider`                      |
-| `CheckSuperTokenFn`      | ng-config                                   | `check_super_token` (fn pointer)                                 | Closure → `ng_token::check_super_token` |
+| `PermissionChecker`      | ng-core                                     | `check_token_limit`, `check_super_token`, `get_token`            | `ServerPermissionChecker`               |
 | `JsWorkerService`        | ng-js-runtime                               | `run_inline_call_and_record_result`, `get_rpc_module`            | `JsWorkerServiceImpl`                   |
 | `JsWorkerScheduler`      | ng-crontab                                  | `enqueue_run`                                                    | `CronJsWorkerScheduler`                 |
 | `MonitoringUuidProvider` | ng-task                                     | `get_or_insert`, `reload`                                        | `TaskMonitoringUuidProvider`            |

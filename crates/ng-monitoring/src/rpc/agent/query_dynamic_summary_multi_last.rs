@@ -3,6 +3,11 @@
 //! 批量查询多台设备的动态摘要最新值。与 `query_dynamic_multi_last` 类似，
 //! 优先从内存 last-cache 获取，缓存未命中的部分通过 UNION ALL 查询数据库。
 //! 额外处理：对缩放列执行反缩放。
+//!
+//! ## 性能优化
+//!
+//! 全字段查询（`fields` 为空）使用 `get_dynamic_summary_last_raw()` 直接获取
+//! 预序列化的反缩放字符串（`Arc<str>`），跳过 Value 克隆和反缩放计算。
 
 use crate::monitoring_last_cache::MonitoringLastCache;
 use crate::monitoring_uuid_cache::MonitoringUuidCache;
@@ -24,7 +29,8 @@ use sea_orm::{
 };
 use serde_json::value::RawValue;
 use std::collections::HashSet;
-use tracing::{debug, error};
+use std::sync::Arc;
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 use super::query_dynamic_summary::field_to_column;
@@ -56,6 +62,15 @@ const ALL_SUMMARY_COLUMNS: &[&str] = &[
     "receive_speed",
 ];
 
+/// 查询结果的统一表示，支持零拷贝和序列化两种来源。
+#[derive(Clone)]
+enum SummaryResult {
+    /// 预序列化的 JSON 字符串（全字段缓存命中，已反缩放）
+    Raw(Arc<str>),
+    /// 需要序列化的 JSON Value（筛选字段或 DB 结果）
+    Value(serde_json::Value),
+}
+
 /// 批量查询多台设备的动态摘要最新值。
 ///
 /// - `token` — 身份认证凭据
@@ -69,11 +84,13 @@ const ALL_SUMMARY_COLUMNS: &[&str] = &[
 /// 3. 优先从 `MonitoringLastCache` 获取缓存命中（反缩放处理）
 /// 4. 缓存未命中的部分构建 UNION ALL 语句查询 DB
 /// 5. 合并缓存与 DB 结果，序列化返回
+#[allow(clippy::too_many_lines)]
 pub async fn dynamic_summary_multi_last_query(
     token: String,
     uuids: Vec<Uuid>,
     fields: Vec<DynamicSummaryQueryField>,
 ) -> RpcResult<Box<RawValue>> {
+    let all_fields = fields.is_empty();
     let process_logic = async {
         debug!(target: "monitoring", uuids_count = uuids.len(), fields_count = fields.len(), "Dynamic summary multi-last query request received");
 
@@ -101,6 +118,7 @@ pub async fn dynamic_summary_multi_last_query(
         .await?;
 
         if !is_allowed {
+            warn!(target: "monitoring", "权限拒绝: 缺少 DynamicMonitoringSummary Read 权限");
             return Err(NodegetError::PermissionDenied(
                 "Permission Denied: Missing DynamicMonitoringSummary Read permission".to_owned(),
             )
@@ -110,7 +128,7 @@ pub async fn dynamic_summary_multi_last_query(
         debug!(target: "monitoring", uuids_count = deduped_uuids.len(), fields_count = fields.len(), "Dynamic summary multi-last query permission check passed");
 
         let db = AgentRpcImpl::get_db()?;
-        let uuid_cache = MonitoringUuidCache::global();
+        let uuid_cache = MonitoringUuidCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringUuidCache not initialized".to_owned()))?;
 
         // Resolve UUIDs to uuid_ids
         let mut uuid_id_pairs: Vec<(Uuid, i16)> = Vec::with_capacity(deduped_uuids.len());
@@ -124,15 +142,22 @@ pub async fn dynamic_summary_multi_last_query(
         }
 
         // Fast path: in-memory last-cache (partial hit merge)
-        let last_cache = MonitoringLastCache::global();
-        let mut results: Vec<Option<serde_json::Value>> = vec![None; uuid_id_pairs.len()];
+        let last_cache = MonitoringLastCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringLastCache not initialized".to_owned()))?;
+        let mut results: Vec<Option<SummaryResult>> = vec![None; uuid_id_pairs.len()];
         let mut misses: Vec<(usize, i16)> = Vec::new();
         for (idx, (uuid, uuid_id)) in uuid_id_pairs.iter().enumerate() {
-            match last_cache.get_dynamic_summary_last(uuid, &fields) {
-                Some(v) => {
-                    results[idx] = Some(descale_cached_summary(v));
+            if all_fields {
+                // 全字段查询：使用预序列化字符串（已反缩放），跳过 Value 克隆
+                match last_cache.get_dynamic_summary_last_raw(uuid) {
+                    Some(s) => results[idx] = Some(SummaryResult::Raw(s)),
+                    None => misses.push((idx, *uuid_id)),
                 }
-                None => misses.push((idx, *uuid_id)),
+            } else {
+                // 筛选字段查询：使用 Value 路径 + 反缩放
+                match last_cache.get_dynamic_summary_last(uuid, &fields) {
+                    Some(v) => results[idx] = Some(SummaryResult::Value(descale_cached_summary(v))),
+                    None => misses.push((idx, *uuid_id)),
+                }
             }
         }
 
@@ -148,7 +173,7 @@ pub async fn dynamic_summary_multi_last_query(
                 .map_err(|e| NodegetError::SerializationError(format!("Parse DB results: {e}")))?;
             for (i, val) in miss_values.into_iter().enumerate() {
                 let idx = misses[i].0;
-                results[idx] = Some(val);
+                results[idx] = Some(SummaryResult::Value(val));
             }
             debug!(target: "monitoring", cache_hits = uuid_id_pairs.len() - misses.len(), misses = misses.len(), "Dynamic summary multi-last query partial cache hit");
         }
@@ -157,17 +182,22 @@ pub async fn dynamic_summary_multi_last_query(
         let mut output_buffer: Vec<u8> = Vec::with_capacity(results.len().saturating_mul(200));
         output_buffer.push(b'[');
         let mut first = true;
-        for value in results.into_iter().flatten() {
+        for result in results.into_iter().flatten() {
             if first {
                 first = false;
             } else {
                 output_buffer.push(b',');
             }
-            if let Err(e) = serde_json::to_writer(&mut output_buffer, &value) {
-                error!(target: "monitoring", error = %e, "Result serialization failed");
-                return Err(
-                    NodegetError::SerializationError(format!("Serialization failed: {e}")).into(),
-                );
+            match result {
+                SummaryResult::Raw(s) => output_buffer.extend_from_slice(s.as_bytes()),
+                SummaryResult::Value(v) => {
+                    if let Err(e) = serde_json::to_writer(&mut output_buffer, &v) {
+                        error!(target: "monitoring", error = %e, "Result serialization failed");
+                        return Err(
+                            NodegetError::SerializationError(format!("Serialization failed: {e}")).into(),
+                        );
+                    }
+                }
             }
         }
         output_buffer.push(b']');

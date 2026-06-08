@@ -79,11 +79,11 @@ pub async fn find_target_token(identifier: &str) -> Result<token::Model, Nodeget
 /// - 返回：成功为 `()`，非超级令牌时为 PermissionDenied 错误
 pub async fn verify_supertoken(token: &str) -> Result<(), NodegetError> {
     let token_or_auth =
-        TokenOrAuth::from_full_token(token).map_err(|e| NodegetError::ParseError(e.to_string()))?;
+        TokenOrAuth::from_full_token(token).map_err(NodegetError::ParseError)?;
 
     let is_super = check_super_token(&token_or_auth)
         .await
-        .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
+        .map_err(|e| NodegetError::PermissionDenied(e.to_string()))?;
 
     if !is_super {
         warn!(target: "token", "non-supertoken attempted privileged operation");
@@ -93,4 +93,45 @@ pub async fn verify_supertoken(token: &str) -> Result<(), NodegetError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── extract_target_identifier ────────────────────────────────────
+
+    #[test]
+    fn test_extract_target_identifier_key_secret() {
+        assert_eq!(extract_target_identifier("mykey:mysecret"), "mykey");
+    }
+
+    #[test]
+    fn test_extract_target_identifier_username_password() {
+        assert_eq!(extract_target_identifier("admin|password123"), "admin");
+    }
+
+    #[test]
+    fn test_extract_target_identifier_plain_key() {
+        assert_eq!(extract_target_identifier("just_a_key"), "just_a_key");
+    }
+
+    #[test]
+    fn test_extract_target_identifier_key_colon_takes_priority() {
+        // "a:b|c" — colon split takes priority over pipe split
+        assert_eq!(extract_target_identifier("a:b|c"), "a");
+    }
+
+    #[test]
+    fn test_extract_target_identifier_empty_parts() {
+        assert_eq!(extract_target_identifier(":secret"), "");
+        assert_eq!(extract_target_identifier("|password"), "");
+        assert_eq!(extract_target_identifier("key:"), "key");
+        assert_eq!(extract_target_identifier("user|"), "user");
+    }
+
+    #[test]
+    fn test_extract_target_identifier_empty_string() {
+        assert_eq!(extract_target_identifier(""), "");
+    }
 }

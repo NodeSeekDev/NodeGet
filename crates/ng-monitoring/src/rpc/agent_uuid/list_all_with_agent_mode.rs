@@ -9,7 +9,7 @@ use ng_core::permission::data_structure::{MonitoringUuid, Permission, Scope};
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_token::get::check_token_limit;
 use serde_json::value::RawValue;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// 响应项，包含 UUID 及其软删除状态。
 #[derive(serde::Serialize)]
@@ -43,23 +43,21 @@ pub async fn list_all_agent_uuids_with_agent_mode(token: String) -> RpcResult<Bo
         .await?;
 
         if !is_allowed {
+            warn!(target: "monitoring", "权限拒绝: 缺少 MonitoringUuid::List 权限");
             return Err(anyhow::anyhow!(NodegetError::PermissionDenied(
                 "Permission Denied: Missing MonitoringUuid::List permission".to_owned(),
             )));
         }
         debug!(target: "rpc", "list_all_agent_uuids_with_agent_mode: permission check passed");
 
-        let uuids = MonitoringUuidCache::global().list_all_with_agent_mode();
+        let uuids = MonitoringUuidCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringUuidCache not initialized".to_owned()))?.list_all_with_agent_mode();
 
         let items: Vec<AgentUuidWithMode> = uuids
             .into_iter()
             .map(|(uuid, soft_delete)| AgentUuidWithMode { uuid, soft_delete })
             .collect();
 
-        let json_str = serde_json::to_string(&items)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&items)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

@@ -8,6 +8,7 @@ use crate::config_access::get_agent_config;
 use log::error;
 use ng_core::error::NodegetError;
 use ng_task::ExecuteTask;
+use std::fmt::Write;
 use std::process::Stdio;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -142,7 +143,6 @@ pub async fn execute_command(task: ExecuteTask) -> Result<String> {
                     let tail_part = result[tail_start..].to_owned();
                     let skipped = tail_start - head_end;
                     result.truncate(head_end);
-                    use std::fmt::Write;
                     let _ = write!(
                         result,
                         "\n[... Output truncated, {skipped} bytes omitted (original {original_len} bytes) ...]\n"

@@ -135,7 +135,11 @@ const SERVER_ARCH_NAME: [(&str, &str); 10] = [
 /// - 返回 (major, minor, patch) 或 None
 fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     let body = s.strip_prefix('v')?;
-    let mut parts = body.splitn(3, '.');
+    parse_version_body(body)
+}
+
+fn parse_version_body(body: impl AsRef<str>) -> Option<(u32, u32, u32)> {
+    let mut parts = body.as_ref().splitn(3, '.');
     let x: u32 = parts.next()?.parse().ok()?;
     let y: u32 = parts.next()?.parse().ok()?;
     let z: u32 = parts.next()?.parse().ok()?;
@@ -174,8 +178,7 @@ pub fn check_if_update_needed(tag: &str) -> ((u32, u32, u32), (u32, u32, u32), b
         Some(v) => v,
     };
 
-    let current_version = match parse_version(&format!("v{}", NodeGetVersion::get().cargo_version))
-    {
+    let current_version = match parse_version_body(NodeGetVersion::get().cargo_version.clone()) {
         None => {
             return ((0, 0, 0), target_version, false);
         }
@@ -200,7 +203,7 @@ pub fn check_if_update_needed(tag: &str) -> ((u32, u32, u32), (u32, u32, u32), b
 /// - 返回下载 URL，未找到对应架构时返回 None
 #[cfg(any(feature = "for-agent", feature = "for-server"))]
 fn build_release_url(arch_name: &[(&str, &str)], tag: &str) -> Option<String> {
-    let arch_str = NodeGetVersion::get().cargo_target_triple;
+    let arch_str = &NodeGetVersion::get().cargo_target_triple;
 
     let (_, binary_name) = match arch_name.iter().find(|(target, _)| *target == arch_str) {
         Some(pair) => pair,
@@ -319,9 +322,23 @@ pub fn restart_process_with_exec_v() -> ! {
         std::process::exit(1);
     });
 
-    let path = CString::new(current.to_str().unwrap()).unwrap();
+    let path_str = current.to_str().unwrap_or_else(|| {
+        tracing::error!("Exe path is not valid UTF-8");
+        std::process::exit(1);
+    });
 
-    let c_args: Vec<CString> = std::env::args().map(|s| CString::new(s).unwrap()).collect();
+    let path = CString::new(path_str).unwrap_or_else(|_| {
+        tracing::error!("Exe path contains NUL byte");
+        std::process::exit(1);
+    });
+
+    let c_args: Vec<CString> = std::env::args()
+        .filter_map(|s| {
+            CString::new(s).map_err(|_| {
+                tracing::warn!("Skipping argument with NUL byte");
+            }).ok()
+        })
+        .collect();
 
     let mut ptrs: Vec<*const c_char> = c_args.iter().map(|c| c.as_ptr()).collect();
     ptrs.push(ptr::null()); // C 约定：参数数组以 NULL 结尾
@@ -337,4 +354,134 @@ pub fn restart_process_with_exec_v() -> ! {
 
     tracing::error!("execv failed: {}", std::io::Error::last_os_error());
     std::process::exit(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{check_if_update_needed, parse_version, parse_version_body, should_update};
+
+    // ── parse_version ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_version_valid() {
+        assert_eq!(parse_version("v1.2.3"), Some((1, 2, 3)));
+    }
+
+    #[test]
+    fn parse_version_zero() {
+        assert_eq!(parse_version("v0.0.0"), Some((0, 0, 0)));
+    }
+
+    #[test]
+    fn parse_version_large_numbers() {
+        assert_eq!(parse_version("v100.200.300"), Some((100, 200, 300)));
+    }
+
+    #[test]
+    fn parse_version_no_v_prefix() {
+        assert_eq!(parse_version("1.2.3"), None);
+    }
+
+    #[test]
+    fn parse_version_empty() {
+        assert_eq!(parse_version(""), None);
+    }
+
+    #[test]
+    fn parse_version_just_v() {
+        assert_eq!(parse_version("v"), None);
+    }
+
+    #[test]
+    fn parse_version_missing_patch() {
+        assert_eq!(parse_version("v1.2"), None);
+    }
+
+    #[test]
+    fn parse_version_extra_text() {
+        // splitn(3, '.') means the third part captures the rest
+        assert_eq!(parse_version("v1.2.3-beta"), None); // "3-beta" won't parse as u32
+    }
+
+    // ── parse_version_body ───────────────────────────────────────────
+
+    #[test]
+    fn parse_version_body_valid() {
+        assert_eq!(parse_version_body("1.2.3"), Some((1, 2, 3)));
+    }
+
+    #[test]
+    fn parse_version_body_trailing_text() {
+        // "3-beta" is not a valid u32
+        assert_eq!(parse_version_body("1.2.3-beta"), None);
+    }
+
+    #[test]
+    fn parse_version_body_only_major() {
+        assert_eq!(parse_version_body("1"), None);
+    }
+
+    #[test]
+    fn parse_version_body_empty() {
+        assert_eq!(parse_version_body(""), None);
+    }
+
+    // ── should_update ───────────────────────────────────────────────
+
+    #[test]
+    fn should_update_same_version() {
+        assert!(!should_update((1, 2, 3), (1, 2, 3)));
+    }
+
+    #[test]
+    fn should_update_different_patch() {
+        assert!(should_update((1, 2, 4), (1, 2, 3)));
+    }
+
+    #[test]
+    fn should_update_different_minor() {
+        assert!(should_update((1, 3, 0), (1, 2, 3)));
+    }
+
+    #[test]
+    fn should_update_different_major() {
+        assert!(should_update((2, 0, 0), (1, 2, 3)));
+    }
+
+    #[test]
+    fn should_update_downgrade_is_still_true() {
+        // The function only checks !=, not >
+        assert!(should_update((1, 2, 3), (1, 2, 4)));
+    }
+
+    #[test]
+    fn should_update_zero_versions() {
+        assert!(!should_update((0, 0, 0), (0, 0, 0)));
+    }
+
+    // ── check_if_update_needed ───────────────────────────────────────
+
+    #[test]
+    fn check_if_update_needed_invalid_tag() {
+        let (current, target, needed) = check_if_update_needed("not_a_version");
+        assert_eq!(current, (0, 0, 0));
+        assert_eq!(target, (0, 0, 0));
+        assert!(!needed);
+    }
+
+    #[test]
+    fn check_if_update_needed_valid_tag_different() {
+        // The current version is read from CARGO_PKG_VERSION env at compile time,
+        // so we just verify the function returns a tuple without panicking.
+        let (_, _, _) = check_if_update_needed("v99.99.99");
+        // Result depends on current version, but the function must not panic
+    }
+
+    #[test]
+    fn check_if_update_needed_empty_tag() {
+        let (current, target, needed) = check_if_update_needed("");
+        assert_eq!(current, (0, 0, 0));
+        assert_eq!(target, (0, 0, 0));
+        assert!(!needed);
+    }
 }

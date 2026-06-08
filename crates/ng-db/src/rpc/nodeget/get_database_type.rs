@@ -30,8 +30,8 @@ pub async fn get_database_type(token: String) -> RpcResult<Box<RawValue>> {
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-        let provider = crate::rpc::auth_provider()
-            .ok_or_else(|| NodegetError::Other("Auth provider not initialized".to_owned()))?;
+        let provider = ng_core::permission::permission_checker::get_permission_checker()
+            .ok_or_else(|| NodegetError::ConfigNotFound("PermissionChecker not initialized".to_owned()))?;
 
         let is_allowed = provider
             .check_token_limit(
@@ -64,9 +64,7 @@ pub async fn get_database_type(token: String) -> RpcResult<Box<RawValue>> {
             "data": db_type,
         });
 
-        let json_str = serde_json::to_string(&response)?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&response)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

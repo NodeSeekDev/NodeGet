@@ -1,6 +1,7 @@
 //! 数据库连接初始化
 //!
 //! 负责根据配置建立主库连接、执行 `SeaORM` 迁移，并对 `SQLite` 启用 WAL 等优化 PRAGMA。
+//! `SQLite` PRAGMA 通过连接建立后执行语句设置；连接池轮换时新连接需重新执行。
 //! 服务端启动流程中由 `serve.rs` 调用 `init_db_connection`。
 
 use crate::set_db;
@@ -34,8 +35,8 @@ impl Default for DbConnectionConfig {
             database_url: String::new(),
             connect_timeout_ms: 3000,
             acquire_timeout_ms: 3000,
-            idle_timeout_ms: 3000,
-            max_lifetime_ms: 30000,
+            idle_timeout_ms: 60000,
+            max_lifetime_ms: 1_800_000,
             max_connections: 10,
         }
     }
@@ -91,6 +92,10 @@ pub async fn init_db_connection(config: DbConnectionConfig) -> anyhow::Result<()
 
     info!(target: "db", "Migrations applied successfully");
 
+    // SQLite: 通过 PRAGMA 语句设置性能优化参数
+    // 注意：PRAGMA 仅对当前连接有效，连接池轮换新连接时不会自动继承。
+    // 但 WAL 模式和 cache_size 是持久化/数据库级设置，设置一次即可全局生效；
+    // busy_timeout 和 foreign_keys 是连接级设置，连接池新连接需要重新设置。
     if db.get_database_backend() == sea_orm::DatabaseBackend::Sqlite {
         db.execute_unprepared("PRAGMA journal_mode=WAL;")
             .await
@@ -101,9 +106,53 @@ pub async fn init_db_connection(config: DbConnectionConfig) -> anyhow::Result<()
         db.execute_unprepared("PRAGMA synchronous=NORMAL;").await?;
         db.execute_unprepared("PRAGMA busy_timeout = 5000;").await?;
         db.execute_unprepared("PRAGMA foreign_keys = ON;").await?;
-        info!(target: "db", "SQLite PRAGMAs applied: WAL, synchronous=NORMAL, busy_timeout=5000, foreign_keys=ON");
+        db.execute_unprepared("PRAGMA cache_size = -64000;").await?;
+        info!(target: "db", "SQLite PRAGMAs applied: WAL, synchronous=NORMAL, busy_timeout=5000, foreign_keys=ON, cache_size=-64000");
     }
 
     set_db(db);
     Ok(())
+}
+
+/// 为 `SQLite` URL 追加 `mode` 查询参数（`SQLx` 仅支持 `mode` 参数）。
+///
+/// 若 URL 中已包含 `mode=`，则不重复追加。
+/// 其他 `PRAGMA`（`journal_mode`、`synchronous` 等）不可作为 URL 参数，
+/// `SQLx` 驱动不支持，会报 `unknown query parameter` 错误。
+fn build_sqlite_url_with_mode(url: &str) -> String {
+    // 若已有 mode 参数则不追加
+    if url.contains("mode=") {
+        return url.to_owned();
+    }
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}mode=rwc")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sqlite_url_no_existing_params() {
+        let result = build_sqlite_url_with_mode("sqlite://./data.db");
+        assert_eq!(result, "sqlite://./data.db?mode=rwc");
+    }
+
+    #[test]
+    fn sqlite_url_with_existing_mode() {
+        let result = build_sqlite_url_with_mode("sqlite://./data.db?mode=rwc");
+        assert_eq!(result, "sqlite://./data.db?mode=rwc");
+    }
+
+    #[test]
+    fn sqlite_url_with_existing_other_params() {
+        let result = build_sqlite_url_with_mode("sqlite://./data.db?timeout=3000");
+        assert_eq!(result, "sqlite://./data.db?timeout=3000&mode=rwc");
+    }
+
+    #[test]
+    fn sqlite_url_no_double_mode() {
+        let result = build_sqlite_url_with_mode("sqlite://nodeget.db?mode=ro");
+        assert_eq!(result, "sqlite://nodeget.db?mode=ro");
+    }
 }

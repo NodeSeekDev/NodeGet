@@ -6,7 +6,7 @@
 
 use crate::data_structure::DynamicMonitoringData;
 use crate::monitoring_buffer;
-use crate::monitoring_last_cache::MonitoringLastCache;
+use crate::monitoring_last_cache::{build_dynamic_value, MonitoringLastCache};
 use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use jsonrpsee::core::RpcResult;
 use ng_core::error::NodegetError;
@@ -36,6 +36,7 @@ pub async fn report_dynamic(
     dynamic_monitoring_data: DynamicMonitoringData,
 ) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
+        static CACHED: std::sync::OnceLock<Box<RawValue>> = std::sync::OnceLock::new();
         let agent_uuid = dynamic_monitoring_data.uuid;
         debug!(target: "monitoring", agent_uuid = %agent_uuid, "report_dynamic: UUID parsed");
 
@@ -59,7 +60,7 @@ pub async fn report_dynamic(
         }
         debug!(target: "monitoring", agent_uuid = %agent_uuid, "report_dynamic: permission check passed");
 
-        let uuid_id = MonitoringUuidCache::global()
+        let uuid_id = MonitoringUuidCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringUuidCache not initialized".to_owned()))?
             .get_or_insert(agent_uuid)
             .await
             .map_err(|e| NodegetError::DatabaseError(format!("UUID cache error: {e}")))?;
@@ -86,42 +87,28 @@ pub async fn report_dynamic(
             uuid_id: Set(uuid_id),
             timestamp: Set(timestamp),
             storage_time: Set(Some(get_local_timestamp_ms_i64()?)),
-            cpu_data: Set(cpu_val.clone()),
-            ram_data: Set(ram_val.clone()),
-            load_data: Set(load_val.clone()),
-            system_data: Set(system_val.clone()),
-            disk_data: Set(disk_val.clone()),
-            network_data: Set(network_val.clone()),
-            gpu_data: Set(gpu_val.clone()),
+            cpu_data: Set(cpu_val),
+            ram_data: Set(ram_val),
+            load_data: Set(load_val),
+            system_data: Set(system_val),
+            disk_data: Set(disk_val),
+            network_data: Set(network_val),
+            gpu_data: Set(gpu_val),
         };
 
         debug!(target: "monitoring", agent_uuid = %dynamic_monitoring_data.uuid, "Received dynamic data, sending to buffer");
 
-        monitoring_buffer::get().dynamic_mon.send(in_data);
+        monitoring_buffer::get().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringBuffers not initialized".to_owned()))?.dynamic_mon.send(in_data);
 
-        let mut obj = serde_json::Map::with_capacity(9);
-        obj.insert(
-            "uuid".to_owned(),
-            serde_json::Value::String(agent_uuid.to_string()),
-        );
-        obj.insert(
-            "timestamp".to_owned(),
-            serde_json::Value::Number(timestamp.into()),
-        );
-        obj.insert("cpu".to_owned(), cpu_val);
-        obj.insert("ram".to_owned(), ram_val);
-        obj.insert("load".to_owned(), load_val);
-        obj.insert("system".to_owned(), system_val);
-        obj.insert("disk".to_owned(), disk_val);
-        obj.insert("network".to_owned(), network_val);
-        obj.insert("gpu".to_owned(), gpu_val);
-        MonitoringLastCache::global()
-            .update_dynamic_prebuilt(agent_uuid, serde_json::Value::Object(obj));
+        let cache_value = build_dynamic_value(agent_uuid, timestamp, &dynamic_monitoring_data);
+        MonitoringLastCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringLastCache not initialized".to_owned()))?
+            .update_dynamic_prebuilt(agent_uuid, cache_value);
 
         debug!(target: "monitoring", agent_uuid = %dynamic_monitoring_data.uuid, "Dynamic data buffered successfully");
 
-        RawValue::from_string(r#"{"status":"buffered"}"#.to_owned())
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        Ok(CACHED
+            .get_or_init(|| RawValue::from_string(r#"{"status":"buffered"}"#.to_owned()).unwrap())
+            .clone())
     };
 
     match process_logic.await {

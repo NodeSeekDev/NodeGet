@@ -8,6 +8,7 @@ use crate::query::QueryCondition;
 use ng_core::error::NodegetError;
 use ng_core::permission::data_structure::Scope;
 use std::collections::HashSet;
+use tracing::warn;
 
 /// 从查询条件中提取 Scope 列表。
 ///
@@ -86,13 +87,14 @@ pub enum ResolvedCondition {
 pub async fn resolve_conditions(
     conditions: &[QueryCondition],
 ) -> anyhow::Result<Vec<ResolvedCondition>> {
-    let cache = MonitoringUuidCache::global();
+    let cache = MonitoringUuidCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringUuidCache not initialized".to_owned()))?;
     let mut resolved = Vec::new();
 
     for cond in conditions {
         match cond {
             QueryCondition::Uuid(uuid) => {
                 let uuid_id = cache.get_id(uuid).ok_or_else(|| {
+                    warn!(target: "monitoring", %uuid, "UUID 查找失败: 在监控注册表中未找到");
                     NodegetError::NotFound(format!(
                         "Agent UUID not found in monitoring registry: {uuid}"
                     ))

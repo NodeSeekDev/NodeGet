@@ -155,8 +155,11 @@ ws_url = "ws://nodeget-secondary.example.com:2211/"
 
 - 若字段存在且数组**非空**，则仅统计列表中指定的项，其他项不参与汇总计算
 - 若字段不存在、为空数组，或被注释掉，则回退到默认排除逻辑：
-    - **磁盘**：按挂载点前缀自动过滤 `/tmp`、`/var/tmp`、`/dev`、`/run`、`/var/lib/containers`、`/var/lib/docker`、`/proc`、
-      `/sys`、`/sys/fs/cgroup`、`/etc/resolv.conf`、`/etc/host`、`/nix/store` 等虚拟/临时挂载点
+    - **磁盘**：按挂载点前缀和文件系统类型自动过滤虚拟/临时挂载点、容器运行时挂载点、Kubernetes/k3s kubelet volume/CSI
+      挂载点和伪文件系统，例如 `/tmp`、`/var/tmp`、`/dev`、`/run`、`/var/lib/containerd`、`/var/lib/containers`、
+      `/var/lib/docker`、`/var/lib/kubelet/pods`、`/var/lib/rancher/k3s/agent/kubelet/pods`、`/proc`、`/sys`、
+      `/sys/fs/cgroup`、`/etc/resolv.conf`、`/etc/host`、`/nix/store`，以及 `tmpfs`、`overlay`、`proc`、`sysfs`、
+      `cgroup` 等文件系统
     - **网卡**：按接口名前缀自动过滤 `br`、`cni`、`docker`、`podman`、`flannel`、`lo`、`veth`、`virbr`、`vmbr`、`tap`、`fwbr`、
       `fwpr` 等虚拟/隧道网卡
 

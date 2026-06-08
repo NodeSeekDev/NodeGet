@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 use tokio::fs;
+use tracing::warn;
 
 /// 默认配置文件路径
 pub const DEFAULT_AGENT_CONFIG_PATH: &str = "config.toml";
@@ -266,6 +267,7 @@ impl AgentConfig {
 
         // 4. 校验 connect_timeout_ms 不为零
         if matches!(config.connect_timeout_ms, Some(0)) {
+            warn!(target: "config", "配置验证失败: connect_timeout_ms 不能为 0");
             return Err("connect_timeout_ms must be greater than 0".into());
         }
 
@@ -274,6 +276,7 @@ impl AgentConfig {
             let mut seen = HashSet::with_capacity(servers.len());
             for server in servers {
                 if !seen.insert(&server.name) {
+                    warn!(target: "config", "配置验证失败: 重复的服务器名称 '{}'", server.name);
                     return Err(format!("Duplicate server name '{}' in config", server.name).into());
                 }
             }
@@ -284,9 +287,11 @@ impl AgentConfig {
             let dynamic_interval = config.dynamic_report_interval_ms_or_default();
             let summary_interval = config.dynamic_summary_report_interval_ms_or_default();
             if summary_interval == 0 {
+                warn!(target: "config", "配置验证失败: dynamic_summary_report_interval_ms 不能为 0");
                 return Err("dynamic_summary_report_interval_ms must be greater than 0".into());
             }
             if !dynamic_interval.is_multiple_of(summary_interval) {
+                warn!(target: "config", "配置验证失败: dynamic_report_interval_ms ({dynamic_interval}) 不是 dynamic_summary_report_interval_ms ({summary_interval}) 的整数倍");
                 return Err(format!(
                     "dynamic_report_interval_ms ({dynamic_interval}) must be an integer multiple of dynamic_summary_report_interval_ms ({summary_interval})"
                 )
@@ -295,5 +300,239 @@ impl AgentConfig {
         }
 
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_config_minimal_toml() {
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.agent_uuid,
+            uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
+        );
+        assert!(config.log_level.is_none());
+        assert!(config.dynamic_report_interval_ms.is_none());
+        assert!(config.static_report_interval_ms.is_none());
+        assert!(config.connect_timeout_ms.is_none());
+        assert!(config.exec_max_character.is_none());
+        assert!(config.terminal_shell.is_none());
+        assert!(config.ip_provider.is_none());
+        assert!(config.ntp_server.is_none());
+        assert!(config.server.is_none());
+    }
+
+    #[test]
+    fn agent_config_full_toml() {
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+log_level = "debug"
+dynamic_report_interval_ms = 2000
+dynamic_summary_report_interval_ms = 1000
+static_report_interval_ms = 600000
+connect_timeout_ms = 3000
+exec_max_character = 5000
+terminal_shell = "/bin/zsh"
+ip_provider = "ipinfo"
+ntp_server = "time.google.com"
+dynamic_summary_select_disk = ["/", "/data"]
+dynamic_summary_select_network_interface = ["eth0"]
+
+[[server]]
+name = "prod"
+server_uuid = "660e8400-e29b-41d4-a716-446655440001"
+token = "key:secret"
+ws_url = "ws://1.2.3.4:3000/nodeget/rpc"
+allow_task = true
+allow_icmp_ping = true
+allow_tcp_ping = true
+allow_http_ping = true
+allow_web_shell = true
+allow_read_config = true
+allow_edit_config = false
+allow_execute = true
+allow_http_request = true
+allow_ip = true
+allow_dns = true
+allow_version = true
+allow_self_update = true
+ignore_cert = false
+
+[[server]]
+name = "dev"
+server_uuid = "660e8400-e29b-41d4-a716-446655440002"
+token = "key2:secret2"
+ws_url = "wss://dev.example.com/nodeget/rpc"
+allow_task_type = ["ping", "tcp_ping", "version"]
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.log_level, Some("debug".to_owned()));
+        assert_eq!(config.dynamic_report_interval_ms, Some(2000));
+        assert_eq!(config.dynamic_summary_report_interval_ms, Some(1000));
+        assert_eq!(config.static_report_interval_ms, Some(600000));
+        assert_eq!(config.connect_timeout_ms, Some(3000));
+        assert_eq!(config.exec_max_character, Some(5000));
+        assert_eq!(config.terminal_shell, Some("/bin/zsh".to_owned()));
+        assert!(matches!(config.ip_provider, Some(IpProvider::IpInfo)));
+        assert_eq!(config.ntp_server, Some("time.google.com".to_owned()));
+        assert_eq!(
+            config.dynamic_summary_select_disk,
+            Some(vec!["/".to_owned(), "/data".to_owned()])
+        );
+        assert_eq!(
+            config.dynamic_summary_select_network_interface,
+            Some(vec!["eth0".to_owned()])
+        );
+
+        let servers = config.server.unwrap();
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].name, "prod");
+        assert_eq!(servers[0].allow_task, Some(true));
+        assert_eq!(servers[0].allow_icmp_ping, Some(true));
+        assert_eq!(servers[0].allow_edit_config, Some(false));
+        assert_eq!(servers[0].allow_task_type, None);
+        assert_eq!(servers[1].name, "dev");
+        assert_eq!(
+            servers[1].allow_task_type,
+            Some(vec!["ping".to_owned(), "tcp_ping".to_owned(), "version".to_owned()])
+        );
+    }
+
+    #[test]
+    fn ip_provider_deserialize() {
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+ip_provider = "cloudflare"
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(config.ip_provider, Some(IpProvider::Cloudflare)));
+
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+ip_provider = "ipinfo"
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(config.ip_provider, Some(IpProvider::IpInfo)));
+    }
+
+    #[test]
+    fn ip_provider_default_is_cloudflare() {
+        assert!(matches!(IpProvider::default(), IpProvider::Cloudflare));
+    }
+
+    #[test]
+    fn agent_config_default_intervals() {
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.dynamic_report_interval_ms_or_default(), DEFAULT_DYNAMIC_REPORT_INTERVAL_MS);
+        assert_eq!(config.dynamic_summary_report_interval_ms_or_default(), DEFAULT_DYNAMIC_SUMMARY_REPORT_INTERVAL_MS);
+        assert_eq!(config.static_report_interval_ms_or_default(), DEFAULT_STATIC_REPORT_INTERVAL_MS);
+    }
+
+    #[test]
+    fn agent_config_connect_timeout_duration() {
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+connect_timeout_ms = 5000
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.connect_timeout_duration(), Duration::from_millis(5000));
+    }
+
+    #[test]
+    fn agent_config_connect_timeout_default() {
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.connect_timeout_duration(), Duration::from_millis(DEFAULT_CONNECT_TIMEOUT_MS));
+    }
+
+    #[test]
+    fn agent_config_exec_max_character_default() {
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.exec_max_character_or_default(), DEFAULT_EXEC_MAX_CHARACTER);
+    }
+
+    #[test]
+    fn agent_config_ntp_server_default() {
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.ntp_server_or_default(), DEFAULT_NTP_SERVER);
+    }
+
+    #[test]
+    fn agent_config_ip_provider_default() {
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(config.ip_provider_or_default(), IpProvider::Cloudflare));
+    }
+
+    #[test]
+    fn server_debug_redacts_token() {
+        let server = Server {
+            name: "test".to_owned(),
+            server_uuid: "uuid".to_owned(),
+            token: "secret-key:super-secret".to_owned(),
+            ws_url: "ws://localhost:3000".to_owned(),
+            allow_task: Some(true),
+            allow_icmp_ping: None,
+            allow_tcp_ping: None,
+            allow_http_ping: None,
+            allow_web_shell: None,
+            allow_read_config: None,
+            allow_edit_config: None,
+            allow_execute: None,
+            allow_http_request: None,
+            allow_ip: None,
+            allow_dns: None,
+            allow_version: None,
+            allow_self_update: None,
+            ignore_cert: None,
+            allow_task_type: None,
+        };
+        let debug_output = format!("{server:?}");
+        assert!(debug_output.contains("***REDACTED***"));
+        assert!(!debug_output.contains("super-secret"));
+        assert!(debug_output.contains("test"));
+    }
+
+    #[test]
+    fn agent_config_default_constants() {
+        assert_eq!(DEFAULT_DYNAMIC_REPORT_INTERVAL_MS, 1000);
+        assert_eq!(DEFAULT_DYNAMIC_SUMMARY_REPORT_INTERVAL_MS, 1000);
+        assert_eq!(DEFAULT_STATIC_REPORT_INTERVAL_MS, 300_000);
+        assert_eq!(DEFAULT_CONNECT_TIMEOUT_MS, 1000);
+        assert_eq!(DEFAULT_EXEC_MAX_CHARACTER, 10_000);
+        assert_eq!(DEFAULT_NTP_SERVER, "pool.ntp.org");
+    }
+
+    #[test]
+    fn agent_config_roundtrip_json() {
+        // Use serde_json for roundtrip since toml::to_string needs the "display" feature
+        let toml_str = r#"
+agent_uuid = "550e8400-e29b-41d4-a716-446655440000"
+log_level = "info"
+"#;
+        let config: AgentConfig = toml::from_str(toml_str).unwrap();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: AgentConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.agent_uuid, deserialized.agent_uuid);
+        assert_eq!(config.log_level, deserialized.log_level);
     }
 }

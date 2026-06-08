@@ -48,6 +48,8 @@ pub use cache::StaticCache;
 #[cfg(feature = "server")]
 pub use ops::{
     create_static, delete_file, delete_static, get_static_path, list_all_names, list_file,
-    read_file, read_static, rename_file, resolve_safe_file_path, update_static, upload_file,
-    validate_name, validate_sub_path,
+    read_file, read_static, reload_static_path, rename_file, resolve_safe_file_path, update_static,
+    upload_file, validate_name, validate_sub_path,
 };
+#[cfg(feature = "server")]
+pub use router::clear_dav_handler_cache;

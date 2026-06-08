@@ -21,7 +21,7 @@ use sea_orm::{
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 /// 查询动态摘要监控数据。
 ///
@@ -48,10 +48,13 @@ use tracing::{debug, error};
 /// # Panics
 ///
 /// 内部使用 `uuid_id_iter.next().unwrap()`，若 UUID 条件数量与缓存解析结果不一致则 panic（理论上不会发生）。
+#[allow(clippy::too_many_lines)]
 pub async fn query_dynamic_summary(
     token: String,
     query_data: DynamicSummaryQuery,
 ) -> RpcResult<Box<RawValue>> {
+    const DEFAULT_LIMIT: u64 = 10_000;
+    const MAX_LIMIT: u64 = 10_000;
     let process_logic = async {
         debug!(target: "monitoring", conditions_count = query_data.condition.len(), fields_count = query_data.fields.len(), "Dynamic summary query request received");
 
@@ -82,6 +85,7 @@ pub async fn query_dynamic_summary(
         .await?;
 
         if !is_allowed {
+            warn!(target: "monitoring", "权限拒绝: 缺少 DynamicMonitoringSummary Read 权限");
             return Err(NodegetError::PermissionDenied(
                 "Permission Denied: Missing DynamicMonitoringSummary Read permission".to_string(),
             )
@@ -91,7 +95,7 @@ pub async fn query_dynamic_summary(
         debug!(target: "monitoring", conditions_count = query_data.condition.len(), fields_count = query_data.fields.len(), "Dynamic summary query permission check passed");
 
         let db = AgentRpcImpl::get_db()?;
-        let uuid_cache = MonitoringUuidCache::global();
+        let uuid_cache = MonitoringUuidCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringUuidCache not initialized".to_owned()))?;
 
         let query = dynamic_monitoring_summary::Entity::find()
             .select_only()
@@ -186,8 +190,6 @@ pub async fn query_dynamic_summary(
                 }
             });
 
-        const DEFAULT_LIMIT: u64 = 10_000;
-        const MAX_LIMIT: u64 = 10_000;
         let clamped_limit = limit_count.map(|l| std::cmp::min(l, MAX_LIMIT));
 
         let query = if is_last {

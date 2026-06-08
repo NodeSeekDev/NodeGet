@@ -11,7 +11,7 @@ use ng_db::get_db;
 use ng_js_runtime::runtime_pool;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::value::RawValue;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 /// 删除指定的 JS Worker。
 ///
@@ -27,6 +27,7 @@ pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
     let process_logic = async {
         let name = name.trim().to_owned();
         if name.is_empty() {
+            warn!(target: "js_worker", "验证失败: name 为空");
             return Err(NodegetError::InvalidInput("name cannot be empty".to_owned()).into());
         }
         debug!(target: "js_worker", name = %name, "processing js_worker delete request");
@@ -44,6 +45,7 @@ pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
             .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
         if delete_result.rows_affected == 0 {
+            warn!(target: "js_worker", name = %name, "未找到: js_worker 不存在");
             return Err(NodegetError::NotFound(format!("js_worker not found: {name}")).into());
         }
         runtime_pool::global_pool().evict_worker(&name);
@@ -55,9 +57,7 @@ pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
             "success": true,
             "rows_affected": delete_result.rows_affected
         });
-        let json_str = serde_json::to_string(&response)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&response)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

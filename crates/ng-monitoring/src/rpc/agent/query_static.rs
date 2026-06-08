@@ -23,7 +23,7 @@ use sea_orm::{
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 /// 查询静态监控数据。
 ///
@@ -38,10 +38,13 @@ use tracing::{debug, error};
 /// 4. 应用排序和 Limit
 /// 5. 流式执行查询，逐行转换 `uuid_id`→`uuid`、重命名字段
 /// 6. 手动拼接 JSON 数组字符串，返回 `RawValue`
+#[allow(clippy::too_many_lines)]
 pub async fn query_static(
     token: String,
     static_data_query: StaticDataQuery,
 ) -> RpcResult<Box<RawValue>> {
+    const DEFAULT_LIMIT: u64 = 10_000;
+    const MAX_LIMIT: u64 = 10_000;
     let process_logic = async {
         debug!(target: "monitoring", conditions_count = static_data_query.condition.len(), fields_count = static_data_query.fields.len(), "Static query request received");
 
@@ -86,6 +89,7 @@ pub async fn query_static(
         };
 
         if !is_allowed {
+            warn!(target: "monitoring", "权限拒绝: 缺少 StaticMonitoring Read 权限");
             return Err(NodegetError::PermissionDenied(
                 "Permission Denied: Insufficient StaticMonitoring Read permissions".to_owned(),
             )
@@ -95,7 +99,7 @@ pub async fn query_static(
         debug!(target: "monitoring", conditions_count = static_data_query.condition.len(), fields_count = static_data_query.fields.len(), "Static query permission check passed");
 
         let db = AgentRpcImpl::get_db()?;
-        let uuid_cache = MonitoringUuidCache::global();
+        let uuid_cache = MonitoringUuidCache::global().ok_or_else(|| NodegetError::ConfigNotFound("MonitoringUuidCache not initialized".to_owned()))?;
 
         let query = static_monitoring::Entity::find()
             .select_only()
@@ -168,8 +172,6 @@ pub async fn query_static(
                 }
             });
 
-        const DEFAULT_LIMIT: u64 = 10_000;
-        const MAX_LIMIT: u64 = 10_000;
         let clamped_limit = limit_count.map(|l| std::cmp::min(l, MAX_LIMIT));
 
         let query = if is_last {

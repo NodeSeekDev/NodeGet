@@ -3,17 +3,18 @@
 //! 以 `--dry-run` 启动时，采集一轮静态与动态监控数据并通过日志输出，
 //! 不建立任何服务器连接。用于验证 agent 能否在本机正常采集数据。
 
+use crate::config_access::get_agent_config;
 use crate::monitoring::impls::Monitor;
 use log::info;
 use ng_monitoring::data_structure::{
-    DynamicMonitoringData, StaticMonitoringData, is_excluded_mount, is_virtual_interface,
+    DynamicMonitoringData, StaticMonitoringData, is_excluded_summary_disk, is_virtual_interface,
 };
 
 /// 采集并打印静态与动态监控数据快照。
 ///
 /// 1. 采集静态数据（CPU 型号、系统信息、GPU 信息）
 /// 2. 采集动态数据（CPU 使用率、内存、负载、磁盘、网络、GPU 实时状态）
-/// 3. 输出经 `is_excluded_mount` / `is_virtual_interface` 过滤后的摘要数据
+/// 3. 输出经 `is_excluded_summary_disk` / `is_virtual_interface` 过滤后的摘要数据
 pub async fn dry_run() {
     let static_info = StaticMonitoringData::refresh_and_get().await;
     let dynamic_info = DynamicMonitoringData::refresh_and_get().await;
@@ -157,12 +158,26 @@ pub async fn dry_run() {
     info!("");
 
     info!("SUMMARY READ DATA SOURCE");
+    let cfg = get_agent_config().ok();
+    let select_disk = cfg
+        .as_ref()
+        .and_then(|c| c.dynamic_summary_select_disk.as_deref());
+    let select_nic = cfg
+        .as_ref()
+        .and_then(|c| c.dynamic_summary_select_network_interface.as_deref());
     info!("Disk:");
-    let disks: Vec<_> = dynamic_info
-        .disk
-        .iter()
-        .filter(|d| !is_excluded_mount(&d.mount_point))
-        .collect();
+    let disks: Vec<_> = match select_disk {
+        Some(filter) if !filter.is_empty() => dynamic_info
+            .disk
+            .iter()
+            .filter(|d| filter.contains(&d.mount_point))
+            .collect(),
+        _ => dynamic_info
+            .disk
+            .iter()
+            .filter(|d| !is_excluded_summary_disk(d))
+            .collect(),
+    };
     for disk in disks {
         info!(
             "  Name: {}, File System: {}, Mount Point: {}, Available Space: {} GB ({} Bytes), Total Space: {} GB ({} Bytes)",
@@ -177,12 +192,20 @@ pub async fn dry_run() {
     }
 
     info!("Network:");
-    let interfaces: Vec<_> = dynamic_info
-        .network
-        .interfaces
-        .iter()
-        .filter(|i| !is_virtual_interface(&i.interface_name))
-        .collect();
+    let interfaces: Vec<_> = match select_nic {
+        Some(filter) if !filter.is_empty() => dynamic_info
+            .network
+            .interfaces
+            .iter()
+            .filter(|i| filter.contains(&i.interface_name))
+            .collect(),
+        _ => dynamic_info
+            .network
+            .interfaces
+            .iter()
+            .filter(|i| !is_virtual_interface(&i.interface_name))
+            .collect(),
+    };
     for interface in interfaces {
         info!(
             "  Name: {}, Total Received: {} MB, Total Transmitted: {} MB",

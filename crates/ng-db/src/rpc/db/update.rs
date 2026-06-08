@@ -28,6 +28,7 @@ use tracing::{debug, warn};
 /// 4. 更新 `db_registry` 表中的名称
 /// 5. 若注册表更新失败，回滚文件重命名
 /// 6. 刷新连接池：移除旧连接、创建新连接
+#[allow(clippy::too_many_lines)]
 pub async fn update(token: String, name: String, new_name: String) -> RpcResult<Box<RawValue>> {
     let (tk, un) = token_identity(&token);
 
@@ -60,7 +61,9 @@ pub async fn update(token: String, name: String, new_name: String) -> RpcResult<
             .into());
         }
 
-        let mgr = DbRegistryManager::global();
+        let mgr = DbRegistryManager::global().ok_or_else(|| {
+            NodegetError::ConfigNotFound("DbRegistryManager not initialized".to_owned())
+        })?;
         let old_file = mgr.get_db_path(&name);
         let new_file = mgr.get_db_path(&new_name);
 
@@ -76,10 +79,10 @@ pub async fn update(token: String, name: String, new_name: String) -> RpcResult<
                             for ext in &["-wal", "-shm"] {
                                 let old_ext = format!("{old_file_clone}{ext}");
                                 let new_ext = format!("{new_file_clone}{ext}");
-                                if std::path::Path::new(&old_ext).exists() {
-                                    if std::fs::rename(&old_ext, &new_ext).is_err() {
-                                        warnings.push((old_ext, new_ext));
-                                    }
+                                if std::path::Path::new(&old_ext).exists()
+                                    && std::fs::rename(&old_ext, &new_ext).is_err()
+                                {
+                                    warnings.push((old_ext, new_ext));
                                 }
                             }
                         }
@@ -134,8 +137,7 @@ pub async fn update(token: String, name: String, new_name: String) -> RpcResult<
                     }
                 });
 
-                let json_str = serde_json::to_string(&resp)?;
-                RawValue::from_string(json_str)
+                serde_json::value::to_raw_value(&resp)
                     .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
             }
             Err(e) => {

@@ -9,7 +9,7 @@ use ng_core::permission::token_auth::TokenOrAuth;
 use ng_core::utils::generate_random_string;
 use ng_db::entity::token;
 use sea_orm::{ActiveValue, EntityTrait, Set};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::cache::TokenCache;
 use crate::hash_string;
@@ -42,11 +42,13 @@ pub async fn generate_and_store_token(
     username: Option<String>,
     password: Option<String>,
 ) -> anyhow::Result<(String, String)> {
-    let is_authorized = check_super_token(father_token_or_auth)
-        .await
-        .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
+    let is_authorized = check_super_token(father_token_or_auth).await.map_err(|e| {
+        warn!(target: "token", "权限拒绝: {e}");
+        NodegetError::PermissionDenied(format!("{e}"))
+    })?;
 
     if !is_authorized {
+        warn!(target: "token", "权限拒绝: 非超级令牌尝试创建子令牌");
         return Err(NodegetError::PermissionDenied(
             "Permission Denied: Only Super Token can create new tokens".to_string(),
         )

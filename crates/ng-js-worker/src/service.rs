@@ -12,13 +12,84 @@ use ng_core::utils::get_local_timestamp_ms_i64;
 use ng_db::entity::{js_result, js_worker};
 use ng_db::get_db;
 use ng_js_runtime::{
-    JsCodeInput, RunType, RuntimeLimits, format_js_error, js_runner, js_runner_source_mode,
-    runtime_pool,
+    JsCodeInput, RunType, RuntimeLimits, compile_js_module_to_bytecode, format_js_error, js_runner,
+    js_runner_source_mode, runtime_pool,
 };
-use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde_json::Value;
+use std::sync::OnceLock;
 use std::time::Duration;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace, warn};
+
+/// 获取当前 QuickJS 字节码版本号（首字节）。
+///
+/// 在 `spawn_blocking` 中编译最小脚本提取 BC_VERSION，避免在 tokio runtime 内
+/// 调用 `compile_js_module_to_bytecode`（其内部 `block_on` 会创建嵌套 runtime 导致 panic）。
+/// 结果缓存在 `OnceLock` 中，后续调用零开销。
+async fn current_bc_version() -> u8 {
+    static VERSION: OnceLock<u8> = OnceLock::new();
+    if let Some(&v) = VERSION.get() {
+        return v;
+    }
+    let v = tokio::task::spawn_blocking(|| {
+        compile_js_module_to_bytecode("0")
+            .ok()
+            .and_then(|bc| bc.first().copied())
+            .unwrap_or(0)
+    })
+    .await
+    .unwrap_or(0);
+    let _ = VERSION.set(v);
+    v
+}
+
+/// 检查字节码版本是否匹配当前 QuickJS，不匹配时从源码重编译并更新 DB。
+///
+/// - 匹配：原样返回 `bytecode`
+/// - 不匹配：用 `js_script` 重编译，写入 DB，驱逐运行时池中旧 worker，返回新字节码
+pub async fn ensure_bytecode_version(
+    model: &js_worker::Model,
+    db: &sea_orm::DatabaseConnection,
+) -> anyhow::Result<Vec<u8>> {
+    let bytecode = model.js_byte_code.clone().ok_or_else(|| {
+        NodegetError::InvalidInput(format!(
+            "js_worker '{}' has no precompiled bytecode",
+            model.name
+        ))
+    })?;
+
+    let version = current_bc_version().await;
+    if bytecode.first() == Some(&version) {
+        return Ok(bytecode);
+    }
+
+    info!(
+        target: "js_worker",
+        name = %model.name,
+        stored_version = bytecode.first().unwrap_or(&0),
+        current_version = version,
+        "Bytecode version mismatch, recompiling from source"
+    );
+
+    let new_bytecode = tokio::task::spawn_blocking({
+        let source = model.js_script.clone();
+        move || compile_js_module_to_bytecode(source)
+    })
+    .await
+    .map_err(|e| NodegetError::Other(format!("Recompile task join failed: {e}")))?
+    .map_err(|e| NodegetError::Other(format!("Bytecode recompile failed: {e}")))?;
+
+    let mut active: js_worker::ActiveModel = model.clone().into();
+    active.js_byte_code = Set(Some(new_bytecode.clone()));
+    active
+        .update(db)
+        .await
+        .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
+
+    runtime_pool::global_pool().evict_worker(&model.name);
+
+    Ok(new_bytecode)
+}
 
 /// 入队执行已编译的 JS Worker（字节码模式）。
 ///
@@ -45,6 +116,7 @@ pub async fn enqueue_defined_js_worker_run(
 ) -> anyhow::Result<i64> {
     let script_name = js_script_name.trim().to_owned();
     if script_name.is_empty() {
+        warn!(target: "js_worker", "验证失败: js_script_name 为空");
         return Err(NodegetError::InvalidInput("js_script_name cannot be empty".to_owned()).into());
     }
     debug!(target: "js_worker", script_name = %script_name, run_type = ?run_type, "enqueuing defined js_worker run (bytecode)");
@@ -61,11 +133,7 @@ pub async fn enqueue_defined_js_worker_run(
 
     let worker_id = model.id;
     let worker_name = model.name.clone();
-    let bytecode = model.js_byte_code.ok_or_else(|| {
-        NodegetError::InvalidInput(format!(
-            "js_worker '{script_name}' has no precompiled bytecode"
-        ))
-    })?;
+    let bytecode = ensure_bytecode_version(&model, &db).await?;
     let runtime_clean_time = model.runtime_clean_time;
     let limits = RuntimeLimits::from_model(
         model.max_run_time,
@@ -171,18 +239,21 @@ pub async fn run_inline_call_and_record_result(
 ) -> anyhow::Result<String> {
     let script_name = js_script_name.trim().to_owned();
     if script_name.is_empty() {
+        warn!(target: "js_worker", "验证失败: js_worker_name 为空");
         return Err(NodegetError::InvalidInput("js_worker_name cannot be empty".to_owned()).into());
     }
     debug!(target: "js_worker", script_name = %script_name, timeout_sec = ?timeout_sec, inline_caller = ?inline_caller, "running inline call and recording result");
 
     // 解析 params_json 为 Value，仅用于 DB 记录；JS 执行层直接用字符串透传
     let params: Value = serde_json::from_str(&params_json).map_err(|e| {
+        warn!(target: "js_worker", "验证失败: inline_call params 不是有效 JSON");
         NodegetError::InvalidInput(format!("inline_call params is not valid JSON: {e}"))
     })?;
 
     let timeout_duration = match timeout_sec {
         Some(value) if value.is_finite() && value > 0.0 => Some(Duration::from_secs_f64(value)),
         Some(value) => {
+            warn!(target: "js_worker", "验证失败: timeout_sec 无效: {}", value);
             return Err(NodegetError::InvalidInput(format!(
                 "timeout_sec must be a positive finite number, got: {value}"
             ))
@@ -203,11 +274,7 @@ pub async fn run_inline_call_and_record_result(
 
     let worker_id = model.id;
     let worker_name = model.name.clone();
-    let bytecode = model.js_byte_code.ok_or_else(|| {
-        NodegetError::InvalidInput(format!(
-            "js_worker '{script_name}' has no precompiled bytecode"
-        ))
-    })?;
+    let bytecode = ensure_bytecode_version(&model, &db).await?;
     let limits = RuntimeLimits::from_model(
         model.max_run_time,
         model.max_stack_size,
@@ -325,6 +392,7 @@ pub async fn enqueue_source_js_worker_run(
 ) -> anyhow::Result<i64> {
     let script_name = js_script_name.trim().to_owned();
     if script_name.is_empty() {
+        warn!(target: "js_worker", "验证失败: js_script_name 为空");
         return Err(NodegetError::InvalidInput("js_script_name cannot be empty".to_owned()).into());
     }
     debug!(target: "js_worker", script_name = %script_name, run_type = ?run_type, "enqueuing source mode js_worker run");

@@ -9,13 +9,13 @@
 //! 核心设计：
 //! - 虚拟 target `db` 自动展开为 `sea_orm`/`sea_orm_migration`/`sqlx` 三个真实 target
 //! - 反向映射：`sea_orm*`/`sqlx*` 的日志在输出时统一重映射为 `db`
-//! - `StreamLogManager` 使用 `std::sync::RwLock`（非 tokio），因为 `on_event` 是同步回调
-//! - 写锁期间禁止调用 tracing，避免与读锁死锁（`std::sync::RwLock` 不可重入）
+//! - `StreamLogManager` 使用 `ArcSwap<HashMap>` 替代 `RwLock<HashMap>`，读写均无锁，
+//!   彻底消除 `on_event`（读路径）与 `add/remove_subscriber`（写路径）之间的死锁风险
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt as stdfmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use ng_config::config::server::LoggingConfig;
 use tracing::field::{Field, Visit};
@@ -31,6 +31,7 @@ use tracing_subscriber::{
     registry::LookupSpan,
     util::SubscriberInitExt,
 };
+use arc_swap::ArcSwap;
 use uuid::Uuid;
 
 /// 内存日志环形缓冲区默认容量
@@ -172,6 +173,7 @@ pub fn init(config: Option<&LoggingConfig>) {
 ///
 /// 缓冲区满时淘汰最旧条目。
 struct MemoryLogLayer {
+    /// 有界环形缓冲区，存储 JSON 格式日志事件
     buffer: Arc<Mutex<VecDeque<serde_json::Value>>>,
 }
 
@@ -180,6 +182,11 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_event(&self, event: &Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
+        // 内存日志收集：采集事件字段 → 组装 span 上下文 → 构建日志条目 → 写入有界缓冲区
+        // 1. JsonFieldVisitor 收集事件的结构化字段与 message
+        // 2. 遍历 event_scope 中所有 span，用直接 Map 构造替代 json! 宏避免中间 Value 分配
+        // 3. build_log_entry 组装完整日志条目
+        // 4. 写入 VecDeque 缓冲区，超限时从队首弹出；使用 unwrap_or_else(into_inner) 从 Mutex 中毒恢复
         let meta = event.metadata();
 
         // 收集结构化字段
@@ -188,36 +195,34 @@ where
 
         let message = visitor.message.take().unwrap_or_default();
 
-        // 收集 span 上下文——剥离 ANSI，因为控制台层 `with_ansi(true)`
-        // 导致 `FormattedFields<DefaultFields>` 中包含 ANSI 转义码
+        // 收集 span 上下文——直接 Map 构造替代 serde_json::json!，消除每 span 的中间 Value 分配
         let spans: Vec<serde_json::Value> = ctx
             .event_scope(event)
             .into_iter()
             .flatten()
             .map(|span| {
-                let mut obj = serde_json::json!({ "name": span.name() });
+                let mut map = serde_json::Map::with_capacity(2);
+                map.insert(
+                    "name".to_owned(),
+                    serde_json::Value::String(span.name().to_owned()),
+                );
                 let ext = span.extensions();
                 if let Some(fields) = ext
                     .get::<FormattedFields<format::DefaultFields>>()
                     .filter(|f| !f.is_empty())
                 {
-                    obj["fields"] = serde_json::Value::String(strip_ansi(&fields.to_string()));
+                    map.insert(
+                        "fields".to_owned(),
+                        serde_json::Value::String(strip_ansi(&fields.to_string())),
+                    );
                 }
                 drop(ext);
-                obj
+                serde_json::Value::Object(map)
             })
             .collect();
 
-        let target = remap_target(meta.target());
-
-        let entry = serde_json::json!({
-            "timestamp": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
-            "level": meta.level().as_str(),
-            "target": target,
-            "message": message,
-            "fields": visitor.fields,
-            "spans": spans,
-        });
+        // 直接 Map 构造替代 serde_json::json!，消除 6 次中间 Value 分配
+        let entry = build_log_entry(meta, message, visitor.fields, spans);
 
         // 使用 unwrap_or_else(into_inner) 从 Mutex 中毒中恢复，
         // 而非静默丢弃日志条目
@@ -358,6 +363,7 @@ fn remap_target(target: &str) -> &str {
 ///
 /// 输出格式：`<时间戳> <级别> <target>: <字段> [span<fields>]`
 struct NodeGetFormat {
+    /// 时间戳格式化器
     timer: ChronoLocal,
 }
 
@@ -380,6 +386,12 @@ where
         mut writer: format::Writer<'_>,
         event: &Event<'_>,
     ) -> stdfmt::Result {
+        // 控制台单行格式化：时间戳 → 彩色级别 → target 重映射 → 字段 → span 上下文
+        // 1. timer 输出时间戳
+        // 2. 根据 ANSI 支持决定是否着色级别（5 字符右对齐）
+        // 3. remap_target 映射模块路径为友好名称，灰色显示
+        // 4. format_fields 渲染事件字段
+        // 5. 遍历 event_scope 拼接 [span{fields} < span{fields}] 格式的 span 上下文
         // 时间戳
         self.timer.format_time(&mut writer)?;
 
@@ -455,39 +467,41 @@ where
         mut writer: format::Writer<'_>,
         event: &Event<'_>,
     ) -> stdfmt::Result {
+        // JSON 文件格式化：采集字段 → 构建 span 上下文 → 组装日志条目 → 输出单行 JSON
+        // 1. JsonFieldVisitor 收集事件字段与 message
+        // 2. 遍历 span 链用直接 Map 构造上下文对象，strip_ansi 清除 ANSI 转义
+        // 3. build_log_entry 统一组装（含 remap_target），保证与控制台层 target 命名一致
+        // 4. 写入单行 JSON + 换行
         let meta = event.metadata();
-        let target = remap_target(meta.target());
-
         // 收集字段
         let mut visitor = JsonFieldVisitor::default();
         event.record(&mut visitor);
         let message = visitor.message.take().unwrap_or_default();
 
-        // 收集 span 上下文——防御性 strip_ansi，
-        // 避免字段格式化器类型 `N` 与 ANSI 启用的层共享存储时泄漏转义码
+        // 收集 span 上下文——直接 Map 构造替代 serde_json::json!
         let spans: Vec<serde_json::Value> = ctx
             .event_scope()
             .into_iter()
             .flatten()
             .map(|span| {
-                let mut obj = serde_json::json!({ "name": span.name() });
+                let mut map = serde_json::Map::with_capacity(2);
+                map.insert(
+                    "name".to_owned(),
+                    serde_json::Value::String(span.name().to_owned()),
+                );
                 let ext = span.extensions();
                 if let Some(fields) = ext.get::<FormattedFields<N>>().filter(|f| !f.is_empty()) {
-                    obj["fields"] = serde_json::Value::String(strip_ansi(&fields.to_string()));
+                    map.insert(
+                        "fields".to_owned(),
+                        serde_json::Value::String(strip_ansi(&fields.to_string())),
+                    );
                 }
                 drop(ext);
-                obj
+                serde_json::Value::Object(map)
             })
             .collect();
 
-        let entry = serde_json::json!({
-            "timestamp": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),
-            "level": meta.level().as_str(),
-            "target": target,
-            "message": message,
-            "fields": visitor.fields,
-            "spans": spans,
-        });
+        let entry = build_log_entry(meta, message, visitor.fields, spans);
 
         // 输出单行 JSON（无尾逗号）
         write!(writer, "{entry}")?;
@@ -509,6 +523,38 @@ const fn level_ansi(level: tracing::Level) -> (&'static str, &'static str) {
         tracing::Level::DEBUG => ("\x1b[34m", RESET), // 蓝色
         tracing::Level::TRACE => ("\x1b[35m", RESET), // 紫色
     }
+}
+
+/// 构建 JSON 日志条目，供 `MemoryLogLayer::on_event` 和 `JsonRemapFormat::format_event` 共享。
+///
+/// 直接 Map 构造替代 `serde_json::json!`，消除每条日志 6 次中间 `Value` 分配。
+fn build_log_entry(
+    meta: &tracing::Metadata<'_>,
+    message: String,
+    fields: serde_json::Map<String, serde_json::Value>,
+    spans: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    let mut map = serde_json::Map::with_capacity(6);
+    map.insert(
+        "timestamp".to_owned(),
+        serde_json::Value::String(
+            chrono::Local::now()
+                .format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+                .to_string(),
+        ),
+    );
+    map.insert(
+        "level".to_owned(),
+        serde_json::Value::String(meta.level().as_str().to_owned()),
+    );
+    map.insert(
+        "target".to_owned(),
+        serde_json::Value::String(remap_target(meta.target()).to_owned()),
+    );
+    map.insert("message".to_owned(), serde_json::Value::String(message));
+    map.insert("fields".to_owned(), serde_json::Value::Object(fields));
+    map.insert("spans".to_owned(), serde_json::Value::Array(spans));
+    serde_json::Value::Object(map)
 }
 
 /// 剥离字符串中的 ANSI 转义序列
@@ -550,20 +596,23 @@ pub fn get_stream_log_manager() -> &'static Arc<StreamLogManager> {
 
 /// 管理所有活跃的流日志订阅者
 ///
-/// 使用 `std::sync::RwLock` 而非 `tokio::sync::RwLock`，
-/// 因为 `on_event` 回调是同步的。
-/// `subscriber_count` 原子计数器提供快速路径：订阅者为零时跳过锁获取。
+/// 使用 `ArcSwap<HashMap>` 替代 `RwLock<HashMap>`：
+/// - 读路径（`on_event`）通过 `load()` 获取 `Arc` 引用，零开销无锁，
+///   不会与写路径产生任何竞争
+/// - 写路径（`add/remove_subscriber`）通过 `rcu()` 原子替换整个 `HashMap`，
+///   无需持有锁，因此可以安全地调用 tracing 而不会死锁
+/// - `subscriber_count` 原子计数器提供快速路径：订阅者为零时跳过 `load()`
 pub struct StreamLogManager {
-    /// 订阅者映射表（UUID → 订阅者）
-    subscribers: RwLock<HashMap<Uuid, StreamLogSubscriber>>,
-    /// 订阅者数量（快速路径优化：为零时避免获取读锁）
+    /// 订阅者映射表（UUID → 订阅者），原子替换
+    subscribers: ArcSwap<HashMap<Uuid, StreamLogSubscriber>>,
+    /// 订阅者数量（快速路径优化：为零时避免 load 开销）
     subscriber_count: AtomicUsize,
 }
 
 impl StreamLogManager {
     fn new() -> Self {
         Self {
-            subscribers: RwLock::new(HashMap::new()),
+            subscribers: ArcSwap::new(Arc::new(HashMap::new())),
             subscriber_count: AtomicUsize::new(0),
         }
     }
@@ -574,36 +623,36 @@ impl StreamLogManager {
     /// - tx：日志条目发送通道
     /// - `filter_str`：`EnvFilter` 格式的过滤器字符串
     ///
-    /// **警告**：调用此方法期间禁止发出任何 tracing 事件——
-    /// 此方法持有写锁，而 `on_event` 获取读锁，
-    /// 在 `std::sync::RwLock`（不可重入）上会死锁。
+    /// 使用 `rcu()` 原子替换 HashMap，无需持锁，可安全调用 tracing。
     pub fn add_subscriber(
         &self,
         id: Uuid,
-        tx: tokio::sync::mpsc::Sender<serde_json::Value>,
+        tx: tokio::sync::mpsc::Sender<String>,
         filter_str: &str,
     ) {
         let expanded = expand_virtual_targets(filter_str);
         let filter = StreamFilter::parse(&expanded);
         let subscriber = StreamLogSubscriber { tx, filter };
-        let mut guard = self
-            .subscribers
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard.insert(id, subscriber);
-        self.subscriber_count.store(guard.len(), Ordering::Release);
+        self.subscribers.rcu(|current| {
+            let mut new_map = (**current).clone();
+            new_map.insert(id, subscriber.clone());
+            new_map
+        });
+        self.subscriber_count
+            .store(self.subscribers.load().len(), Ordering::Release);
     }
 
     /// 按 id 移除订阅者
     ///
-    /// **警告**：同 [`add_subscriber`] 的死锁注意事项。
+    /// 使用 `rcu()` 原子替换 HashMap，无需持锁，可安全调用 tracing。
     pub fn remove_subscriber(&self, id: &Uuid) {
-        let mut guard = self
-            .subscribers
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard.remove(id);
-        self.subscriber_count.store(guard.len(), Ordering::Release);
+        self.subscribers.rcu(|current| {
+            let mut new_map = (**current).clone();
+            new_map.remove(id);
+            new_map
+        });
+        self.subscriber_count
+            .store(self.subscribers.load().len(), Ordering::Release);
     }
 
     /// 是否存在至少一个活跃订阅者
@@ -614,9 +663,10 @@ impl StreamLogManager {
 }
 
 /// 单个流日志订阅者，持有独立的过滤器和发送通道
+#[derive(Clone)]
 struct StreamLogSubscriber {
-    /// 日志条目发送通道
-    tx: tokio::sync::mpsc::Sender<serde_json::Value>,
+    /// 日志条目发送通道（预序列化 JSON 字符串）
+    tx: tokio::sync::mpsc::Sender<String>,
     /// 订阅者专属过滤器
     filter: StreamFilter,
 }
@@ -629,6 +679,7 @@ struct StreamLogSubscriber {
 ///
 /// 支持 `RUST_LOG` / `EnvFilter` 相同的 `target=level` 指令格式，
 /// 但仅处理 target+level 匹配（无 span 过滤）。
+#[derive(Clone)]
 struct StreamFilter {
     /// 无 target 指令匹配时的默认级别
     default_level: tracing::level_filters::LevelFilter,
@@ -715,6 +766,7 @@ fn parse_level_filter(s: &str) -> Option<tracing::level_filters::LevelFilter> {
 /// 此过滤器仅检查是否存在订阅者（`subscriber_count > 0`），
 /// per-subscriber 过滤在 `StreamLogLayer::on_event` 内完成。
 struct StreamLogFilter {
+    /// 流日志订阅管理器
     manager: Arc<StreamLogManager>,
 }
 
@@ -741,6 +793,7 @@ where
 /// 使用与 [`MemoryLogLayer`] 相同的 JSON 格式序列化事件，
 /// 通过 `try_send`（非阻塞）发送，避免慢订阅者的背压。
 struct StreamLogLayer {
+    /// 流日志订阅管理器
     manager: Arc<StreamLogManager>,
 }
 
@@ -749,6 +802,12 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_event(&self, event: &Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
+        // WebSocket 流日志推送：快速路径过滤 → 无锁快照筛选订阅者 → 序列化 → 广播预序列化 JSON
+        // 1. has_subscribers() 快速路径：无订阅者直接返回，避免不必要的字段采集与序列化
+        // 2. ArcSwap::load() 获取 Arc<HashMap> 快照，无锁遍历，filter.is_enabled(meta) 收集感兴趣的通道
+        // 3. JsonFieldVisitor 采集字段，遍历 span 链构建上下文，remap_target 映射模块路径
+        // 4. serde_json::json! 组装完整条目，to_string 序列化一次
+        // 5. try_send 将预序列化 JSON 字符串克隆广播给所有订阅者，避免 per-subscriber 深拷贝
         // 快速路径：无订阅者
         if !self.manager.has_subscribers() {
             return;
@@ -756,25 +815,21 @@ where
 
         let meta = event.metadata();
 
-        // 获取读锁，筛选感兴趣的订阅者
-        let guard = self
-            .manager
-            .subscribers
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // 获取订阅者映射表快照（Arc 引用，无锁）
+        let subscribers = self.manager.subscribers.load();
 
-        if guard.is_empty() {
+        if subscribers.is_empty() {
             return;
         }
 
         // 预过滤：收集对此事件感兴趣的订阅者通道
-        let interested_tx: Vec<tokio::sync::mpsc::Sender<serde_json::Value>> = guard
+        let interested_tx: Vec<tokio::sync::mpsc::Sender<String>> = subscribers
             .values()
             .filter(|sub| sub.filter.is_enabled(meta))
             .map(|sub| sub.tx.clone())
             .collect();
 
-        drop(guard);
+        drop(subscribers);
 
         if interested_tx.is_empty() {
             return;
@@ -814,9 +869,13 @@ where
             "spans": spans,
         });
 
-        // 非阻塞广播给所有感兴趣的订阅者
+        // 序列化一次，广播预序列化 JSON 字符串给所有订阅者（避免 per-subscriber 深拷贝）
+        let Ok(json_str) = serde_json::to_string(&entry) else {
+            return;
+        };
+
         for tx in interested_tx {
-            let _ = tx.try_send(entry.clone());
+            let _ = tx.try_send(json_str.clone());
         }
     }
 }

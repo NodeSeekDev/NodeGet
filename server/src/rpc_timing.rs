@@ -18,7 +18,9 @@ use tracing::Level;
 /// - level：tracing 输出级别，由 serve 启动时配置
 #[derive(Clone)]
 pub struct RpcTimingMiddleware<S> {
+    /// 被包裹的内部 RPC 服务
     pub service: S,
+    /// tracing 输出级别
     pub level: Level,
 }
 
@@ -63,7 +65,7 @@ where
         request: Request<'a>,
     ) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
         let method_name = request.method_name().to_owned();
-        let request_id = format!("{:?}", request.id());
+        let request_id = request.id().into_owned();
         let level = self.level;
         let service = self.service.clone();
         let started_at = Instant::now();
@@ -76,7 +78,7 @@ where
                 &method_name,
                 "call",
                 elapsed_us,
-                &format!("rpc.call completed id={request_id}"),
+                &format!("rpc.call completed id={request_id:?}"),
             );
             response
         }

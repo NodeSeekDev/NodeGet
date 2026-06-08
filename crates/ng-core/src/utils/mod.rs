@@ -81,3 +81,90 @@ pub fn generate_random_string(len: usize) -> String {
         .map(char::from)
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{generate_random_string, get_local_timestamp_ms, get_local_timestamp_ms_i64, set_ntp_offset_ms, JsonError};
+
+    // ── JsonError ───────────────────────────────────────────────────
+
+    #[test]
+    fn json_error_serialization() {
+        let je = JsonError {
+            error_id: 102,
+            error_message: "Permission denied: test".into(),
+        };
+        let json = serde_json::to_string(&je).unwrap();
+        assert!(json.contains("\"error_id\""));
+        assert!(json.contains("\"error_message\""));
+        assert!(json.contains("102"));
+    }
+
+    #[test]
+    fn json_error_deserialization() {
+        let json = r#"{"error_id":999,"error_message":"Other error: x"}"#;
+        let je: JsonError = serde_json::from_str(json).unwrap();
+        assert_eq!(je.error_id, 999);
+        assert_eq!(je.error_message, "Other error: x");
+    }
+
+    // ── generate_random_string ──────────────────────────────────────
+
+    #[test]
+    fn random_string_length() {
+        for len in [0, 1, 8, 32, 128] {
+            let s = generate_random_string(len);
+            assert_eq!(s.len(), len, "expected length {len}");
+        }
+    }
+
+    #[test]
+    fn random_string_alphanumeric_only() {
+        let s = generate_random_string(256);
+        assert!(s.chars().all(|c| c.is_ascii_alphanumeric()),
+            "all chars must be alphanumeric: {s}");
+    }
+
+    #[test]
+    fn random_string_different_on_consecutive_calls() {
+        let a = generate_random_string(64);
+        let b = generate_random_string(64);
+        // Extremely unlikely to match
+        assert_ne!(a, b, "two consecutive random strings should differ");
+    }
+
+    // ── Timestamp functions ─────────────────────────────────────────
+
+    #[test]
+    fn get_local_timestamp_ms_returns_positive() {
+        let ts = get_local_timestamp_ms().unwrap();
+        assert!(ts > 0, "timestamp should be positive");
+    }
+
+    #[test]
+    fn get_local_timestamp_ms_i64_returns_positive() {
+        let ts = get_local_timestamp_ms_i64().unwrap();
+        assert!(ts > 0, "timestamp should be positive");
+    }
+
+    #[test]
+    fn ntp_offset_applied() {
+        // Save original offset
+        let before = get_local_timestamp_ms_i64().unwrap();
+        // Set a large positive offset
+        set_ntp_offset_ms(1_000_000); // +1000 seconds
+        let after = get_local_timestamp_ms_i64().unwrap();
+        // Should be at least 999_000 ms larger (allowing some clock drift)
+        assert!(after > before + 999_000, "NTP offset should add to timestamp: before={before}, after={after}");
+        // Reset to zero so other tests are not affected
+        set_ntp_offset_ms(0);
+    }
+
+    #[test]
+    fn ntp_offset_zero_no_change() {
+        set_ntp_offset_ms(0);
+        let ts = get_local_timestamp_ms().unwrap();
+        // Just verify it doesn't error
+        assert!(ts > 0);
+    }
+}

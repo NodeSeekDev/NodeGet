@@ -16,7 +16,7 @@ use ng_js_runtime::compile_js_module_to_bytecode;
 use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde_json::Value;
 use serde_json::value::RawValue;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 /// 创建新的 JS Worker。
 ///
@@ -37,6 +37,7 @@ use tracing::{debug, trace};
 /// 3. 检查 name 和 route_name 唯一性
 /// 4. 编译 JS 为字节码
 /// 5. 插入 `js_worker` 表
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     token: String,
     name: String,
@@ -52,6 +53,7 @@ pub async fn create(
     let process_logic = async {
         let name = name.trim().to_owned();
         if name.is_empty() {
+            warn!(target: "js_worker", "验证失败: name 为空");
             return Err(NodegetError::InvalidInput("name cannot be empty".to_owned()).into());
         }
         debug!(target: "js_worker", name = %name, "processing js_worker create request");
@@ -62,6 +64,7 @@ pub async fn create(
         debug!(target: "js_worker", name = %name, "js_worker create permission check passed");
 
         if js_script_base64.trim().is_empty() {
+            warn!(target: "js_worker", name = %name, "验证失败: js_script_base64 为空");
             return Err(
                 NodegetError::InvalidInput("js_script_base64 cannot be empty".to_owned()).into(),
             );
@@ -75,6 +78,7 @@ pub async fn create(
         })?;
 
         if js_script.trim().is_empty() {
+            warn!(target: "js_worker", name = %name, "验证失败: 解码后 js_script 为空");
             return Err(
                 NodegetError::InvalidInput("Decoded js_script cannot be empty".to_owned()).into(),
             );
@@ -89,6 +93,7 @@ pub async fn create(
             .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
         if existing.is_some() {
+            warn!(target: "js_worker", name = %name, "验证失败: js_worker 已存在");
             return Err(
                 NodegetError::InvalidInput(format!("js_worker already exists: {name}")).into(),
             );
@@ -102,6 +107,7 @@ pub async fn create(
                 .await
                 .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
             if existing_route.is_some() {
+                warn!(target: "js_worker", name = %name, route_name = %route_name, "验证失败: route_name 已存在");
                 return Err(NodegetError::InvalidInput(format!(
                     "route_name already exists: {route_name}"
                 ))
@@ -155,9 +161,7 @@ pub async fn create(
             "update_at": inserted.update_at
         });
 
-        let json_str = serde_json::to_string(&response)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()))?;
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&response)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 

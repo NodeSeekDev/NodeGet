@@ -7,7 +7,7 @@ repository.workspace = true
 
 [features]
 default = []
-server = ["dep:jsonrpsee", "dep:tokio", "dep:hex", "dep:tracing", "sea-orm/with-json", "sea-orm/with-uuid", "dep:ng_db_migration"]
+server = ["dep:jsonrpsee", "dep:tokio", "dep:hex", "dep:tracing", "sea-orm/with-json", "sea-orm/with-uuid", "dep:ng_db_migration", "ng-core/for-server"]
 
 [dependencies]
 ng-core = { workspace = true }

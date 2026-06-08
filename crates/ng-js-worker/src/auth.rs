@@ -1,66 +1,23 @@
 //! 权限校验 —— JS Worker 和 JS Result 的 RBAC 权限检查。
 //!
-//! 提供 `TokenPermissionChecker` trait（依赖注入点）和一系列权限校验辅助函数：
+//! 提供一系列权限校验辅助函数：
 //! - `check_js_worker_permission` —— 检查 Worker 级别权限
 //! - `check_get_rt_pool_permission` —— 检查运行时池查看权限
 //! - `filter_workers_by_list_permission` —— 按列表权限过滤可见 Worker
 //! - `ensure_js_result_permission` —— 检查 Result 级别权限
 //! - `resolve_accessible_js_result_workers` —— 解析可访问的 Result Worker 列表
+//!
+//! 权限校验委托至全局 `ng_core::permission::permission_checker::PermissionChecker`。
 
 use ng_core::error::NodegetError;
 use ng_core::permission::data_structure::{
     JsResult as JsResultPermission, JsWorker as JsWorkerPermission, NodeGet, Permission, Scope,
-    Token,
 };
+use ng_core::permission::permission_checker::require_permission_checker as get_checker;
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_db::entity::js_result;
 use sea_orm::{EntityTrait, QueryOrder, QuerySelect};
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::OnceLock;
 use tracing::{trace, warn};
-
-// ── TokenPermissionChecker trait + 全局注入 ────────────────────────
-
-/// Token 权限校验 trait，由 server crate 实现并通过 [`set_token_checker`] 注入。
-pub trait TokenPermissionChecker: Send + Sync + 'static {
-    /// 检查 token/auth 是否满足给定的 scope 和 permission。
-    fn check_token_limit(
-        &self,
-        token_or_auth: &TokenOrAuth,
-        scopes: Vec<Scope>,
-        permissions: Vec<Permission>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + '_>>;
-
-    /// 检查 token/auth 是否为超级 Token。
-    fn check_super_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + '_>>;
-
-    /// 获取 token/auth 对应的 Token 元数据。
-    fn get_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Token>> + Send + '_>>;
-}
-
-static TOKEN_CHECKER: OnceLock<Box<dyn TokenPermissionChecker>> = OnceLock::new();
-
-/// 设置全局 Token 权限校验器，必须在服务器启动时调用一次。
-pub fn set_token_checker(checker: Box<dyn TokenPermissionChecker>) {
-    let _ = TOKEN_CHECKER.set(checker);
-}
-
-/// 获取全局 Token 权限校验器。
-///
-/// 若未初始化则 panic —— 必须先调用 [`set_token_checker`]。
-pub fn get_token_checker() -> &'static dyn TokenPermissionChecker {
-    TOKEN_CHECKER
-        .get()
-        .expect("TokenPermissionChecker not initialized — call set_token_checker first")
-        .as_ref()
-}
 
 // ── js_worker 权限校验辅助函数 ────────────────────────────────────
 
@@ -80,7 +37,7 @@ pub async fn check_js_worker_permission(
     permission: JsWorkerPermission,
 ) -> anyhow::Result<()> {
     trace!(target: "js_worker", worker_name = %worker_name, permission = ?permission, "checking js_worker permission");
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -109,7 +66,7 @@ pub async fn check_js_worker_permission(
 /// 此权限属于 `Scope::Global` + `Permission::NodeGet(GetRtPool)`。
 pub async fn check_get_rt_pool_permission(token: &str) -> anyhow::Result<()> {
     trace!(target: "js_worker", "checking get_rt_pool permission");
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -143,7 +100,7 @@ pub async fn filter_workers_by_list_permission(
     worker_names: Vec<String>,
 ) -> anyhow::Result<Vec<String>> {
     trace!(target: "js_worker", count = worker_names.len(), "filtering workers by list permission");
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -199,7 +156,7 @@ pub async fn ensure_js_result_permission(
     action: JsResultAction,
 ) -> anyhow::Result<()> {
     trace!(target: "js_result", worker_name = %worker_name, action = ?action, "checking js_result permission");
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
@@ -234,7 +191,7 @@ pub async fn resolve_accessible_js_result_workers(
     action: JsResultAction,
 ) -> anyhow::Result<Vec<String>> {
     trace!(target: "js_result", action = ?action, "resolving accessible js_result workers");
-    let checker = get_token_checker();
+    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 

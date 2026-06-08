@@ -36,9 +36,10 @@ pub async fn list_all_tokens(token: String) -> RpcResult<Box<RawValue>> {
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-        let is_super_token = check_super_token(&token_or_auth)
-            .await
-            .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
+        let is_super_token = check_super_token(&token_or_auth).await.map_err(|e| {
+            warn!(target: "token", "权限拒绝: {e}");
+            NodegetError::PermissionDenied(format!("{e}"))
+        })?;
 
         if !is_super_token {
             warn!(target: "token", "non-supertoken attempted to list all tokens");
@@ -48,7 +49,9 @@ pub async fn list_all_tokens(token: String) -> RpcResult<Box<RawValue>> {
             .into());
         }
 
-        let cached_tokens = TokenCache::global().get_all();
+        let cached_tokens = TokenCache::global()
+            .ok_or_else(|| NodegetError::ConfigNotFound("TokenCache not initialized".to_owned()))?
+            .get_all();
 
         let tokens: Vec<Token> = cached_tokens
             .iter()
@@ -65,12 +68,8 @@ pub async fn list_all_tokens(token: String) -> RpcResult<Box<RawValue>> {
         let response = ListAllTokensResponse { tokens };
 
         debug!(target: "token", token_count = response.tokens.len(), "list_all_tokens completed");
-        let json_str = serde_json::to_string(&response).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize token list: {e}"))
-        })?;
-
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        serde_json::value::to_raw_value(&response)
+            .map_err(|e| NodegetError::from(e).into())
     };
 
     // 统一错误转换：anyhow → NodegetError → JSON-RPC ErrorObject

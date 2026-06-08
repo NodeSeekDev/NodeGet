@@ -8,52 +8,34 @@ use crate::{get_reload_notify, get_server_config_path};
 use ng_core::error::{NodegetError, anyhow_to_nodeget_error};
 use ng_core::permission::token_auth::TokenOrAuth;
 use std::path::Path;
-use std::sync::OnceLock;
-use tracing::{debug, trace};
-
-/// Super Token 验证函数的类型签名。
-///
-/// 接收 `TokenOrAuth`，返回异步结果：是否为 super token。
-type CheckSuperTokenFn = fn(
-    &TokenOrAuth,
-) -> std::pin::Pin<
-    Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>,
->;
-
-/// 全局 Super Token 验证函数单例
-static CHECK_SUPER_TOKEN_FN: OnceLock<CheckSuperTokenFn> = OnceLock::new();
-
-/// 注册 Super Token 验证函数（由 server crate 在启动时调用）。
-///
-/// # Panics
-///
-/// 当重复注册时 panic。
-pub fn register_check_super_token(f: CheckSuperTokenFn) {
-    CHECK_SUPER_TOKEN_FN
-        .set(f)
-        .expect("check_super_token function already registered");
-}
+use tracing::{debug, trace, warn};
 
 /// 验证给定 Token 是否为 Super Token。
 ///
+/// 委托至全局 `PermissionChecker`（ng-core），替代原先的 `CheckSuperTokenFn` fn pointer 注入。
+///
 /// 内部步骤：
 /// 1. 解析原始 Token 为 `TokenOrAuth`
-/// 2. 获取全局验证函数
-/// 3. 执行验证，非 super token 则返回权限拒绝错误
+/// 2. 获取全局 PermissionChecker
+/// 3. 调用 `check_super_token` 验证，非 super token 则返回权限拒绝错误
 async fn ensure_super_token(token: &str) -> anyhow::Result<()> {
     trace!(target: "server", "checking super token");
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-    let check_fn = CHECK_SUPER_TOKEN_FN
-        .get()
-        .ok_or_else(|| NodegetError::Other("check_super_token not registered".to_owned()))?;
+    let checker = ng_core::permission::permission_checker::get_permission_checker()
+        .ok_or_else(|| NodegetError::Other("PermissionChecker not initialized".to_owned()))?;
 
-    let is_super = check_fn(&token_or_auth)
+    let is_super = checker
+        .check_super_token(&token_or_auth)
         .await
-        .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
+        .map_err(|e| {
+            warn!(target: "server", "权限拒绝: Super Token 检查失败: {e}");
+            NodegetError::PermissionDenied(format!("{e}"))
+        })?;
 
     if !is_super {
+        warn!(target: "server", "权限拒绝: 非 Super Token 尝试访问受保护操作");
         return Err(NodegetError::PermissionDenied(
             "Permission Denied: Super token required".to_owned(),
         )
@@ -85,6 +67,7 @@ fn validate_config_path(config_path: &str) -> anyhow::Result<&Path> {
 
     // 验证路径在允许目录内
     if !canonical_path.starts_with(&current_dir) {
+        warn!(target: "server", "权限拒绝: 配置路径不在工作目录内: {}", config_path);
         return Err(NodegetError::PermissionDenied(
             "Config path must be within working directory".to_owned(),
         )

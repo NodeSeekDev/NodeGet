@@ -11,13 +11,13 @@ use crate::rpc::agent::delete_common::{
 use jsonrpsee::core::RpcResult;
 use ng_core::error::NodegetError;
 use ng_core::permission::data_structure::{DynamicMonitoringSummary, Permission};
+use ng_core::permission::permission_checker::require_permission_checker;
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_db::entity::dynamic_monitoring_summary;
 use ng_infra::server::RpcHelper;
-use ng_token::check_token_limit;
 use sea_orm::{ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde_json::value::RawValue;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 /// 删除动态摘要监控数据。
 ///
@@ -30,6 +30,7 @@ use tracing::{debug, error};
 /// 2. 解析条件中的 `Limit`/`Last` 标记和 `ResolvedCondition`
 /// 3. 若有 Limit/Last：先查询 ID 列表，再按 ID 批量删除
 /// 4. 否则：直接按条件构建 `delete_many` 并执行
+#[allow(clippy::too_many_lines)]
 pub async fn delete_dynamic_summary(
     token: String,
     conditions: Vec<QueryCondition>,
@@ -40,7 +41,8 @@ pub async fn delete_dynamic_summary(
         debug!(target: "monitoring", conditions_count = conditions.len(), "delete_dynamic_summary: request received");
 
         let scopes = scopes_from_conditions(&conditions);
-        let is_allowed = check_token_limit(
+        let checker = require_permission_checker()?;
+        let is_allowed = checker.check_token_limit(
             &token_or_auth,
             scopes,
             vec![Permission::DynamicMonitoringSummary(
@@ -50,6 +52,7 @@ pub async fn delete_dynamic_summary(
         .await?;
 
         if !is_allowed {
+            warn!(target: "monitoring", "权限拒绝: 缺少 DynamicMonitoringSummary Delete 权限");
             return Err(NodegetError::PermissionDenied(
                 "Permission Denied: Missing DynamicMonitoringSummary Delete permission".to_owned(),
             )
@@ -185,13 +188,12 @@ pub async fn delete_dynamic_summary(
 
         debug!(target: "monitoring", rows_affected = rows_affected, conditions = conditions.len(), "Dynamic monitoring summary delete completed");
 
-        let json_str = format!(
-            "{{\"success\":true,\"deleted\":{},\"condition_count\":{}}}",
-            rows_affected,
-            conditions.len()
-        );
-        RawValue::from_string(json_str)
-            .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
+        serde_json::value::to_raw_value(&serde_json::json!({
+            "success": true,
+            "deleted": rows_affected,
+            "condition_count": conditions.len()
+        }))
+        .map_err(|e| NodegetError::SerializationError(e.to_string()).into())
     };
 
     match process_logic.await {

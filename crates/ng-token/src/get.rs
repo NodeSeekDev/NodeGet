@@ -39,7 +39,9 @@ const AUTH_FAILED_MESSAGE: &str = "Invalid credentials";
 /// 2. 常量时间比较哈希值验证凭据
 /// 3. 从 CachedToken 构建返回用的 Token 结构体（不含哈希）
 pub async fn get_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<Token> {
-    let cache = TokenCache::global();
+    let cache = TokenCache::global().ok_or_else(|| {
+        NodegetError::ConfigNotFound("TokenCache not initialized".to_owned())
+    })?;
 
     let cached_token = match token_or_auth {
         TokenOrAuth::Token(key, secret) => {
@@ -103,7 +105,9 @@ pub async fn get_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<Token> {
 /// 1. 优先按 token_key 在缓存中查找
 /// 2. 若未找到，回退按 username 查找
 pub async fn get_token_by_key_or_username(identifier: &str) -> anyhow::Result<Token> {
-    let cache = TokenCache::global();
+    let cache = TokenCache::global().ok_or_else(|| {
+        NodegetError::ConfigNotFound("TokenCache not initialized".to_owned())
+    })?;
 
     let cached_token = if let Some(entry) = cache.find_by_key(identifier) {
         debug!(target: "auth", identifier = %identifier, "found token by key");
@@ -464,5 +468,315 @@ mod tests {
             &Permission::Task(Task::Read("tcp*".to_string())),
             &Permission::Task(Task::Write("tcp_ping".to_string())),
         ));
+    }
+
+    // ── wildcard_matches_pattern edge cases ──────────────────────────
+
+    #[test]
+    fn test_wildcard_matches_pattern_empty_string() {
+        assert!(wildcard_matches_pattern("", ""));
+        assert!(wildcard_matches_pattern("", "*"));
+        assert!(!wildcard_matches_pattern("", "a*"));
+        assert!(!wildcard_matches_pattern("a", ""));
+    }
+
+    #[test]
+    fn test_wildcard_matches_pattern_star_not_at_end() {
+        // "a*b" does NOT end with *, so exact match required
+        assert!(!wildcard_matches_pattern("axb", "a*b"));
+        // Only trailing * triggers prefix matching
+        assert!(wildcard_matches_pattern("a*b", "a*b"));
+    }
+
+    #[test]
+    fn test_wildcard_matches_pattern_prefix_star_empty_prefix() {
+        // "*" has prefix "" — matches everything
+        assert!(wildcard_matches_pattern("anything", "*"));
+        assert!(wildcard_matches_pattern("", "*"));
+    }
+
+    #[test]
+    fn test_wildcard_matches_pattern_prefix_partial() {
+        assert!(wildcard_matches_pattern("abc_def", "abc_*"));
+        assert!(!wildcard_matches_pattern("ab_def", "abc_*"));
+        assert!(wildcard_matches_pattern("abc_", "abc_*"));
+    }
+
+    // ── permission_matches: Kv, CrontabResult, JsResult ──────────────
+
+    #[test]
+    fn test_permission_matches_kv_exact() {
+        assert!(permission_matches(
+            &Permission::Kv(Kv::Read("ns1".to_string())),
+            &Permission::Kv(Kv::Read("ns1".to_string())),
+        ));
+        assert!(!permission_matches(
+            &Permission::Kv(Kv::Read("ns1".to_string())),
+            &Permission::Kv(Kv::Read("ns2".to_string())),
+        ));
+    }
+
+    #[test]
+    fn test_permission_matches_kv_wildcard() {
+        assert!(permission_matches(
+            &Permission::Kv(Kv::Write("*".to_string())),
+            &Permission::Kv(Kv::Write("any_ns".to_string())),
+        ));
+        assert!(permission_matches(
+            &Permission::Kv(Kv::Delete("prefix*".to_string())),
+            &Permission::Kv(Kv::Delete("prefix_key".to_string())),
+        ));
+    }
+
+    #[test]
+    fn test_permission_matches_kv_mismatched_op() {
+        assert!(!permission_matches(
+            &Permission::Kv(Kv::Read("*".to_string())),
+            &Permission::Kv(Kv::Write("ns1".to_string())),
+        ));
+        assert!(!permission_matches(
+            &Permission::Kv(Kv::Write("ns1".to_string())),
+            &Permission::Kv(Kv::Delete("ns1".to_string())),
+        ));
+    }
+
+    #[test]
+    fn test_permission_matches_crontab_result_wildcard() {
+        assert!(permission_matches(
+            &Permission::CrontabResult(CrontabResult::Read("*".to_string())),
+            &Permission::CrontabResult(CrontabResult::Read("cron_1".to_string())),
+        ));
+        assert!(permission_matches(
+            &Permission::CrontabResult(CrontabResult::Delete("cron_*".to_string())),
+            &Permission::CrontabResult(CrontabResult::Delete("cron_abc".to_string())),
+        ));
+        assert!(!permission_matches(
+            &Permission::CrontabResult(CrontabResult::Read("*".to_string())),
+            &Permission::CrontabResult(CrontabResult::Delete("cron_1".to_string())),
+        ));
+    }
+
+    #[test]
+    fn test_permission_matches_js_result_wildcard() {
+        assert!(permission_matches(
+            &Permission::JsResult(JsResult::Read("*".to_string())),
+            &Permission::JsResult(JsResult::Read("worker1".to_string())),
+        ));
+        assert!(permission_matches(
+            &Permission::JsResult(JsResult::Delete("w_*".to_string())),
+            &Permission::JsResult(JsResult::Delete("w_abc".to_string())),
+        ));
+        assert!(!permission_matches(
+            &Permission::JsResult(JsResult::Read("*".to_string())),
+            &Permission::JsResult(JsResult::Delete("worker1".to_string())),
+        ));
+    }
+
+    #[test]
+    fn test_permission_matches_cross_variant_denied() {
+        // Different Permission variants never match, even with wildcards
+        assert!(!permission_matches(
+            &Permission::Kv(Kv::Read("*".to_string())),
+            &Permission::Task(Task::Read("ns1".to_string())),
+        ));
+        assert!(!permission_matches(
+            &Permission::CrontabResult(CrontabResult::Read("*".to_string())),
+            &Permission::JsResult(JsResult::Read("cron_1".to_string())),
+        ));
+    }
+
+    // ── scope_matches ────────────────────────────────────────────────
+
+    #[test]
+    fn test_scope_matches_global_covers_all() {
+        assert!(scope_matches(&Scope::Global, &Scope::Global));
+        assert!(scope_matches(&Scope::Global, &Scope::KvNamespace("ns".to_string())));
+        assert!(scope_matches(&Scope::Global, &Scope::JsWorker("w".to_string())));
+        assert!(scope_matches(&Scope::Global, &Scope::StaticBucket("b".to_string())));
+        assert!(scope_matches(&Scope::Global, &Scope::Db("d".to_string())));
+    }
+
+    #[test]
+    fn test_scope_matches_kv_namespace_exact() {
+        assert!(scope_matches(
+            &Scope::KvNamespace("ns1".to_string()),
+            &Scope::KvNamespace("ns1".to_string()),
+        ));
+        assert!(!scope_matches(
+            &Scope::KvNamespace("ns1".to_string()),
+            &Scope::KvNamespace("ns2".to_string()),
+        ));
+    }
+
+    #[test]
+    fn test_scope_matches_js_worker_wildcard() {
+        assert!(scope_matches(
+            &Scope::JsWorker("*".to_string()),
+            &Scope::JsWorker("any_name".to_string()),
+        ));
+        assert!(scope_matches(
+            &Scope::JsWorker("prefix*".to_string()),
+            &Scope::JsWorker("prefix_worker".to_string()),
+        ));
+        assert!(!scope_matches(
+            &Scope::JsWorker("prefix*".to_string()),
+            &Scope::JsWorker("other_worker".to_string()),
+        ));
+    }
+
+    #[test]
+    fn test_scope_matches_static_bucket_wildcard() {
+        assert!(scope_matches(
+            &Scope::StaticBucket("*".to_string()),
+            &Scope::StaticBucket("mybucket".to_string()),
+        ));
+    }
+
+    #[test]
+    fn test_scope_matches_db_wildcard() {
+        assert!(scope_matches(
+            &Scope::Db("prod*".to_string()),
+            &Scope::Db("prod_db".to_string()),
+        ));
+        assert!(!scope_matches(
+            &Scope::Db("prod*".to_string()),
+            &Scope::Db("dev_db".to_string()),
+        ));
+    }
+
+    #[test]
+    fn test_scope_matches_cross_type_denied() {
+        assert!(!scope_matches(
+            &Scope::KvNamespace("ns".to_string()),
+            &Scope::JsWorker("w".to_string()),
+        ));
+        assert!(!scope_matches(
+            &Scope::JsWorker("w".to_string()),
+            &Scope::StaticBucket("b".to_string()),
+        ));
+        assert!(!scope_matches(
+            &Scope::StaticBucket("b".to_string()),
+            &Scope::Db("d".to_string()),
+        ));
+        assert!(!scope_matches(
+            &Scope::Db("d".to_string()),
+            &Scope::KvNamespace("ns".to_string()),
+        ));
+        // Non-Global scopes do NOT cover Scope::Global
+        assert!(!scope_matches(
+            &Scope::KvNamespace("ns".to_string()),
+            &Scope::Global,
+        ));
+    }
+
+    // ── drop_unknown_permissions ─────────────────────────────────────
+
+    #[test]
+    fn test_drop_unknown_permissions_removes_invalid() {
+        let input = serde_json::json!([
+            {
+                "scopes": [{"global": null}],
+                "permissions": [
+                    {"task": {"create": "ping"}},
+                    {"non_existent_variant": {"create": "ping"}}
+                ]
+            }
+        ]);
+        let output = drop_unknown_permissions(input);
+        let limits = output.as_array().unwrap();
+        let perms = limits[0].get("permissions").unwrap().as_array().unwrap();
+        assert_eq!(perms.len(), 1, "unknown permission should be dropped");
+        assert!(perms[0].get("task").is_some());
+    }
+
+    #[test]
+    fn test_drop_unknown_permissions_keeps_all_valid() {
+        let input = serde_json::json!([
+            {
+                "scopes": [{"global": null}],
+                "permissions": [
+                    {"task": {"create": "ping"}},
+                    {"kv": {"read": "ns1"}}
+                ]
+            }
+        ]);
+        let output = drop_unknown_permissions(input.clone());
+        assert_eq!(output, input, "all-valid input should be unchanged");
+    }
+
+    #[test]
+    fn test_drop_unknown_permissions_non_array_returns_unchanged() {
+        let input = serde_json::json!({"not": "an array"});
+        let output = drop_unknown_permissions(input.clone());
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn test_drop_unknown_permissions_limit_without_permissions_key() {
+        let input = serde_json::json!([
+            {"scopes": [{"global": null}]}
+        ]);
+        let output = drop_unknown_permissions(input.clone());
+        assert_eq!(output, input, "limit without permissions key is preserved");
+    }
+
+    // ── parse_token_limit_with_compat ────────────────────────────────
+
+    #[test]
+    fn test_parse_token_limit_with_compat_valid() {
+        let input = serde_json::json!([
+            {
+                "scopes": [{"global": null}],
+                "permissions": [{"task": {"create": "ping"}}]
+            }
+        ]);
+        let limits = parse_token_limit_with_compat(input).unwrap();
+        assert_eq!(limits.len(), 1);
+        assert_eq!(limits[0].scopes, vec![Scope::Global]);
+    }
+
+    #[test]
+    fn test_parse_token_limit_with_compat_filters_unknown_then_succeeds() {
+        let input = serde_json::json!([
+            {
+                "scopes": [{"global": null}],
+                "permissions": [
+                    {"task": {"create": "ping"}},
+                    {"fake_permission": {"create": "ping"}}
+                ]
+            }
+        ]);
+        let limits = parse_token_limit_with_compat(input).unwrap();
+        assert_eq!(limits.len(), 1);
+        assert_eq!(limits[0].permissions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_token_limit_with_compat_all_invalid_permissions_yields_empty_perms() {
+        // When all permissions are unrecognized, they get filtered out,
+        // but the Limit itself remains valid (with empty permissions).
+        let input = serde_json::json!([
+            {
+                "scopes": [{"global": null}],
+                "permissions": [{"fake_permission": null}]
+            }
+        ]);
+        let limits = parse_token_limit_with_compat(input).unwrap();
+        assert_eq!(limits.len(), 1);
+        assert!(limits[0].permissions.is_empty());
+        assert_eq!(limits[0].scopes, vec![Scope::Global]);
+    }
+
+    #[test]
+    fn test_parse_token_limit_with_compat_completely_invalid_json_fails() {
+        // A structurally invalid JSON that can't parse at all
+        let input = serde_json::json!("not an array");
+        assert!(parse_token_limit_with_compat(input).is_err());
+    }
+
+    #[test]
+    fn test_parse_token_limit_with_compat_empty_array() {
+        let limits = parse_token_limit_with_compat(serde_json::json!([])).unwrap();
+        assert!(limits.is_empty());
     }
 }

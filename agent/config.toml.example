@@ -14,6 +14,7 @@ dynamic_report_interval_ms = 1000
 
 # Disk 选择列表（按 mount_point 匹配），用于 Dynamic Summary 上报
 # 若指定且非空，则仅统计列表中的磁盘；否则回退到默认排除逻辑
+# 默认排除临时挂载、容器运行时挂载、Kubernetes/k3s kubelet volume/CSI 挂载及伪文件系统
 # dynamic_summary_select_disk = ["/", "/data"]
 
 # 网卡选择列表（按 interface_name 匹配），用于 Dynamic Summary 上报

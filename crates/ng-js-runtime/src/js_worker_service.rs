@@ -2,7 +2,7 @@
 //!
 //! 运行时池和 `inline_call/nodeget` 模块需要回调到 js-worker 服务（位于 `ng-js-worker`）。
 //! 为打破循环依赖，在此定义 trait 并通过 `OnceLock` 在启动时注入实现，
-//! 与 `ng-infra` 中 `AuthChecker` 使用相同的模式。
+//! 与 [`ng-core::permission::permission_checker::PermissionChecker`] 使用相同的 `OnceLock` 注入模式。
 
 use std::future::Future;
 use std::pin::Pin;
@@ -42,6 +42,7 @@ pub trait RawJsonDispatcher: Send + Sync {
     ///
     /// - `json` —— JSON-RPC 请求原始字符串
     /// - `buf_size` —— 响应缓冲区大小
+    #[allow(clippy::type_complexity)]
     fn raw_json_request(
         &self,
         json: &str,
@@ -60,10 +61,7 @@ pub fn set_js_worker_service(service: Box<dyn JsWorkerService>) {
 
 /// 获取全局 `JsWorkerService`。
 ///
-/// 若未初始化则 panic —— 必须先调用 [`set_js_worker_service`]。
-pub fn get_js_worker_service() -> &'static dyn JsWorkerService {
-    JS_WORKER_SERVICE
-        .get()
-        .expect("JsWorkerService not initialized -- call set_js_worker_service first")
-        .as_ref()
+/// 若未初始化则返回 `None`。
+pub fn get_js_worker_service() -> Option<&'static dyn JsWorkerService> {
+    JS_WORKER_SERVICE.get().map(std::convert::AsRef::as_ref)
 }

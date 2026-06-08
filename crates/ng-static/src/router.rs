@@ -24,7 +24,6 @@ use ng_core::permission::data_structure::{
 use ng_core::permission::token_auth::TokenOrAuth;
 use tracing::{debug, error, info, warn};
 
-use crate::auth::get_token_checker;
 use crate::cache::StaticCache;
 use crate::ops::{get_static_path, resolve_safe_file_path};
 
@@ -36,13 +35,23 @@ fn dav_handler_cache() -> &'static RwLock<HashMap<String, DavHandler>> {
     DAV_HANDLER_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+/// Clear all cached DavHandler instances.
+///
+/// Should be called when `static_path` changes (e.g. config hot-reload),
+/// since cached handlers embed the old disk path.
+pub fn clear_dav_handler_cache() {
+    if let Some(cache) = DAV_HANDLER_CACHE.get() {
+        cache.write().expect("DAV handler cache lock poisoned").clear();
+    }
+}
+
 /// Retrieve a cached DavHandler for the given bucket, or build and cache one.
 fn get_or_create_dav_handler(bucket_name: &str, disk_path: &std::path::Path) -> DavHandler {
     // Fast path: read lock
-    if let Ok(cache) = dav_handler_cache().read() {
-        if let Some(handler) = cache.get(bucket_name) {
-            return handler.clone();
-        }
+    if let Ok(cache) = dav_handler_cache().read()
+        && let Some(handler) = cache.get(bucket_name)
+    {
+        return handler.clone();
     }
     // Slow path: write lock
     let mut cache = dav_handler_cache()
@@ -73,7 +82,9 @@ pub fn router() -> axum::Router {
             "/nodeget/static/{name}",
             any(
                 |Path(name): Path<String>, req: axum::extract::Request| async move {
-                    let cache = StaticCache::global();
+                    let Some(cache) = StaticCache::global() else {
+                        return build_http_error(StatusCode::INTERNAL_SERVER_ERROR, "StaticCache not initialized");
+                    };
                     let Some(model) = cache.get_by_name(&name) else {
                         return build_http_error(StatusCode::NOT_FOUND, "Static not found");
                     };
@@ -101,7 +112,9 @@ pub fn router() -> axum::Router {
             any(
                 |Path((name, path)): Path<(String, String)>,
                  req: axum::extract::Request| async move {
-                    let cache = StaticCache::global();
+                    let Some(cache) = StaticCache::global() else {
+                        return build_http_error(StatusCode::INTERNAL_SERVER_ERROR, "StaticCache not initialized");
+                    };
                     let Some(model) = cache.get_by_name(&name) else {
                         return build_http_error(StatusCode::NOT_FOUND, "Static not found");
                     };
@@ -266,7 +279,9 @@ async fn static_webdav_handler(req: axum::extract::Request) -> axum::response::R
     debug!(target: "webdav", method = %method, uri = %uri_path, bucket = %name, "webdav request received");
 
     // 1. Look up bucket
-    let cache = StaticCache::global();
+    let Some(cache) = StaticCache::global() else {
+        return build_webdav_error(StatusCode::INTERNAL_SERVER_ERROR, "StaticCache not initialized");
+    };
     let Some(model) = cache.get_by_name(name) else {
         warn!(target: "webdav", method = %method, uri = %uri_path, bucket = %name, "bucket not found");
         return build_webdav_error(StatusCode::NOT_FOUND, "Static bucket not found");
@@ -328,18 +343,26 @@ async fn static_webdav_handler(req: axum::extract::Request) -> axum::response::R
         Permission::StaticBucketFile(StaticBucketFilePermission::Delete),
         Permission::StaticBucketFile(StaticBucketFilePermission::List),
     ];
-    let is_allowed = match get_token_checker()
-        .check_token_limit(
-            &token_or_auth,
-            vec![Scope::StaticBucket(name.to_string())],
-            permissions,
-        )
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            error!(target: "webdav", bucket = %name, username = %username, error = %e, "permission check failed internally");
-            false
+    let is_allowed = match ng_core::permission::permission_checker::get_permission_checker() {
+        Some(checker) => {
+            match checker
+                .check_token_limit(
+                    &token_or_auth,
+                    vec![Scope::StaticBucket(name.to_string())],
+                    permissions,
+                )
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    error!(target: "webdav", bucket = %name, username = %username, error = %e, "permission check failed internally");
+                    false
+                }
+            }
+        }
+        None => {
+            error!(target: "webdav", bucket = %name, "PermissionChecker not initialized");
+            return build_webdav_error(StatusCode::INTERNAL_SERVER_ERROR, "PermissionChecker not initialized");
         }
     };
 

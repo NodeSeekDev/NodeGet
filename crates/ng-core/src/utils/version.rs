@@ -39,14 +39,16 @@ pub struct NodeGetVersion {
     pub rustc_llvm_version: String,
 }
 
+/// OnceLock 缓存实例，避免每次调用分配 14 个堆 String
+static VERSION_CACHE: std::sync::OnceLock<NodeGetVersion> = std::sync::OnceLock::new();
+
 impl NodeGetVersion {
     /// 获取编译期注入的版本信息实例。
     ///
-    /// 1. 根据 feature gate 判断二进制类型
-    /// 2. 读取所有 `env!` 宏注入的 vergen 环境变量
+    /// 所有字段为编译期常量，首次调用构建后缓存在 `OnceLock` 中，后续调用零分配。
     #[must_use]
-    pub fn get() -> Self {
-        Self {
+    pub fn get() -> &'static Self {
+        VERSION_CACHE.get_or_init(|| NodeGetVersion {
             binary_type: {
                 if cfg!(feature = "for-server") {
                     "Server"
@@ -69,7 +71,7 @@ impl NodeGetVersion {
             rustc_commit_date: env!("VERGEN_RUSTC_COMMIT_DATE").to_string(),
             rustc_commit_hash: env!("VERGEN_RUSTC_COMMIT_HASH").to_string(),
             rustc_llvm_version: env!("VERGEN_RUSTC_LLVM_VERSION").to_string(),
-        }
+        })
     }
 }
 
@@ -92,5 +94,69 @@ impl Display for NodeGetVersion {
             self.rustc_commit_hash,
             self.rustc_llvm_version
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NodeGetVersion;
+
+    #[test]
+    fn nodeget_version_get_returns_static() {
+        let v1 = NodeGetVersion::get();
+        let v2 = NodeGetVersion::get();
+        // Same static reference
+        assert!(std::ptr::eq(v1, v2));
+    }
+
+    #[test]
+    fn nodeget_version_binary_type_default() {
+        // binary_type depends on which feature is active:
+        // for-server -> "Server", for-agent -> "Agent", neither -> "Unknown"
+        // Under `cargo test --workspace`, Cargo unifies features so for-server may be enabled.
+        let v = NodeGetVersion::get();
+        let expected = if cfg!(feature = "for-server") {
+            "Server"
+        } else if cfg!(feature = "for-agent") {
+            "Agent"
+        } else {
+            "Unknown"
+        };
+        assert_eq!(v.binary_type, expected);
+    }
+
+    #[test]
+    fn nodeget_version_display_contains_fields() {
+        let v = NodeGetVersion::get();
+        let display = format!("{v}");
+        let expected_prefix = format!("NodeGet {} Version:", v.binary_type);
+        assert!(display.starts_with(&expected_prefix));
+        assert!(display.contains("Git Branch:"));
+        assert!(display.contains("Commit SHA:"));
+        assert!(display.contains("Target Triple:"));
+        assert!(display.contains("Rustc Channel:"));
+    }
+
+    #[test]
+    fn nodeget_version_debug() {
+        let v = NodeGetVersion::get();
+        let debug = format!("{v:?}");
+        assert!(debug.contains("NodeGetVersion"));
+        assert!(debug.contains("binary_type"));
+    }
+
+    #[test]
+    fn nodeget_version_clone_eq() {
+        let v = NodeGetVersion::get();
+        let cloned = v.clone();
+        assert_eq!(*v, cloned);
+    }
+
+    #[test]
+    fn nodeget_version_serde_round_trip() {
+        let v = NodeGetVersion::get();
+        let json = serde_json::to_string(v).unwrap();
+        let de: NodeGetVersion = serde_json::from_str(&json).unwrap();
+        assert_eq!(*v, de);
     }
 }

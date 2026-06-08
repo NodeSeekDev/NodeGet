@@ -19,13 +19,16 @@ use uuid::Uuid;
 
 #[rpc(server, namespace = "agent-uuid")]
 pub trait AgentUuidRpc {
+    /// 列出所有非软删除的 Agent UUID
     #[method(name = "list_all")]
     async fn list_all_agent_uuids(&self, token: String) -> RpcResult<Box<RawValue>>;
 
+    /// 列出所有 Agent UUID（包含软删除状态）
     #[method(name = "list_all_with_agent_mode")]
     async fn list_all_agent_uuids_with_agent_mode(&self, token: String)
     -> RpcResult<Box<RawValue>>;
 
+    /// 按 UUID 软删除 Agent，需 `SuperToken` 权限
     #[method(name = "delete")]
     async fn delete_agent_uuid(&self, token: String, agent_uuid: Uuid) -> RpcResult<Box<RawValue>>;
 }

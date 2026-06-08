@@ -30,11 +30,7 @@ pub async fn get_all_keys(token: String, namespace: String) -> RpcResult<Box<Raw
 
         debug!(target: "kv", keys_count = keys.len(), "get_all_keys completed");
 
-        let json_str = serde_json::to_string(&keys).map_err(|e| {
-            NodegetError::SerializationError(format!("Failed to serialize keys: {e}"))
-        })?;
-
-        RawValue::from_string(json_str)
+        serde_json::value::to_raw_value(&keys)
             .map_err(|e| NodegetError::SerializationError(format!("{e}")).into())
     };
 

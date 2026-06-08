@@ -7,7 +7,6 @@
 //! - DB read/write operations for KV namespaces
 //! - KV RPC namespace (JSON-RPC methods)
 //! - Permission filtering for KV operations
-//! - [`TokenPermissionChecker`] trait + global injection for auth delegation
 
 mod kv;
 pub use kv::KVStore;
@@ -21,11 +20,11 @@ pub mod rpc;
 
 #[cfg(feature = "server")]
 pub use auth::{
-    KvNamespaceListPermission, TokenPermissionChecker, check_kv_create_permission,
+    KvNamespaceListPermission, check_kv_create_permission,
     check_kv_delete_namespace_permission, check_kv_delete_permission,
     check_kv_list_keys_permission, check_kv_read_permission, check_kv_read_permission_with_pattern,
-    check_kv_write_permission, get_token_checker, resolve_kv_list_namespace_permission,
-    set_token_checker, validate_key, validate_key_pattern,
+    check_kv_write_permission, resolve_kv_list_namespace_permission,
+    validate_key, validate_key_pattern,
 };
 
 #[cfg(feature = "server")]

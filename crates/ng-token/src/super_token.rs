@@ -162,10 +162,14 @@ pub async fn roll_super_token() -> anyhow::Result<(String, String)> {
 ///
 /// - `token_or_auth`：认证凭据
 /// - 返回：`true` 表示为超级令牌，`false` 表示不是
-/// - 错误：缓存中缺少超级令牌记录
+/// - 错误：缓存未初始化或缺少超级令牌记录
 pub async fn check_super_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<bool> {
-    let cache = TokenCache::global();
-    let super_entry = cache.get_super_token().ok_or_else(|| {
+    // 检查 TokenCache 是否已初始化，避免未初始化时返回误导性的 NotFound 错误
+    if TokenCache::global().is_none() {
+        return Err(NodegetError::ConfigNotFound("TokenCache not initialized".to_owned()).into());
+    }
+
+    let super_entry = TokenCache::get_super_token().ok_or_else(|| {
         NodegetError::NotFound("Super Token record (ID 1) not found in cache".to_owned())
     })?;
 
