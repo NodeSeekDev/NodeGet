@@ -130,18 +130,19 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          # x86_64
+          # ── x86_64 ──
           - release_for: linux_x86_64_musl
             target: x86_64-unknown-linux-musl
             binary_name: nodeget-agent-linux-x86_64-musl
           - release_for: linux_x86_64_gnu
             target: x86_64-unknown-linux-gnu
             binary_name: nodeget-agent-linux-x86_64-gnu
+          # Android：NDK 缺少 libunwind，必须用 build-std 编译 panic_abort 版 std
           - release_for: linux_x86_64_android
             target: x86_64-linux-android
             binary_name: nodeget-agent-linux-x86_64-android
             build_std: true
-          # i686
+          # ── i686 ──
           - release_for: linux_i686_gnu
             target: i686-unknown-linux-gnu
             binary_name: nodeget-agent-linux-i686-gnu
@@ -152,7 +153,7 @@ jobs:
             target: i686-linux-android
             binary_name: nodeget-agent-linux-i686-android
             build_std: true
-          # aarch64
+          # ── aarch64 ──
           - release_for: linux_aarch64_gnu
             target: aarch64-unknown-linux-gnu
             binary_name: nodeget-agent-linux-aarch64-gnu
@@ -163,12 +164,7 @@ jobs:
             target: aarch64-linux-android
             binary_name: nodeget-agent-linux-aarch64-android
             build_std: true
-          # aarch64_be (tier 3)
-          - release_for: linux_aarch64_be_gnu
-            target: aarch64_be-unknown-linux-gnu
-            binary_name: nodeget-agent-linux-aarch64-be-gnu
-            build_std: true
-          # arm (generic)
+          # ── arm (generic) ──
           - release_for: linux_arm_gnueabi
             target: arm-unknown-linux-gnueabi
             binary_name: nodeget-agent-linux-arm-gnueabi
@@ -181,11 +177,12 @@ jobs:
           - release_for: linux_arm_musleabihf
             target: arm-unknown-linux-musleabihf
             binary_name: nodeget-agent-linux-arm-musleabihf
+          # Android：NDK 缺少 libunwind
           - release_for: linux_arm_androideabi
             target: arm-linux-androideabi
             binary_name: nodeget-agent-linux-arm-androideabi
             build_std: true
-          # armv7
+          # ── armv7 ──
           - release_for: linux_armv7_gnueabi
             target: armv7-unknown-linux-gnueabi
             binary_name: nodeget-agent-linux-armv7-gnueabi
@@ -198,11 +195,12 @@ jobs:
           - release_for: linux_armv7_musleabihf
             target: armv7-unknown-linux-musleabihf
             binary_name: nodeget-agent-linux-armv7-musleabihf
+          # Android：NDK 缺少 libunwind
           - release_for: linux_armv7_androideabi
             target: armv7-linux-androideabi
             binary_name: nodeget-agent-linux-armv7-androideabi
             build_std: true
-          # armv5te (tier 3)
+          # ── armv5te (tier 3)：无预编译 std，必须 build-std ──
           - release_for: linux_armv5te_gnueabi
             target: armv5te-unknown-linux-gnueabi
             binary_name: nodeget-agent-linux-armv5te-gnueabi
@@ -211,14 +209,16 @@ jobs:
             target: armv5te-unknown-linux-musleabi
             binary_name: nodeget-agent-linux-armv5te-musleabi
             build_std: true
-          # thumb
+          # ── thumb ──
           - release_for: linux_thumbv7neon_gnueabihf
             target: thumbv7neon-unknown-linux-gnueabihf
             binary_name: nodeget-agent-linux-thumbv7neon-gnueabihf
+          # Android：stable 无预编译 std，必须 nightly + build-std
           - release_for: linux_thumbv7neon_androideabi
             target: thumbv7neon-linux-androideabi
             binary_name: nodeget-agent-linux-thumbv7neon-androideabi
-          # mips (tier 3)
+            build_std: true
+          # mips (tier 3)：无预编译 std，必须 build-std
           - release_for: linux_mips_gnu
             target: mips-unknown-linux-gnu
             binary_name: nodeget-agent-linux-mips-gnu
@@ -276,9 +276,11 @@ jobs:
           - release_for: linux_loongarch64_gnu
             target: loongarch64-unknown-linux-gnu
             binary_name: nodeget-agent-linux-loongarch64-gnu
+            build_std: true
           - release_for: linux_loongarch64_musl
             target: loongarch64-unknown-linux-musl
             binary_name: nodeget-agent-linux-loongarch64-musl
+            build_std: true
           # riscv64
           - release_for: linux_riscv64gc_gnu
             target: riscv64gc-unknown-linux-gnu
@@ -288,10 +290,12 @@ jobs:
             target: riscv64gc-unknown-linux-musl
             binary_name: nodeget-agent-linux-riscv64gc-musl
             no_upx: true
+            build_std: true
           # sparc64
           - release_for: linux_sparc64_gnu
             target: sparc64-unknown-linux-gnu
             binary_name: nodeget-agent-linux-sparc64-gnu
+            no_upx: true
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -318,12 +322,22 @@ jobs:
         if: ${{ matrix.platform.build_std }}
         run: rustup install nightly && rustup component add rust-src --toolchain nightly
 
+      # 清除 CI 缓存中残留的预编译 target std，防止与 -Z build-std 冲突
+      # 产生 "duplicate lang item in crate 'core'" 错误
+      - name: Clean cached target std for build-std
+        if: ${{ matrix.platform.build_std }}
+        run: rustup target remove --toolchain nightly ${{ matrix.platform.target }} 2>/dev/null || true
+
       - name: Build binary (stable)
         if: ${{ !matrix.platform.build_std }}
         run: cross build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32
         env:
           CROSS_NO_WARNINGS: 0
 
+      # cross v0.2.5 的 Cross.toml build-std 只支持布尔值（true），
+      # 不支持字符串 "std,panic_abort"，因此 -Z build-std=std,panic_abort
+      # 必须在命令行显式传递以包含 panic_abort。
+      # Cross.toml 中的 build-std = true 让 cross 跳过 rustup target add。
       - name: Build binary (nightly, build-std)
         if: ${{ matrix.platform.build_std }}
         run: cross +nightly build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32 -Z build-std=std,panic_abort

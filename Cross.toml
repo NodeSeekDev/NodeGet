@@ -1,7 +1,3 @@
-# 需要从源码构建 std 的 target（tier 3 或预编译 std 与 NDK 不兼容）
-# minimal profile 使用 panic="abort"，必须包含 panic_abort
-# Android target：NDK 缺少 libunwind，预编译 std 依赖 unwinding 会导致链接失败
-
 # Android
 [target.x86_64-linux-android]
 build-std = true
@@ -21,15 +17,11 @@ build-std = true
 [target.thumbv7neon-linux-androideabi]
 build-std = true
 
-# ARM 老款 (tier 3)
+# ARM 老款 (tier 3)：无预编译 std，必须从源码构建
 [target.armv5te-unknown-linux-gnueabi]
 build-std = true
 
 [target.armv5te-unknown-linux-musleabi]
-build-std = true
-
-# 大端序 ARM64 (tier 3)
-[target.aarch64_be-unknown-linux-gnu]
 build-std = true
 
 # 极老 x86 (tier 3)
@@ -43,7 +35,7 @@ build-std = true
 [target.powerpc-unknown-linux-gnu]
 build-std = true
 
-# MIPS 系列 (tier 3)
+# MIPS 系列 (tier 3)：无预编译 std，必须从源码构建
 [target.mips-unknown-linux-gnu]
 build-std = true
 
