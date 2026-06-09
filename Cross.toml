@@ -1,61 +1,61 @@
-# Android
-[target.x86_64-linux-android]
-build-std = true
-
-[target.i686-linux-android]
-build-std = true
-
-[target.aarch64-linux-android]
-build-std = true
-
-[target.arm-linux-androideabi]
-build-std = true
-
-[target.armv7-linux-androideabi]
-build-std = true
-
-[target.thumbv7neon-linux-androideabi]
-build-std = true
-
-# ARM 老款 (tier 3)：无预编译 std，必须从源码构建
-[target.armv5te-unknown-linux-gnueabi]
-build-std = true
-
-[target.armv5te-unknown-linux-musleabi]
-build-std = true
-
-# 极老 x86 (tier 3)
-[target.i586-unknown-linux-gnu]
-build-std = true
-
-[target.i586-unknown-linux-musl]
-build-std = true
-
-# 32 位 PowerPC (tier 3)
-[target.powerpc-unknown-linux-gnu]
-build-std = true
-
-# MIPS 系列 (tier 3)：无预编译 std，必须从源码构建
-[target.mips-unknown-linux-gnu]
-build-std = true
-
-[target.mips-unknown-linux-musl]
-build-std = true
-
-[target.mipsel-unknown-linux-gnu]
-build-std = true
-
-[target.mipsel-unknown-linux-musl]
-build-std = true
-
-[target.mips64-unknown-linux-gnuabi64]
-build-std = true
-
-[target.mips64-unknown-linux-muslabi64]
-build-std = true
-
-[target.mips64el-unknown-linux-gnuabi64]
-build-std = true
-
-[target.mips64el-unknown-linux-muslabi64]
-build-std = true
+## Android
+#[target.x86_64-linux-android]
+#build-std = true
+#
+#[target.i686-linux-android]
+#build-std = true
+#
+#[target.aarch64-linux-android]
+#build-std = true
+#
+#[target.arm-linux-androideabi]
+#build-std = true
+#
+#[target.armv7-linux-androideabi]
+#build-std = true
+#
+#[target.thumbv7neon-linux-androideabi]
+#build-std = true
+#
+## ARM 老款 (tier 3)：无预编译 std，必须从源码构建
+#[target.armv5te-unknown-linux-gnueabi]
+#build-std = true
+#
+#[target.armv5te-unknown-linux-musleabi]
+#build-std = true
+#
+## 极老 x86 (tier 3)
+#[target.i586-unknown-linux-gnu]
+#build-std = true
+#
+#[target.i586-unknown-linux-musl]
+#build-std = true
+#
+## 32 位 PowerPC (tier 3)
+#[target.powerpc-unknown-linux-gnu]
+#build-std = true
+#
+## MIPS 系列 (tier 3)：无预编译 std，必须从源码构建
+#[target.mips-unknown-linux-gnu]
+#build-std = true
+#
+#[target.mips-unknown-linux-musl]
+#build-std = true
+#
+#[target.mipsel-unknown-linux-gnu]
+#build-std = true
+#
+#[target.mipsel-unknown-linux-musl]
+#build-std = true
+#
+#[target.mips64-unknown-linux-gnuabi64]
+#build-std = true
+#
+#[target.mips64-unknown-linux-muslabi64]
+#build-std = true
+#
+#[target.mips64el-unknown-linux-gnuabi64]
+#build-std = true
+#
+#[target.mips64el-unknown-linux-muslabi64]
+#build-std = true
