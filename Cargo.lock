@@ -2710,7 +2710,7 @@ dependencies = [
 
 [[package]]
 name = "ng-config"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "jsonrpsee",
@@ -2726,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "ng-core"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "libc",
@@ -2741,7 +2741,7 @@ dependencies = [
 
 [[package]]
 name = "ng-crontab"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2763,7 +2763,7 @@ dependencies = [
 
 [[package]]
 name = "ng-db"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "hex",
@@ -2779,7 +2779,7 @@ dependencies = [
 
 [[package]]
 name = "ng-infra"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "ng-core",
@@ -2791,7 +2791,7 @@ dependencies = [
 
 [[package]]
 name = "ng-js-runtime"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "llrt_buffer",
@@ -2813,7 +2813,7 @@ dependencies = [
 
 [[package]]
 name = "ng-js-worker"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "base64",
@@ -2831,7 +2831,7 @@ dependencies = [
 
 [[package]]
 name = "ng-kv"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "jsonrpsee",
@@ -2854,7 +2854,7 @@ dependencies = [
 
 [[package]]
 name = "ng-monitoring"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -2875,7 +2875,7 @@ dependencies = [
 
 [[package]]
 name = "ng-static"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2896,7 +2896,7 @@ dependencies = [
 
 [[package]]
 name = "ng-task"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -2914,7 +2914,7 @@ dependencies = [
 
 [[package]]
 name = "ng-terminal"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "axum",
@@ -2933,7 +2933,7 @@ dependencies = [
 
 [[package]]
 name = "ng-token"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "hex",
@@ -2983,7 +2983,7 @@ checksum = "43794a0ace135be66a25d3ae77d41b91615fb68ae937f904090203e81f755b65"
 
 [[package]]
 name = "nodeget-agent"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "base64",
@@ -3021,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "nodeget-server"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "arc-swap",

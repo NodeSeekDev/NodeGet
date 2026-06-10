@@ -22,8 +22,7 @@ mod set_enable;
 
 /// 校验 crontab 名称合法性。
 ///
-/// 允许 Unicode 字母、数字、下划线、短横线（支持中文等多语言命名）。
-/// 禁止路径分隔符、控制字符及可能造成问题的特殊符号。
+/// 采用黑名单模式：仅禁止路径分隔符和控制字符，其余（含空格、emoji、中文等）均允许。
 fn validate_name(name: &str) -> anyhow::Result<()> {
     if name.is_empty() {
         return Err(ng_core::error::NodegetError::InvalidInput("name cannot be empty".to_owned()).into());
@@ -31,13 +30,13 @@ fn validate_name(name: &str) -> anyhow::Result<()> {
     if name.chars().count() > 128 {
         return Err(ng_core::error::NodegetError::InvalidInput("name too long (max 128 chars)".to_owned()).into());
     }
-    let valid = name.chars().all(|c| {
-        // 允许：Unicode 字母/数字（含中文）、下划线、短横线
-        c.is_alphanumeric() || c == '_' || c == '-'
+    let invalid = name.chars().any(|c| {
+        // 禁止：路径分隔符、控制字符（含 null）
+        c == '/' || c == '\\' || c.is_control()
     });
-    if !valid {
+    if invalid {
         return Err(ng_core::error::NodegetError::InvalidInput(
-            "name contains invalid characters (alphanumeric, underscore, hyphen allowed)".to_owned(),
+            "name contains invalid characters (path separators and control characters not allowed)".to_owned(),
         )
         .into());
     }
@@ -220,6 +219,35 @@ mod tests {
         assert!(validate_name("定时任务_1").is_ok());
     }
 
+    #[test]
+    fn validate_name_accepts_space() {
+        assert!(validate_name("my cron").is_ok());
+    }
+
+    #[test]
+    fn validate_name_accepts_emoji() {
+        assert!(validate_name("🇭🇰 HKG ping").is_ok());
+    }
+
+    #[test]
+    fn validate_name_accepts_flag_emoji_full() {
+        // Issue #160: 国旗 emoji + 空格 + 短横线
+        assert!(validate_name("TCPing - 🇭🇰 HKG - Peekabo CDN Edge IPv4").is_ok());
+    }
+
+    #[test]
+    fn validate_name_accepts_dot() {
+        assert!(validate_name("cron.name").is_ok());
+    }
+
+    #[test]
+    fn validate_name_accepts_special_chars() {
+        // emoji、标点、空格均允许
+        assert!(validate_name("任务❌").is_ok());
+        assert!(validate_name("ping!").is_ok());
+        assert!(validate_name("a@b#c").is_ok());
+    }
+
     // ── validate_name: empty ──────────────────────────────────────
 
     #[test]
@@ -243,17 +271,7 @@ mod tests {
         assert!(matches!(nodeget_err, NodegetError::InvalidInput(msg) if msg.contains("128")));
     }
 
-    // ── validate_name: invalid characters ──────────────────────────
-
-    #[test]
-    fn validate_name_rejects_dot() {
-        assert!(validate_name("cron.name").is_err());
-    }
-
-    #[test]
-    fn validate_name_rejects_space() {
-        assert!(validate_name("my cron").is_err());
-    }
+    // ── validate_name: invalid characters (path separators & control) ──
 
     #[test]
     fn validate_name_rejects_slash() {
@@ -266,38 +284,13 @@ mod tests {
     }
 
     #[test]
-    fn validate_name_rejects_asterisk() {
-        assert!(validate_name("cron*").is_err());
+    fn validate_name_rejects_control_char() {
+        assert!(validate_name("cron\tname").is_err());
+        assert!(validate_name("cron\nname").is_err());
     }
 
     #[test]
-    fn validate_name_rejects_unicode_symbols() {
-        // Unicode 符号（非字母数字）仍应被拒绝
-        assert!(validate_name("任务❌").is_err());
-    }
-
-    #[test]
-    fn validate_name_rejects_special_chars() {
-        for ch in ['!', '@', '#', '$', '%', '&', '(', ')', '=', '+', '[', ']', '{', '}', '|', ';', ':', '\'', '"', '<', '>', ',', '?', '.', ' '] {
-            let name = format!("a{ch}b");
-            assert!(validate_name(&name).is_err(), "expected rejection for char '{ch}'");
-        }
-    }
-
-    #[test]
-    fn validate_name_rejects_dotdot() {
-        assert!(validate_name("..").is_err());
-    }
-
-    #[test]
-    fn validate_name_rejects_leading_dash() {
-        // dash is allowed, so this should pass
-        assert!(validate_name("-cron").is_ok());
-    }
-
-    #[test]
-    fn validate_name_rejects_leading_underscore() {
-        // underscore is allowed
-        assert!(validate_name("_cron").is_ok());
+    fn validate_name_rejects_null() {
+        assert!(validate_name("cron\0name").is_err());
     }
 }
