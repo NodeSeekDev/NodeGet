@@ -3,18 +3,14 @@ name: release
 on:
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: "Release tag to publish, for example v0.3.7. Leave empty for artifact-only manual builds."
-        required: false
-        type: string
       publish_release:
-        description: "Create/update the GitHub Release and Docker image. Requires release_tag."
+        description: "Create/update the GitHub Release and Docker image"
         required: false
         default: false
         type: boolean
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref_name || inputs.release_tag || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref_name || github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -31,6 +27,9 @@ jobs:
       publish: ${{ steps.release.outputs.publish }}
       tag: ${{ steps.release.outputs.tag }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Resolve release mode
         id: release
         shell: bash
@@ -44,13 +43,15 @@ jobs:
             tag="${GITHUB_REF_NAME}"
           else
             publish="${{ inputs.publish_release }}"
-            tag="${{ inputs.release_tag }}"
+            # 从 Cargo.toml workspace.package.version 读取版本号，加上 v 前缀
+            version=$(awk '/^\[workspace\.package\]/{found=1; next} found && /^version/{sub(/^version[[:space:]]*=[[:space:]]*"/, ""); sub(/".*/, ""); print; exit}' Cargo.toml)
+            tag="v${version}"
           fi
 
           # 发布时校验 tag 格式：v + 语义版本，允许 pre-release 后缀如 -rc1, +build123
           if [[ "${publish}" == "true" ]]; then
             if [[ ! "${tag}" =~ ^v[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.-]+)?$ ]]; then
-              echo "release_tag must look like v0.3.7 when publishing" >&2
+              echo "release_tag must look like v0.3.7 when publishing, got: ${tag}" >&2
               exit 1
             fi
           fi
