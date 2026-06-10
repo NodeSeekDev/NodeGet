@@ -108,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
     // rustls crypto provider 只能安装一次；`tasks/ip.rs` 懒加载路径也会尝试安装并用
     // `let _ =` 吞错，这里同样忽略重复安装失败以保持两处策略一致，避免日后某个第三方
     // 依赖也抢先安装后整个 agent 直接 panic。
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     // 此处不再 println! 启动横幅：config/logger 初始化完成后会 `info!("Starting nodeget-agent with config: {config:?}")`
     // 提供等价信号；启动早期失败也会由 `main` 的 `anyhow::Result` 把错误输出到 stderr。
