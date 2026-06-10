@@ -18,10 +18,10 @@ static PING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// HTTP Ping 结果类型
 pub type Result<T> = std::result::Result<T, NodegetError>;
 
-/// 确保 rustls ring crypto provider 已安装（幂等）。
-fn ensure_rustls_ring_provider() {
+/// 确保 rustls aws-lc-rs crypto provider 已安装（幂等）。
+fn ensure_rustls_aws_lc_rs_provider() {
     let () = RUSTLS_PROVIDER_INIT.get_or_init(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     });
 }
 
@@ -36,7 +36,7 @@ fn ensure_rustls_ring_provider() {
 pub async fn httping_target(target: url::Url) -> Result<std::time::Duration> {
     let client = GLOBAL_CLIENT
         .get_or_try_init(async || {
-            ensure_rustls_ring_provider();
+            ensure_rustls_aws_lc_rs_provider();
             Client::builder()
                 .timeout(PING_TIMEOUT)
                 .build()

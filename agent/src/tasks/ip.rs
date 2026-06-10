@@ -63,10 +63,10 @@ pub async fn ip() -> IPInfo {
     }
 }
 
-/// 确保 rustls ring crypto provider 已安装（幂等）。
-fn ensure_rustls_ring_provider() {
+/// 确保 rustls aws-lc-rs crypto provider 已安装（幂等）。
+fn ensure_rustls_aws_lc_rs_provider() {
     RUSTLS_PROVIDER_INIT.call_once(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     });
 }
 
@@ -80,7 +80,7 @@ async fn get_client(family: IpFamily) -> Option<&'static Client> {
     match family {
         IpFamily::Ipv4Only => CLIENT_V4
             .get_or_try_init(|| async {
-                ensure_rustls_ring_provider();
+                ensure_rustls_aws_lc_rs_provider();
                 Client::builder()
                     .timeout(Duration::from_secs(5))
                     .local_address(std::net::IpAddr::V4(Ipv4Addr::UNSPECIFIED))
@@ -91,7 +91,7 @@ async fn get_client(family: IpFamily) -> Option<&'static Client> {
             .ok(),
         IpFamily::Ipv6Only => CLIENT_V6
             .get_or_try_init(|| async {
-                ensure_rustls_ring_provider();
+                ensure_rustls_aws_lc_rs_provider();
                 Client::builder()
                     .timeout(Duration::from_secs(5))
                     .local_address(std::net::IpAddr::V6(Ipv6Addr::UNSPECIFIED))

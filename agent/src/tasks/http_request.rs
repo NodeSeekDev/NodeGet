@@ -24,10 +24,10 @@ static DEFAULT_CLIENT: OnceLock<Client> = OnceLock::new();
 /// HTTP 请求超时时间，30 秒。
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// 确保 rustls ring crypto provider 已安装（幂等）。
-fn ensure_rustls_ring_provider() {
+/// 确保 rustls aws-lc-rs crypto provider 已安装（幂等）。
+fn ensure_rustls_aws_lc_rs_provider() {
     let () = RUSTLS_PROVIDER_INIT.get_or_init(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     });
 }
 
@@ -57,7 +57,7 @@ fn get_default_client() -> Client {
 ///
 /// 返回 [`HttpRequestTaskResult`]；请求失败时返回错误。
 pub async fn execute_http_request(task: HttpRequestTask) -> Result<HttpRequestTaskResult> {
-    ensure_rustls_ring_provider();
+    ensure_rustls_aws_lc_rs_provider();
 
     let method =
         Method::from_bytes(task.method.trim().to_ascii_uppercase().as_bytes()).map_err(|e| {

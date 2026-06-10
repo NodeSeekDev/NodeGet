@@ -26,7 +26,7 @@ simple_logger = { version = "5.1.0", default-features = false, features = ["thre
 
 # Http Client
 reqwest = { version = "0.13.3", default-features = false, features = ["rustls-no-provider"] }
-rustls = { version = "0.23.28", default-features = false, features = ["std", "ring"] }
+rustls = { version = "0.23.28", default-features = false, features = ["std", "aws_lc_rs"] }
 tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
 
 # parser

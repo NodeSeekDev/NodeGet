@@ -20,7 +20,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.5.11"
+version = "0.5.12"
 license = "AGPL-3"
 edition = "2024"
 repository = "https://github.com/NodeSeekDev/NodeGet"
@@ -50,7 +50,7 @@ sea-orm = { version = "2.0.0-rc.40", default-features = false, features = ["runt
 cron = { version = "0.16.0", default-features = false }
 dav-server = { version = "0.11.0", default-features = false, features = ["localfs"] }
 rquickjs = { git = "https://github.com/delskayn/rquickjs.git", default-features = false, features = ["futures"] }
-llrt_fetch = { git = "https://github.com/awslabs/llrt.git", default-features = false, features = ["http1", "compression-rust", "webpki-roots", "tls-ring"] }
+llrt_fetch = { git = "https://github.com/awslabs/llrt.git", default-features = false, features = ["http1", "compression-rust", "webpki-roots", "tls-aws-lc"] }
 llrt_buffer = { git = "https://github.com/awslabs/llrt.git", default-features = false }
 llrt_timers = { git = "https://github.com/awslabs/llrt.git", default-features = false }
 llrt_url = { git = "https://github.com/awslabs/llrt.git", default-features = false }
@@ -58,7 +58,7 @@ llrt_stream_web = { git = "https://github.com/awslabs/llrt.git", default-feature
 llrt_util = { git = "https://github.com/awslabs/llrt.git", default-features = false }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "json", "fmt", "ansi", "chrono", "tracing-log"] }
 log = { version = "0.4.31", default-features = false, features = ["std"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
 tower = { version = "0.5.3", default-features = false }
 axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
 dhat = { version = "0.3.3"}

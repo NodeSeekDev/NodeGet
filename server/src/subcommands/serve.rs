@@ -49,7 +49,7 @@ use crate::rpc_timing::RpcTimingMiddleware;
 /// 8. 退出前刷新 monitoring buffer、关闭 DB registry、清理 Unix socket 文件
 #[allow(clippy::too_many_lines)]
 pub async fn run(config: &ServerConfig) {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     super::init_or_skip_super_token().await;
     debug!(target: "server", "Super token initialization completed");
