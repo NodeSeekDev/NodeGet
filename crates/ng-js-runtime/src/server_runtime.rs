@@ -20,7 +20,7 @@ use std::ffi::CString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, mpsc};
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 /// `QuickJS` 运行时默认内存上限（8 MiB）。
@@ -288,6 +288,43 @@ pub fn format_js_error(err: &Error) -> String {
     }
 }
 
+/// 把 JS Worker 内的日志直接桥接到 Rust `tracing`。
+///
+/// 参数：
+/// - `level` —— trace / debug / info / warn / error
+/// - `worker` —— 当前 Worker 名，取自 `__nodeget_current_script_name`
+/// - `namespace` —— 独立日志空间/分类
+/// - `message` —— 日志正文
+///
+/// 输出 target 固定为 `js_worker`，`worker` 与 `namespace` 作为结构化字段附加，
+/// 方便通过 tracing subscriber 统一收集，也避免与 `js_runtime` 内部日志混杂。
+pub(crate) fn js_log_emit(
+    level: String,
+    worker: Option<String>,
+    namespace: String,
+    message: String,
+) {
+    let worker = worker.as_deref().unwrap_or("unknown");
+    match level.as_str() {
+        "trace" => {
+            trace!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}")
+        }
+        "debug" => {
+            debug!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}")
+        }
+        "info" | "log" => {
+            info!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}")
+        }
+        "warn" => warn!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}"),
+        "error" => {
+            error!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}")
+        }
+        other => {
+            info!(target: "js_worker", worker = %worker, namespace = %namespace, raw_level = %other, "{message}")
+        }
+    }
+}
+
 /// `init_js_runtime_globals` 中注入的 JS 包装代码。
 ///
 /// 约 100 行 JS，每次创建 `QuickJS` 上下文时都要 `eval`。`rquickjs` 不直接支持
@@ -400,6 +437,29 @@ if (__nodeget_orig_fetch) {
         return __nodeget_orig_fetch.apply(this, args);
     };
 }
+// JS Worker 日志桥接：直接使用 Rust tracing，不按 Node.js console 语义
+// namespace 提供独立的日志空间，worker 名由 prepare_invoke_globals 注入
+(function () {
+    function currentWorker() {
+        return globalThis.__nodeget_current_script_name ?? null;
+    }
+    function emit(level, namespace, message) {
+        __nodeget_log(
+            level,
+            currentWorker(),
+            namespace === undefined || namespace === null || namespace === "" ? "default" : String(namespace),
+            String(message)
+        );
+    }
+    globalThis.nodegetLog = {
+        log(namespace, message) { emit("info", namespace, message); },
+        trace(namespace, message) { emit("trace", namespace, message); },
+        debug(namespace, message) { emit("debug", namespace, message); },
+        info(namespace, message) { emit("info", namespace, message); },
+        warn(namespace, message) { emit("warn", namespace, message); },
+        error(namespace, message) { emit("error", namespace, message); },
+    };
+})();
 "#;
 
 /// 初始化 JS 运行时全局 API。
@@ -415,6 +475,7 @@ if (__nodeget_orig_fetch) {
 /// 8. `getDatabaseType()` —— 获取数据库类型
 /// 9. 定时器追踪 —— 包装 setTimeout/setInterval/setImmediate，支持 `__nodeget_clear_all_timers`
 /// 10. `db.*` —— 数据库 CRUD 操作快捷方式
+/// 11. `nodegetLog` / `__nodeget_log` —— JS Worker 日志桥接到 Rust `tracing`
 pub(crate) fn init_js_runtime_globals(ctx: &Ctx<'_>) -> Result<(), Error> {
     debug!(target: "js_runtime", "initializing JS runtime globals");
     llrt_fetch::init(ctx)?;
@@ -434,6 +495,8 @@ pub(crate) fn init_js_runtime_globals(ctx: &Ctx<'_>) -> Result<(), Error> {
         Func::from(Async(crate::inline_call::js_inline_call)),
     )?;
     global.set("randomUUID", Func::from(|| Uuid::new_v4().to_string()))?;
+    // 桥接 JS Worker 日志到 Rust tracing
+    global.set("__nodeget_log", Func::from(js_log_emit))?;
     // Wrap raw functions to return parsed JS objects instead of JSON strings
     // JS 代码已提取到 GLOBALS_JS 静态常量，避免每次内联大段字符串
     ctx.eval::<(), _>(GLOBALS_JS)?;
