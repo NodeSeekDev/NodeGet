@@ -1,0 +1,3 @@
+[submodule "NodeGet-board"]
+	path = NodeGet-board
+	url = https://github.com/NodeSeekDev/NodeGet-board.git
