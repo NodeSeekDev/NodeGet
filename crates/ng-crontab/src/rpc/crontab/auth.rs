@@ -83,8 +83,8 @@ pub async fn ensure_crontab_payload_write_permission(
             let has_crontab_write = checker
                 .check_token_limit(
                     token_or_auth,
-                    vec![Scope::Global],
-                    vec![Permission::Crontab(CrontabPermission::Write)],
+                    &[Scope::Global],
+                    &[Permission::Crontab(CrontabPermission::Write)],
                 )
                 .await?;
             if has_crontab_write {
@@ -98,7 +98,7 @@ pub async fn ensure_crontab_payload_write_permission(
         }
 
         let is_allowed = checker
-            .check_token_limit(token_or_auth, scopes, permissions)
+            .check_token_limit(token_or_auth, &scopes, &permissions)
             .await?;
         if is_allowed {
             return Ok(());
@@ -114,7 +114,7 @@ pub async fn ensure_crontab_payload_write_permission(
     // Server 类型：仅保留 Crontab::Write，无需 Task::Create
     permissions.retain(|perm| matches!(perm, Permission::Crontab(CrontabPermission::Write)));
     let has_crontab_write = checker
-        .check_token_limit(token_or_auth, scopes, permissions)
+        .check_token_limit(token_or_auth, &scopes, &permissions)
         .await?;
     if !has_crontab_write {
         warn!(target: "crontab", "crontab write permission denied in global scope");
@@ -136,8 +136,8 @@ pub async fn ensure_crontab_payload_write_permission(
         let has_js_worker_run = checker
             .check_token_limit(
                 token_or_auth,
-                vec![Scope::JsWorker(worker_name.clone())],
-                vec![Permission::JsWorker(JsWorkerPermission::RunDefinedJsWorker)],
+                &[Scope::JsWorker(worker_name.clone())],
+                &[Permission::JsWorker(JsWorkerPermission::RunDefinedJsWorker)],
             )
             .await?;
 
@@ -178,7 +178,7 @@ pub async fn ensure_crontab_scope_permission(
     };
     let checker = require_permission_checker()?;
     let is_allowed = checker
-        .check_token_limit(token_or_auth, scopes, vec![permission])
+        .check_token_limit(token_or_auth, &scopes, &[permission])
         .await?;
 
     if is_allowed {

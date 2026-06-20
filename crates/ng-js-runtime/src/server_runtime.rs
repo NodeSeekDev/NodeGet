@@ -307,20 +307,20 @@ pub(crate) fn js_log_emit(
     let worker = worker.as_deref().unwrap_or("unknown");
     match level.as_str() {
         "trace" => {
-            trace!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}")
+            trace!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}");
         }
         "debug" => {
-            debug!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}")
+            debug!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}");
         }
         "info" | "log" => {
-            info!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}")
+            info!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}");
         }
         "warn" => warn!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}"),
         "error" => {
-            error!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}")
+            error!(target: "js_worker", worker = %worker, namespace = %namespace, "{message}");
         }
         other => {
-            info!(target: "js_worker", worker = %worker, namespace = %namespace, raw_level = %other, "{message}")
+            info!(target: "js_worker", worker = %worker, namespace = %namespace, raw_level = %other, "{message}");
         }
     }
 }
@@ -898,7 +898,7 @@ pub fn js_runner(
 
         let ctx = AsyncContext::full(&rt).await?;
         let execute = async {
-            let js_result: Result<Value, Error> = ctx
+            let js_result: Result<(Value, bool), Error> = ctx
                 .async_with(async |ctx| {
                     init_js_runtime_globals(&ctx)?;
                     prepare_invoke_globals(
@@ -948,12 +948,18 @@ pub fn js_runner(
                         invoke_promise.into_future::<JsValue<'_>>().await,
                     )?;
 
-                    let result = resolve_invoke_result(&ctx, js_value);
+                    let result = resolve_invoke_result(&ctx, js_value)?;
 
                     // 执行完成后清理全局变量，释放 JS 堆内存
                     cleanup_invoke_globals(&ctx);
 
-                    result
+                    // 读取本次执行是否使用了 fetch()，用于条件性 I/O drain。
+                    // cleanup_invoke_globals 不会清除该标志，此处读取仍有效。
+                    let used = ctx
+                        .eval::<bool, _>("globalThis.__nodeget_fetch_used === true")
+                        .unwrap_or(false);
+
+                    Ok((result, used))
                 })
                 .await;
 
@@ -967,9 +973,14 @@ pub fn js_runner(
         // 外层 tokio::time::timeout 捕捉 async 路径上的挂起（await 点停在
         // 远端 I/O 等）。两层共同保障 max_run_time_ms 兜得住。
         let cancel_tx = register_watchdog(Arc::clone(&kill_flag), effective_timeout);
-        let outcome = tokio::time::timeout(effective_timeout, execute)
-            .await
-            .unwrap_or_else(|_| Err(js_error("js_runner", "JavaScript execution timed out")));
+        let (outcome, fetch_used) = match tokio::time::timeout(effective_timeout, execute).await {
+            // 正常完成：拆出 (value, fetch_used)
+            Ok(Ok((value, used))) => (Ok(value), used),
+            // 正常完成但 JS 执行报错：无法确认 fetch，保守按已使用处理
+            Ok(Err(e)) => (Err(e), true),
+            // 外层 timeout：无法确认 fetch，保守按已使用处理
+            Err(_) => (Err(js_error("js_runner", "JavaScript execution timed out")), true),
+        };
 
         // 执行完成或超时后，取消看门狗监控（常驻线程自动清理，无需 join）
         let _ = cancel_tx.send(());
@@ -979,10 +990,12 @@ pub fn js_runner(
         // Incoming 向 hyper 连接 task 发出异步关闭信号。
         drop(ctx);
 
-        // drain I/O 清理窗口：current_thread runtime 在 block_on 返回后不再被轮询，
-        // fetch() 产生的 Response Incoming body drop 向 hyper 连接 task 发出异步关闭信号，
-        // 需要 runtime 继续运转才能处理，否则 TCP 连接停留在 CLOSE_WAIT。
-        tokio::time::sleep(std::time::Duration::from_millis(DRAIN_IO_MS)).await;
+        // 条件性 drain I/O 清理窗口：仅在本次执行使用了 fetch() 时等待。
+        // 无 fetch 时跳过，快速脚本（1-10ms）吞吐量大幅提升；
+        // 有 fetch 时 DRAIN_IO_MS 足以覆盖 HTTP 连接关闭握手。
+        if fetch_used {
+            tokio::time::sleep(std::time::Duration::from_millis(DRAIN_IO_MS)).await;
+        }
 
         if kill_flag.load(Ordering::Relaxed) && outcome.is_err() {
             return Err(js_error(
@@ -1030,7 +1043,7 @@ pub fn js_runner_source_mode(
 
         let ctx = AsyncContext::full(&rt).await?;
         let execute = async {
-            let js_result: Result<Value, Error> = ctx
+            let js_result: Result<(Value, bool), Error> = ctx
                 .async_with(async |ctx| {
                     init_js_runtime_globals(&ctx)?;
                     prepare_invoke_globals(
@@ -1071,12 +1084,17 @@ pub fn js_runner_source_mode(
                         invoke_promise.into_future::<JsValue<'_>>().await,
                     )?;
 
-                    let result = resolve_invoke_result(&ctx, js_value);
+                    let result = resolve_invoke_result(&ctx, js_value)?;
 
                     // 执行完成后清理全局变量，释放 JS 堆内存
                     cleanup_invoke_globals(&ctx);
 
-                    result
+                    // 读取本次执行是否使用了 fetch()，用于条件性 I/O drain。
+                    let used = ctx
+                        .eval::<bool, _>("globalThis.__nodeget_fetch_used === true")
+                        .unwrap_or(false);
+
+                    Ok((result, used))
                 })
                 .await;
 
@@ -1085,15 +1103,23 @@ pub fn js_runner_source_mode(
         };
 
         let cancel_tx = register_watchdog(Arc::clone(&kill_flag), effective_timeout);
-        let outcome = tokio::time::timeout(effective_timeout, execute)
-            .await
-            .unwrap_or_else(|_| Err(js_error("js_runner", "JavaScript execution timed out")));
+        let (outcome, fetch_used) = match tokio::time::timeout(effective_timeout, execute).await {
+            // 正常完成：拆出 (value, fetch_used)
+            Ok(Ok((value, used))) => (Ok(value), used),
+            // 正常完成但 JS 执行报错：无法确认 fetch，保守按已使用处理
+            Ok(Err(e)) => (Err(e), true),
+            // 外层 timeout：无法确认 fetch，保守按已使用处理
+            Err(_) => (Err(js_error("js_runner", "JavaScript execution timed out")), true),
+        };
         let _ = cancel_tx.send(());
 
         // 同 js_runner()：释放 QuickJS 上下文以 drop 未消费的 fetch Response
-        // Incoming body，drain I/O 清理窗口防止 CLOSE_WAIT。
+        // Incoming body。drain I/O 清理窗口仅在本次使用了 fetch() 时等待，
+        // 防止 CLOSE_WAIT；无 fetch 时跳过，提升短脚本吞吐量。
         drop(ctx);
-        tokio::time::sleep(std::time::Duration::from_millis(DRAIN_IO_MS)).await;
+        if fetch_used {
+            tokio::time::sleep(std::time::Duration::from_millis(DRAIN_IO_MS)).await;
+        }
 
         if kill_flag.load(Ordering::Relaxed) && outcome.is_err() {
             return Err(js_error(

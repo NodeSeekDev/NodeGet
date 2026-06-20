@@ -31,7 +31,7 @@ pub async fn check_crontab_result_read_permission(
     // 先检查全局读权限（`*` 通配符表示所有 cron_name）
     let global_read_perm = Permission::CrontabResult(CrontabResult::Read("*".to_owned()));
     let has_global_read = checker
-        .check_token_limit(&token_or_auth, vec![scope.clone()], vec![global_read_perm])
+        .check_token_limit(&token_or_auth, std::slice::from_ref(&scope), &[global_read_perm])
         .await?;
 
     if has_global_read {
@@ -43,8 +43,8 @@ pub async fn check_crontab_result_read_permission(
     let has_specific_read = checker
         .check_token_limit(
             &token_or_auth,
-            vec![scope.clone()],
-            vec![specific_read_perm],
+            std::slice::from_ref(&scope),
+            &[specific_read_perm],
         )
         .await?;
 
@@ -85,8 +85,8 @@ pub async fn check_crontab_result_delete_permission(
     let has_global_delete = checker
         .check_token_limit(
             &token_or_auth,
-            vec![scope.clone()],
-            vec![global_delete_perm],
+            std::slice::from_ref(&scope),
+            &[global_delete_perm],
         )
         .await?;
 
@@ -101,8 +101,8 @@ pub async fn check_crontab_result_delete_permission(
         let has_specific_delete = checker
             .check_token_limit(
                 &token_or_auth,
-                vec![scope.clone()],
-                vec![specific_delete_perm],
+                std::slice::from_ref(&scope),
+                &[specific_delete_perm],
             )
             .await?;
 

@@ -97,7 +97,7 @@ pub async fn delete(
             })?;
 
         let is_allowed = provider
-            .check_token_limit(&token_or_auth, scopes, permissions)
+            .check_token_limit(&token_or_auth, &scopes, &permissions)
             .await?;
 
         if !is_allowed {
@@ -244,12 +244,8 @@ pub async fn delete(
 
         debug!(target: "task", rows_affected, condition_count, "Task delete completed");
 
-        if rows_affected > 0
-            && let Some(uuid_provider) = crate::rpc::monitoring_uuid_provider()
-            && let Err(e) = uuid_provider.reload().await
-        {
-            error!(target: "monitoring_uuid_cache", error = %e, "Failed to reload MonitoringUuidCache after task::delete");
-        }
+        // 注：task 表与 monitoring_uuid 表无任何关联（task 实体 Relation 为空），
+        // 删除 task 不会影响 monitoring_uuid 记录，无需 reload 该缓存。
 
         RawValue::from_string(json_str)
             .map_err(|e| NodegetError::SerializationError(e.to_string()).into())

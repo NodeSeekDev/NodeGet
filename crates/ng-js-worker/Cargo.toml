@@ -11,6 +11,7 @@ server = [
     "dep:ng-infra",
     "dep:ng-db",
     "dep:ng-js-runtime",
+    "dep:ng-token",
     "dep:anyhow",
     "dep:sea-orm",
     "dep:serde_json",
@@ -21,6 +22,7 @@ server = [
     "ng-infra/server",
     "ng-db/server",
     "ng-js-runtime/server",
+    "ng-token/server",
     "ng-core/for-server",
 ]
 
@@ -32,6 +34,7 @@ serde = { workspace = true }
 ng-infra = { workspace = true, optional = true }
 ng-db = { workspace = true, optional = true }
 ng-js-runtime = { workspace = true, optional = true }
+ng-token = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 sea-orm = { workspace = true, optional = true, default-features = false, features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres", "macros"] }
 serde_json = { workspace = true, optional = true }

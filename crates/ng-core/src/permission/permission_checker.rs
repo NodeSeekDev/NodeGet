@@ -27,24 +27,27 @@ use std::sync::OnceLock;
 /// 检查是否为 SuperToken，以及获取 Token 元数据。
 pub trait PermissionChecker: Send + Sync + 'static {
     /// 检查 Token/Auth 是否满足给定的 Scope 和 Permission 约束。
-    fn check_token_limit(
-        &self,
-        token_or_auth: &TokenOrAuth,
-        scopes: Vec<Scope>,
-        permissions: Vec<Permission>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send>>;
+    ///
+    /// 参数为切片引用，future 借用它们（`+ 'a`），调用方 `.await` 期间引用有效，
+    /// 避免每请求分配两个 Vec。所有引用共享同一生命周期 `'a`。
+    fn check_token_limit<'a>(
+        &'a self,
+        token_or_auth: &'a TokenOrAuth,
+        scopes: &'a [Scope],
+        permissions: &'a [Permission],
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + 'a>>;
 
     /// 检查 Token/Auth 是否为 SuperToken。
-    fn check_super_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send>>;
+    fn check_super_token<'a>(
+        &'a self,
+        token_or_auth: &'a TokenOrAuth,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + 'a>>;
 
     /// 获取 Token/Auth 的元数据信息。
-    fn get_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Token>> + Send>>;
+    fn get_token<'a>(
+        &'a self,
+        token_or_auth: &'a TokenOrAuth,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Token>> + Send + 'a>>;
 }
 
 // ── 全局注入 ──────────────────────────────────────────────────────

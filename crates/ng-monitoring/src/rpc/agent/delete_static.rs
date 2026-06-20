@@ -43,8 +43,8 @@ pub async fn delete_static(
         let scopes = scopes_from_conditions(&conditions);
         let is_allowed = check_token_limit(
             &token_or_auth,
-            scopes,
-            vec![Permission::StaticMonitoring(StaticMonitoring::Delete)],
+            &scopes,
+            &[Permission::StaticMonitoring(StaticMonitoring::Delete)],
         )
         .await?;
 

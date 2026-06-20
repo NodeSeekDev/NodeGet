@@ -10,6 +10,7 @@ default = []
 server = [
     "dep:ng-infra",
     "dep:ng-db",
+    "dep:ng-token",
     "dep:anyhow",
     "dep:sea-orm",
     "dep:jsonrpsee",
@@ -17,6 +18,7 @@ server = [
     "ng-core/for-server",
     "ng-infra/server",
     "ng-db/server",
+    "ng-token/server",
 ]
 
 [dependencies]
@@ -27,6 +29,7 @@ serde_json = { workspace = true }
 # server feature dependencies
 ng-infra = { workspace = true, optional = true }
 ng-db = { workspace = true, optional = true }
+ng-token = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 sea-orm = { workspace = true, optional = true, default-features = false, features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres", "macros"] }
 jsonrpsee = { workspace = true, optional = true }

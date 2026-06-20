@@ -268,8 +268,8 @@ impl RpcServer for TaskRpcImpl {
         let is_allowed_result = provider
             .check_token_limit(
                 &token_or_auth,
-                vec![Scope::AgentUuid(uuid)],
-                vec![Permission::Task(Task::Listen)],
+                &[Scope::AgentUuid(uuid)],
+                &[Permission::Task(Task::Listen)],
             )
             .await;
 
@@ -440,17 +440,23 @@ impl TaskManager {
         event: crate::types::TaskEvent,
     ) -> Result<(), (i32, String)> {
         trace!(target: "task", uuid = %uuid, "sending task event");
-        let peers = self.peers.read().await;
+        // 锁内仅 clone 廉价的 Sender，drop 读锁后再 await send，
+        // 避免持锁期间 await send 导致 add_session/remove_session 的写锁被队头阻塞。
+        let tx = {
+            let peers = self.peers.read().await;
+            match peers.get(&uuid) {
+                Some((_, tx)) => tx.clone(),
+                None => {
+                    warn!(target: "task", uuid = %uuid, "agent not connected");
+                    return Err((104, format!("Agent {uuid} is not connected")));
+                }
+            }
+        };
 
-        if let Some((_, tx)) = peers.get(&uuid) {
-            tx.send(event)
-                .await
-                .map_err(|e| (103, format!("Failed to send task event: {e}")))?;
-            Ok(())
-        } else {
-            warn!(target: "task", uuid = %uuid, "agent not connected");
-            Err((104, format!("Agent {uuid} is not connected")))
-        }
+        tx.send(event)
+            .await
+            .map_err(|e| (103, format!("Failed to send task event: {e}")))?;
+        Ok(())
     }
 
     /// 注册一个 blocking waiter，等待指定 `task_id` 的结果

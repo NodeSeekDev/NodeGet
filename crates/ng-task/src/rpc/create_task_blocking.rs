@@ -63,8 +63,8 @@ pub async fn create_task_blocking(
         let is_allowed = provider
             .check_token_limit(
                 &token_or_auth,
-                vec![Scope::AgentUuid(target_uuid)],
-                vec![
+                &[Scope::AgentUuid(target_uuid)],
+                &[
                     Permission::Task(Task::Create(task_name.to_string())),
                     Permission::Task(Task::Read(task_name.to_string())),
                 ],

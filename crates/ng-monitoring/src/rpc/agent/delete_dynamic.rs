@@ -45,8 +45,8 @@ pub async fn delete_dynamic(
         let is_allowed = checker
             .check_token_limit(
                 &token_or_auth,
-                scopes,
-                vec![Permission::DynamicMonitoring(DynamicMonitoring::Delete)],
+                &scopes,
+                &[Permission::DynamicMonitoring(DynamicMonitoring::Delete)],
             )
             .await?;
 

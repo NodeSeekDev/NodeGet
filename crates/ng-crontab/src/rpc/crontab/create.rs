@@ -89,8 +89,12 @@ pub async fn create(
 
         debug!(target: "crontab", id = res_id, name = %inserted.name, "Crontab created successfully");
 
-        // 刷新缓存，使调度器感知新增条目
-        if let Err(e) = CrontabCache::reload().await {
+        // 增量更新缓存（仅解析该条目），替代全量 reload 避免 O(N²) 重解析
+        if let Some(cache) = CrontabCache::global() {
+            cache.upsert(inserted.clone());
+            // 通知调度器重算最近触发时刻（新增任务可能更早到期）
+            crate::server_cron::notify_crontab_changed();
+        } else if let Err(e) = CrontabCache::reload().await {
             tracing::error!(target: "crontab", error = %e, "failed to reload crontab cache after create");
         }
 

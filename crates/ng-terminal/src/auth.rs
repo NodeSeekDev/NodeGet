@@ -47,8 +47,8 @@ pub async fn check_terminal_connect_permission(
     let has_agent_permission = checker
         .check_token_limit(
             &token_or_auth,
-            vec![Scope::AgentUuid(agent_uuid)],
-            vec![Permission::Terminal(Terminal::Connect)],
+            &[Scope::AgentUuid(agent_uuid)],
+            &[Permission::Terminal(Terminal::Connect)],
         )
         .await?;
 
@@ -61,8 +61,8 @@ pub async fn check_terminal_connect_permission(
     let has_global_permission = checker
         .check_token_limit(
             &token_or_auth,
-            vec![Scope::Global],
-            vec![Permission::Terminal(Terminal::Connect)],
+            &[Scope::Global],
+            &[Permission::Terminal(Terminal::Connect)],
         )
         .await?;
 

@@ -34,8 +34,8 @@ pub async fn check_db_permission(
     let is_allowed = provider
         .check_token_limit(
             &token_or_auth,
-            vec![Scope::Db(db_name.to_owned())],
-            vec![Permission::Db(permission.clone())],
+            &[Scope::Db(db_name.to_owned())],
+            &[Permission::Db(permission.clone())],
         )
         .await?;
 

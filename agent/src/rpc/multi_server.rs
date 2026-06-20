@@ -20,7 +20,6 @@ use futures_util::{SinkExt, StreamExt};
 use log::{debug, error, info, warn};
 use ng_config::config::agent::Server;
 use ng_core::error::NodegetError;
-use serde::Deserialize;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{OnceCell, RwLock, broadcast};
@@ -37,8 +36,8 @@ pub type Result<T> = std::result::Result<T, NodegetError>;
 pub struct ServerHandle {
     /// 上行消息发送器（Agent→Server）
     uplink_tx: broadcast::Sender<Message>,
-    /// 下行消息发送器（Server→Agent）
-    downlink_tx: broadcast::Sender<Message>,
+    /// 下行消息发送器（Server→Agent），广播已解析的 JSON-RPC `Value`
+    downlink_tx: broadcast::Sender<Arc<serde_json::Value>>,
 }
 
 /// 全局连接池，存储与各个 Server 的连接句柄，以服务器名称为键。
@@ -76,7 +75,7 @@ pub async fn init_connections(
     for server in servers {
         let (uplink_tx, uplink_rx) = broadcast::channel::<Message>(32);
 
-        let (downlink_tx, _) = broadcast::channel::<Message>(32);
+        let (downlink_tx, _) = broadcast::channel::<Arc<serde_json::Value>>(32);
 
         let handle = ServerHandle {
             uplink_tx,
@@ -123,25 +122,9 @@ pub async fn init_connections(
 async fn connection_manager(
     server: Server,
     mut uplink_rx: broadcast::Receiver<Message>,
-    downlink_tx: broadcast::Sender<Message>,
+    downlink_tx: broadcast::Sender<Arc<serde_json::Value>>,
     connect_timeout: Duration,
 ) {
-    /// 临时定义用于检测 `JsonRpc` 长连接错误
-    #[derive(Deserialize)]
-    struct JsonRpcErrorCheck {
-        /// `JsonRpc` Error 对象（存在则表示请求失败）
-        error: Option<JsonRpcErrorDetail>,
-    }
-
-    /// `JsonRpc` Error 详情
-    #[derive(Deserialize)]
-    struct JsonRpcErrorDetail {
-        /// 错误码
-        code: i64,
-        /// 错误描述
-        message: String,
-    }
-
     let name = &server.name;
     let token = &server.token;
     let url = &server.ws_url;
@@ -306,13 +289,34 @@ async fn connection_manager(
                 ws_msg_opt = ws_read.next() => {
                     match ws_msg_opt {
                         Some(Ok(msg)) => {
-                            if let Message::Text(text) = &msg
-                                && let Ok(check) = serde_json::from_str::<JsonRpcErrorCheck>(text)
-                                    && let Some(err) = check.error {
-                                        error!("[{name}] RPC Error Response: {}: {}", err.code, err.message);
-                                    }
-                            if downlink_tx.send(msg).is_err() {
-                                warn!("[{name}] Downlink send skipped (no active receivers)");
+                            // 只处理 Text 帧：解析一次为 `serde_json::Value`，
+                            // 包成 `Arc` 后广播，下游订阅者（错误检测、任务派发）
+                            // 复用同一份 Value，避免每条消息被重复 from_str 解析。
+                            // 非 Text 帧（Binary/Ping/Pong）下游本来也不消费，
+                            // 这里直接丢弃以保持原语义。
+                            if let Message::Text(text) = msg
+                                && let Ok(value) = serde_json::from_str::<serde_json::Value>(&text)
+                            {
+                                // 用已解析的 Value 检测 JSON-RPC error 响应
+                                // （取 error.code / error.message，与原逻辑一致）。
+                                if let Some(err) = value.get("error") {
+                                    let code = err
+                                        .get("code")
+                                        .and_then(serde_json::Value::as_i64)
+                                        .map_or_else(
+                                            || "<unknown>".to_owned(),
+                                            |c| c.to_string(),
+                                        );
+                                    let message = err
+                                        .get("message")
+                                        .and_then(serde_json::Value::as_str)
+                                        .unwrap_or("<unknown>");
+                                    error!("[{name}] RPC Error Response: {code}: {message}");
+                                }
+
+                                if downlink_tx.send(Arc::new(value)).is_err() {
+                                    warn!("[{name}] Downlink send skipped (no active receivers)");
+                                }
                             }
                         }
                         Some(Err(e)) => {
@@ -593,7 +597,7 @@ pub async fn send_to(server_name: &str, msg: Message) -> Result<()> {
 /// - `server_name` - 服务器名称
 ///
 /// 成功时返回消息接收器；连接池未初始化或服务器不存在时返回错误。
-pub async fn subscribe_to(server_name: &str) -> Result<broadcast::Receiver<Message>> {
+pub async fn subscribe_to(server_name: &str) -> Result<broadcast::Receiver<Arc<serde_json::Value>>> {
     let pool = CONNECTION_POOL
         .get()
         .ok_or_else(|| NodegetError::Other("Connection pool not initialized".to_owned()))?;

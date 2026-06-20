@@ -95,7 +95,7 @@ pub async fn query(token: String, task_data_query: TaskDataQuery) -> RpcResult<B
             })?;
 
         let is_allowed = provider
-            .check_token_limit(&token_or_auth, scopes, permissions)
+            .check_token_limit(&token_or_auth, &scopes, &permissions)
             .await?;
 
         if !is_allowed {

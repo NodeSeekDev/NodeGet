@@ -325,10 +325,10 @@ const SQLITE_MAX_VARIABLE_NUMBER: usize = 999;
 ///
 /// - `table_name` — 表名，用于日志
 /// - `buf` — 待写入的 `ActiveModel` 缓冲区，写入后清空
-/// - `num_columns` — 每行 ActiveModel 的列数，用于计算 SQLite 子批次大小
+/// - `num_columns` — 每行 `ActiveModel` 的列数，用于计算 `SQLite` 子批次大小
 ///
 /// 对于 SQLite，根据 `num_columns` 动态计算子批次大小：`999 / num_columns`，
-/// 确保单条 INSERT 的绑定参数不超过 SQLite 的 999 上限。
+/// 确保单条 INSERT 的绑定参数不超过 `SQLite` 的 999 上限。
 /// 对于 PostgreSQL，直接整批写入（无参数数量限制）。
 async fn do_flush<E, A>(table_name: &str, buf: &mut Vec<A>, num_columns: usize)
 where

@@ -103,50 +103,106 @@ impl CrontabCache {
     /// 解析失败的条目（无效 cron 表达式或无效 cron_type）会被跳过并记录警告日志。
     fn build_maps(models: Vec<crontab::Model>) -> HashMap<i64, Arc<CachedCrontab>> {
         let mut by_id = HashMap::with_capacity(models.len());
-        for mut model in models {
-            // 解析 cron 表达式为 Schedule 对象
-            let schedule = match Schedule::from_str(&model.cron_expression) {
-                Ok(s) => s,
+        for model in models {
+            if let Some(cached) = Self::parse_one(model) {
+                by_id.insert(cached.model.id, Arc::new(cached));
+            }
+        }
+        by_id
+    }
+
+    /// 解析单个 crontab 模型为缓存条目。
+    ///
+    /// cron 表达式或 cron_type 解析失败时返回 `None` 并记录警告（与原 `build_maps` 语义一致）。
+    /// 提取为独立函数供 `upsert` 增量更新复用，避免单条变更触发全量 `reload`（O(N²) 重解析）。
+    fn parse_one(mut model: crontab::Model) -> Option<CachedCrontab> {
+        // 解析 cron 表达式为 Schedule 对象
+        let schedule = match Schedule::from_str(&model.cron_expression) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(
+                    target: "crontab",
+                    job_id = model.id,
+                    job_name = %model.name,
+                    error = %e,
+                    "invalid cron expression during cache build, skipping"
+                );
+                return None;
+            }
+        };
+
+        // 取走 cron_type 所有权直接解析，避免 clone 整个 Value
+        // 缓存中通过 CachedCrontab.cron_type 访问，model.cron_type 不再被读取
+        let cron_type =
+            match serde_json::from_value::<CronType>(std::mem::take(&mut model.cron_type)) {
+                Ok(ct) => ct,
                 Err(e) => {
                     warn!(
                         target: "crontab",
                         job_id = model.id,
                         job_name = %model.name,
                         error = %e,
-                        "invalid cron expression during cache build, skipping"
+                        "invalid cron_type during cache build, skipping"
                     );
-                    continue;
+                    return None;
                 }
             };
 
-            // 取走 cron_type 所有权直接解析，避免 clone 整个 Value
-            // 缓存中通过 CachedCrontab.cron_type 访问，model.cron_type 不再被读取
-            let cron_type =
-                match serde_json::from_value::<CronType>(std::mem::take(&mut model.cron_type)) {
-                    Ok(ct) => ct,
-                    Err(e) => {
-                        warn!(
-                            target: "crontab",
-                            job_id = model.id,
-                            job_name = %model.name,
-                            error = %e,
-                            "invalid cron_type during cache build, skipping"
-                        );
-                        continue;
-                    }
-                };
+        Some(CachedCrontab {
+            model,
+            schedule,
+            cron_type,
+        })
+    }
 
-            let id = model.id;
-            by_id.insert(
-                id,
-                Arc::new(CachedCrontab {
-                    model,
-                    schedule,
-                    cron_type,
-                }),
-            );
+    /// 增量更新/插入单个 crontab 条目，替代变更后的全量 reload。
+    ///
+    /// 仅解析并替换该 ID 的条目，不影响其他条目。解析失败（无效 cron/cron_type）时
+    /// 移除该 ID 的旧条目（匹配全量 reload 的"静默跳过"语义）。
+    pub fn upsert(&self, model: crontab::Model) {
+        let id = model.id;
+        let new_entry = Self::parse_one(model).map(Arc::new);
+        let mut guard = recover_write(&self.inner);
+        match new_entry {
+            Some(cached) => {
+                guard.by_id.insert(id, cached);
+            }
+            None => {
+                // 解析失败：移除旧条目，避免缓存与 DB 不一致
+                guard.by_id.remove(&id);
+            }
         }
-        by_id
+    }
+
+    /// 增量移除单个 crontab 条目，替代删除后的全量 reload。
+    ///
+    /// 同时清理 `last_run_times` 覆盖映射中该 ID 的记录。
+    pub fn remove(&self, id: i64) {
+        {
+            let mut guard = recover_write(&self.inner);
+            guard.by_id.remove(&id);
+        }
+        let mut lr_guard = recover_write(&self.last_run_times);
+        lr_guard.remove(&id);
+    }
+
+    /// 按 name 增量移除 crontab 条目（遍历 by_id 找匹配 name 的 id）。
+    ///
+    /// 供 `delete_crontab_by_name`（`delete_many` 按 name 删除、无 id 返回）使用，
+    /// 替代全量 reload。
+    pub fn remove_by_name(&self, name: &str) {
+        let ids_to_remove: Vec<i64> = {
+            let guard = recover_read(&self.inner);
+            guard
+                .by_id
+                .iter()
+                .filter(|(_, c)| c.model.name == name)
+                .map(|(id, _)| *id)
+                .collect()
+        };
+        for id in ids_to_remove {
+            self.remove(id);
+        }
     }
 
     /// 获取所有已启用的定时任务条目，供调度循环使用。

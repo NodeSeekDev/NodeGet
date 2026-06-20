@@ -48,8 +48,8 @@ pub async fn exec_sql(
         let is_allowed = provider
             .check_token_limit(
                 &token_or_auth,
-                vec![Scope::Global],
-                vec![Permission::NodeGet(NodeGetPermission::ExecSql)],
+                &[Scope::Global],
+                &[Permission::NodeGet(NodeGetPermission::ExecSql)],
             )
             .await?;
 

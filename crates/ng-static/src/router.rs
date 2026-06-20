@@ -103,7 +103,8 @@ pub fn router() -> axum::Router {
                                 .expect("Failed to build CORS response");
                         }
                         let method = req.method().clone();
-                        serve_static_file(&model.path, "/", model.cors, &method).await
+                        let if_none_match = header_str(req.headers().get(axum::http::header::IF_NONE_MATCH));
+                        serve_static_file(&model.path, "/", model.cors, &method, if_none_match).await
                     } else {
                         build_http_error(StatusCode::NOT_FOUND, "Static not found")
                     }
@@ -135,7 +136,8 @@ pub fn router() -> axum::Router {
                         }
                         let file_path = if path.is_empty() { "/".to_string() } else { path };
                         let method = req.method().clone();
-                        serve_static_file(&model.path, &file_path, model.cors, &method).await
+                        let if_none_match = header_str(req.headers().get(axum::http::header::IF_NONE_MATCH));
+                        serve_static_file(&model.path, &file_path, model.cors, &method, if_none_match).await
                     } else {
                         build_http_error(StatusCode::NOT_FOUND, "Static not found")
                     }
@@ -190,6 +192,7 @@ async fn serve_static_file(
     path: &str,
     cors: bool,
     method: &axum::http::Method,
+    if_none_match: Option<&str>,
 ) -> axum::http::Response<jsonrpsee::server::HttpBody> {
     // 仅允许 GET / HEAD；其它方法（包括非 CORS 预检的 OPTIONS）返回 405
     if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
@@ -216,30 +219,54 @@ async fn serve_static_file(
         Err(e) => return build_static_error(StatusCode::BAD_REQUEST, format!("{e}"), cors),
     };
 
-    let data = match tokio::fs::read(&resolved).await {
-        Ok(d) => d,
+    // 取文件元数据用于生成 ETag；若目标不存在但对应目录，回退到目录下的 index.html
+    let (resolved, metadata) = match tokio::fs::metadata(&resolved).await {
+        Ok(m) => (resolved.clone(), m),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // 如果请求路径对应的是一个目录，自动返回该目录下的 index.html
+            // 目录回退：尝试 {resolved}/index.html
             let index_html_path = resolved.join("index.html");
-            if let Ok(d) = tokio::fs::read(&index_html_path).await {
-                d
-            } else {
-                return build_static_error(StatusCode::NOT_FOUND, "File not found", cors);
+            match tokio::fs::metadata(&index_html_path).await {
+                Ok(m) => (index_html_path, m),
+                Err(_) => return build_static_error(StatusCode::NOT_FOUND, "File not found", cors),
             }
         }
         Err(e) => {
             return build_static_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to read file: {e}"),
+                format!("Failed to stat file: {e}"),
                 cors,
             );
+        }
+    };
+
+    // ETag = 修改时间(秒) + 字节数，弱验证器。仅用于缓存命中判断，非内容哈希。
+    let etag = build_etag(&metadata);
+
+    // If-None-Match 命中：返回 304，不读文件内容（省带宽 + 读盘）
+    if if_none_match_is_match(if_none_match, &etag) {
+        let mut builder = axum::http::Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(axum::http::header::ETAG, etag.as_str());
+        if cors {
+            builder = builder.header(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
+        }
+        return builder
+            .body(jsonrpsee::server::HttpBody::default())
+            .expect("Failed to build 304 response");
+    }
+
+    let data = match tokio::fs::read(&resolved).await {
+        Ok(d) => d,
+        Err(_) => {
+            return build_static_error(StatusCode::NOT_FOUND, "File not found", cors);
         }
     };
 
     let content_type = guess_mime_type(&resolved);
     let mut builder = axum::http::Response::builder()
         .status(StatusCode::OK)
-        .header(axum::http::header::CONTENT_TYPE, content_type);
+        .header(axum::http::header::CONTENT_TYPE, content_type)
+        .header(axum::http::header::ETAG, etag.as_str());
 
     if cors {
         builder = builder.header(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
@@ -255,6 +282,40 @@ async fn serve_static_file(
     builder
         .body(body)
         .unwrap_or_else(|e| build_http_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))
+}
+
+/// 将 HeaderValue 安全转 `&str`（失败返回 None）。
+fn header_str(value: Option<&axum::http::HeaderValue>) -> Option<&str> {
+    value.and_then(|v| v.to_str().ok())
+}
+
+/// 根据文件元数据生成 ETag（弱验证器）。
+///
+/// 格式 `"<mtime_secs>-<size>"`：修改时间秒 + 字节数。文件内容变更时
+/// mtime/size 通常变化，足以触发客户端重新获取；不保证内容级唯一性。
+fn build_etag(metadata: &std::fs::Metadata) -> String {
+    let mtime_secs = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("\"{}-{}\"", mtime_secs, metadata.len())
+}
+
+/// 判断客户端的 If-None-Match 头是否与当前 ETag 匹配（命中则返回 304）。
+///
+/// 支持 `*`（匹配任意）、单个 ETag、以及逗号分隔的多个 ETag；忽略弱验证器前缀 `W/`。
+fn if_none_match_is_match(if_none_match: Option<&str>, etag: &str) -> bool {
+    let Some(header) = if_none_match else { return false };
+    if header.trim() == "*" {
+        return true;
+    }
+    header.split(',').any(|part| {
+        let p = part.trim();
+        let p = p.strip_prefix("W/").unwrap_or(p);
+        p == etag
+    })
 }
 
 /// WebDAV handler for static buckets.
@@ -343,7 +404,7 @@ async fn static_webdav_handler(req: axum::extract::Request) -> axum::response::R
     debug!(target: "webdav", bucket = %name, username = %username, "token parsed successfully");
 
     // 4. Check all StaticBucketFile permissions
-    let permissions = vec![
+    let permissions = [
         Permission::StaticBucketFile(StaticBucketFilePermission::Read),
         Permission::StaticBucketFile(StaticBucketFilePermission::Write),
         Permission::StaticBucketFile(StaticBucketFilePermission::Delete),
@@ -354,8 +415,8 @@ async fn static_webdav_handler(req: axum::extract::Request) -> axum::response::R
             match checker
                 .check_token_limit(
                     &token_or_auth,
-                    vec![Scope::StaticBucket(name.to_string())],
-                    permissions,
+                    &[Scope::StaticBucket(name.to_string())],
+                    &permissions,
                 )
                 .await
             {

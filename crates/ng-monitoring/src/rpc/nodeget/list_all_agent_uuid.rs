@@ -135,7 +135,7 @@ async fn resolve_list_agent_uuid_permission(
     let mut nodeget_scoped_uuids: HashSet<Uuid> = HashSet::new();
     let mut operable_scoped_uuids: HashSet<Uuid> = HashSet::new();
 
-    for limit in &token_info.token_limit {
+    for limit in token_info.token_limit.iter() {
         #[allow(deprecated)]
         let has_list_permission = limit.permissions.iter().any(|perm| {
             matches!(perm, Permission::NodeGet(NodeGet::ListAllAgentUuid))

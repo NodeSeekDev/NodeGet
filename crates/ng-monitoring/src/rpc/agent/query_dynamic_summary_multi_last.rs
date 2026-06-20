@@ -110,8 +110,8 @@ pub async fn dynamic_summary_multi_last_query(
 
         let is_allowed = check_token_limit(
             &token_or_auth,
-            scopes,
-            vec![Permission::DynamicMonitoringSummary(
+            &scopes,
+            &[Permission::DynamicMonitoringSummary(
                 DynamicMonitoringSummary::Read,
             )],
         )
@@ -171,13 +171,11 @@ pub async fn dynamic_summary_multi_last_query(
             let miss_pairs: Vec<(Uuid, i16)> =
                 misses.iter().map(|(idx, _)| uuid_id_pairs[*idx]).collect();
             let statement = build_union_last_statement(&miss_pairs, &fields, db)?;
-            let miss_raw =
+            let miss_values =
                 execute_statement_query(db, statement, miss_pairs.len(), uuid_cache).await?;
-            let miss_values: Vec<serde_json::Value> = serde_json::from_str(miss_raw.get())
-                .map_err(|e| NodegetError::SerializationError(format!("Parse DB results: {e}")))?;
-            for (i, val) in miss_values.into_iter().enumerate() {
-                let idx = misses[i].0;
-                results[idx] = Some(SummaryResult::Value(val));
+            // 用 zip 配对，防御 DB 返回行数 < misses.len() 时的越界 panic。
+            for (val, (idx, _)) in miss_values.into_iter().zip(misses.iter()) {
+                results[*idx] = Some(SummaryResult::Value(val));
             }
             debug!(target: "monitoring", cache_hits = uuid_id_pairs.len() - misses.len(), misses = misses.len(), "Dynamic summary multi-last query partial cache hit");
         }
@@ -350,13 +348,15 @@ fn build_single_last_select(
     wrapped.clone()
 }
 
-/// 流式执行 UNION ALL 语句查询，逐行处理（`uuid_id`→`uuid` + 反缩放）并拼接 JSON 数组。
+/// 流式执行 UNION ALL 语句查询，逐行处理（`uuid_id`→`uuid` + 反缩放）并返回 JSON Value 列表。
+///
+/// 返回 `Vec<Value>` 避免调用方 `from_str` 再解析，消除 serialize→parse→serialize 往返。
 async fn execute_statement_query(
     db: &DatabaseConnection,
     statement: Statement,
-    capacity_hint: usize,
+    _capacity_hint: usize,
     uuid_cache: &MonitoringUuidCache,
-) -> anyhow::Result<Box<RawValue>> {
+) -> anyhow::Result<Vec<serde_json::Value>> {
     debug!(target: "monitoring", "Starting dynamic summary multi-last query DB stream");
     let mut stream = serde_json::Value::find_by_statement(statement)
         .stream(db)
@@ -366,17 +366,11 @@ async fn execute_statement_query(
             NodegetError::DatabaseError(format!("Database query error: {e}"))
         })?;
 
-    let capacity = capacity_hint.saturating_mul(200);
-    let mut output_buffer: Vec<u8> = Vec::with_capacity(capacity);
-
-    output_buffer.push(b'[');
-    let mut first = true;
-    let mut result_count: usize = 0;
+    let mut results: Vec<serde_json::Value> = Vec::new();
 
     while let Some(item_res) = stream.next().await {
         match item_res {
             Ok(mut value) => {
-                result_count += 1;
                 if let Some(obj) = value.as_object_mut() {
                     if let Some(uuid_id_val) = obj.remove("uuid_id")
                         && let Some(uuid_id) = uuid_id_val.as_i64()
@@ -389,19 +383,7 @@ async fn execute_statement_query(
                     }
                     apply_descaling_to_json_object(obj);
                 }
-                if first {
-                    first = false;
-                } else {
-                    output_buffer.push(b',');
-                }
-
-                if let Err(e) = serde_json::to_writer(&mut output_buffer, &value) {
-                    error!(target: "monitoring", error = %e, "Serialization failed");
-                    return Err(NodegetError::SerializationError(format!(
-                        "Serialization failed: {e}"
-                    ))
-                    .into());
-                }
+                results.push(value);
             }
             Err(e) => {
                 error!(target: "monitoring", error = %e, "Stream read error");
@@ -410,19 +392,7 @@ async fn execute_statement_query(
         }
     }
 
-    output_buffer.push(b']');
+    debug!(target: "monitoring", result_count = results.len(), "Dynamic monitoring summary multi-last query completed");
 
-    let json_string = String::from_utf8(output_buffer).map_err(|e| {
-        error!(target: "monitoring", error = %e, "UTF8 conversion error");
-        NodegetError::SerializationError("UTF8 conversion error (internal)".to_string())
-    })?;
-
-    let raw_value = RawValue::from_string(json_string).map_err(|e| {
-        error!(target: "monitoring", error = %e, "RawValue creation error");
-        NodegetError::SerializationError("RawValue creation error".to_string())
-    })?;
-
-    debug!(target: "monitoring", result_count = result_count, "Dynamic monitoring summary multi-last query completed");
-
-    Ok(raw_value)
+    Ok(results)
 }

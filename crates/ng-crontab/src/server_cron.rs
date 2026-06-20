@@ -8,15 +8,31 @@
 use crate::cache::CrontabCache;
 use crate::task::js_worker_scheduler;
 use crate::{AgentCronType, Cron, CronType, ServerCronType};
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use ng_db::entity::{crontab, crontab_result};
 use ng_db::get_db;
 use ng_js_runtime::RunType;
 use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use tokio::sync::Notify;
 use tokio::task::JoinSet;
-use tokio::time::MissedTickBehavior;
 use tracing::{Instrument, debug, error, info, info_span, warn};
+
+/// 用于在 crontab 配置变更（create/edit/delete/set_enable）后提前唤醒调度器，
+/// 使其立即重算最近触发时刻，而非等待下一次定时唤醒。
+static CRONTAB_RELOAD_NOTIFY: OnceLock<Arc<Notify>> = OnceLock::new();
+
+/// 获取全局 crontab 调度唤醒 Notify（懒初始化）。
+fn reload_notify() -> &'static Arc<Notify> {
+    CRONTAB_RELOAD_NOTIFY.get_or_init(|| Arc::new(Notify::new()))
+}
+
+/// 通知调度器配置已变更，提前唤醒以重算最近触发时刻。
+/// 供 create/edit/delete/set_enable 在增量更新缓存后调用。
+pub fn notify_crontab_changed() {
+    reload_notify().notify_one();
+}
 
 /// 按名称删除定时任务，并刷新缓存。
 ///
@@ -38,7 +54,11 @@ pub async fn delete_crontab_by_name(name: String) -> Result<bool, sea_orm::DbErr
     let deleted = result.rows_affected > 0;
     if deleted {
         info!(target: "crontab", name = %name, "crontab deleted");
-        if let Err(e) = CrontabCache::reload().await {
+        // 增量移除缓存中该 name 的条目，替代全量 reload
+        if let Some(cache) = CrontabCache::global() {
+            cache.remove_by_name(&name);
+            notify_crontab_changed();
+        } else if let Err(e) = CrontabCache::reload().await {
             error!(target: "crontab", error = %e, "failed to reload crontab cache after delete");
         }
     } else {
@@ -73,7 +93,11 @@ pub async fn set_crontab_enable_by_name(
         active_model.enable = Set(enable);
         let updated = active_model.update(db).await?;
         info!(target: "crontab", name = %name, enable = updated.enable, "crontab enable updated");
-        if let Err(e) = CrontabCache::reload().await {
+        // 增量更新缓存（仅解析该条目），替代全量 reload
+        if let Some(cache) = CrontabCache::global() {
+            cache.upsert(updated.clone());
+            notify_crontab_changed();
+        } else if let Err(e) = CrontabCache::reload().await {
             error!(target: "crontab", error = %e, "failed to reload crontab cache after set_enable");
         }
         Ok(Some(updated.enable))
@@ -88,8 +112,10 @@ static CRONTAB_WORKER_STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::ne
 
 /// 初始化定时任务调度协程（全局只启动一次）。
 ///
-/// 协程每秒唤醒，从缓存读取已启用任务并判断是否有到期触发。
-/// 使用缓存避免每秒查询数据库，仅到期时才写入 DB 更新 last_run_time。
+/// 调度器计算所有已启用任务的最近触发时刻，`sleep_until` 到该时刻唤醒处理，
+/// 替代原先每秒轮询（cron 最小粒度通常分钟，60× 冗余）。配置变更
+/// （create/edit/delete/set_enable）会通过 `notify_crontab_changed` 提前唤醒重算。
+/// 设 60 秒上限防止无任务或下次触发很远时睡死。
 pub fn init_crontab_worker() {
     info!(target: "crontab", "initializing crontab worker");
     if CRONTAB_WORKER_STARTED.set(()).is_err() {
@@ -98,15 +124,57 @@ pub fn init_crontab_worker() {
 
     tokio::spawn(async move {
         info!(target: "crontab", "scheduler started");
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        // 消费 interval 的首次立即触发，保持启动时有 1 秒延迟的原始行为
-        interval.tick().await;
+        // 启动时先处理一次（与原行为一致：启动后短延迟即检查），再进入 sleep_until 循环
+        tokio::time::sleep(Duration::from_secs(1)).await;
         loop {
-            interval.tick().await;
             process_crontab().await;
+            let next_deadline = compute_next_deadline();
+            // select: 等到下次触发时刻，或配置变更通知提前唤醒
+            tokio::select! {
+                _ = tokio::time::sleep_until(next_deadline) => {}
+                _ = reload_notify().notified() => {
+                    debug!(target: "crontab", "scheduler woken early by config change");
+                }
+            }
         }
     });
+}
+
+/// 计算调度器下次应唤醒的时刻（`tokio::time::Instant`）。
+///
+/// 遍历所有已启用任务的最近触发点取 min；无任务或下次触发超过 60 秒时，
+/// 返回 60 秒后（上限，保证周期性自检 + 缓存一致性兜底）。
+fn compute_next_deadline() -> tokio::time::Instant {
+    let now = Utc::now();
+    let now_instant = tokio::time::Instant::now();
+    let cap = Duration::from_secs(60);
+
+    let Some(cache) = CrontabCache::global() else {
+        return now_instant + cap;
+    };
+    let jobs = cache.get_enabled_entries();
+
+    let mut earliest: Option<DateTime<Utc>> = None;
+    for entry in &jobs {
+        let effective_last = cache.get_last_run_time(entry.model.id, entry.model.last_run_time);
+        let last_run = effective_last.map_or_else(
+            || now - chrono::Duration::seconds(1),
+            |t| Utc.timestamp_millis_opt(t).single().unwrap_or(now),
+        );
+        if let Some(next_run) = entry.schedule.after(&last_run).next() {
+            earliest = Some(match earliest {
+                None => next_run,
+                Some(e) if next_run < e => next_run,
+                Some(e) => e,
+            });
+        }
+    }
+
+    let earliest = earliest.unwrap_or(now + chrono::Duration::seconds(60));
+    // 转为 Duration：若 next_run 已过（应立即触发），sleep 极短即可
+    let delta_ms = std::cmp::max((earliest - now).num_milliseconds(), 0i64) as u64;
+    let capped = std::cmp::min(delta_ms, cap.as_millis() as u64);
+    now_instant + Duration::from_millis(capped)
 }
 
 /// 单次调度处理：遍历已启用的定时任务，判断是否到期触发。
@@ -129,9 +197,12 @@ async fn process_crontab() {
     let jobs = cache.get_enabled_entries();
 
     let now = Utc::now();
+    let now_millis = now.timestamp_millis();
 
-    let mut set = JoinSet::new();
-
+    // 第一阶段：遍历判断哪些任务到期，收集待触发任务。
+    // 不在循环内逐个 update DB（原实现 N 个到期任务 = N 次串行 round-trip）。
+    #[allow(clippy::too_many_lines)]
+    let mut due: Vec<(Cron, i64)> = Vec::new();
     for entry in &jobs {
         // 获取有效的 last_run_time：优先覆盖映射，回退到数据库值
         let effective_last = cache.get_last_run_time(entry.model.id, entry.model.last_run_time);
@@ -168,9 +239,6 @@ async fn process_crontab() {
             "triggering cron job"
         );
 
-        let job_id = entry.model.id;
-        let job_name = entry.model.name.clone();
-
         let job_parsed = Cron {
             id: entry.model.id,
             name: entry.model.name.clone(),
@@ -180,27 +248,35 @@ async fn process_crontab() {
             last_run_time: effective_last,
         };
 
-        // 先更新 last_run_time 再 spawn 任务，防止并发调度重复触发
-        let now_millis = now.timestamp_millis();
+        due.push((job_parsed, entry.model.id));
+    }
 
-        let active_model = crontab::ActiveModel {
-            id: Set(entry.model.id),
-            last_run_time: Set(Some(now_millis)),
-            ..Default::default()
-        };
-        if let Err(e) = active_model.update(db).await {
-            error!(
-                target: "crontab",
-                job_id = entry.model.id,
-                job_name = %job_name,
-                error = %e,
-                "failed to update last_run_time in DB"
-            );
-        } else {
-            // 同步更新缓存覆盖映射，保证下次调度使用最新时间戳
-            cache.update_last_run_time(entry.model.id, now_millis);
+    // 第二阶段：批量更新所有到期任务的 last_run_time（单条 UPDATE ... WHERE id IN (...)），
+    // 替代原 for 循环内逐个 update 的 N 次串行 round-trip。所有到期任务共享同一 now_millis。
+    if !due.is_empty() {
+        let due_ids: Vec<i64> = due.iter().map(|(_, id)| *id).collect();
+        let update_result = crontab::Entity::update_many()
+            .filter(crontab::Column::Id.is_in(due_ids))
+            .col_expr(crontab::Column::LastRunTime, now_millis.into())
+            .exec(db)
+            .await;
+        match update_result {
+            Ok(_) => {
+                // 批量更新成功，同步更新缓存覆盖映射（per-id，开销小）
+                for (_, id) in &due {
+                    cache.update_last_run_time(*id, now_millis);
+                }
+            }
+            Err(e) => {
+                error!(target: "crontab", error = %e, "failed to batch update last_run_time in DB");
+            }
         }
+    }
 
+    // 第三阶段：spawn 执行所有到期任务
+    let mut set = JoinSet::new();
+    for (job_parsed, job_id) in due {
+        let job_name = job_parsed.name.clone();
         let span = info_span!(
             target: "crontab",
             "crontab::run_job",

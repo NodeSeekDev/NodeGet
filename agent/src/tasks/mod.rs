@@ -53,7 +53,7 @@ const TASK_POOL_PER_TASK_TIMEOUT: Duration = Duration::from_secs(10);
 /// 全局网络 I/O 任务池。
 ///
 /// 使用 [`Semaphore`] 限制同时运行的网络任务数量，避免多 server
-/// 同时下发大量 ping / http_request / dns 任务时打爆 FD 或耗尽连接池。
+/// 同时下发大量 ping / `http_request` / dns 任务时打爆 FD 或耗尽连接池。
 /// 超过并发上限的任务会在 `acquire()` 处等待；等待期间不占用执行资源。
 struct TaskPool {
     semaphore: Semaphore,
@@ -104,7 +104,7 @@ static TASK_POOL: std::sync::LazyLock<TaskPool> =
 /// 仅对涉及网络 I/O 的短任务限流；长驻会话（WebShell）、本地操作
 ///（ReadConfig/EditConfig/Version）、有独立进程管理的 Execute/SelfUpdate
 /// 不纳入池。
-fn is_pool_managed(task_type: &TaskEventType) -> bool {
+const fn is_pool_managed(task_type: &TaskEventType) -> bool {
     matches!(
         task_type,
         TaskEventType::Ping(_)
@@ -339,7 +339,7 @@ pub async fn handle_task() {
             if !server.allow_task.unwrap_or(false) {
                 return;
             }
-            let mut rx: tokio::sync::broadcast::Receiver<Message> =
+            let mut rx: tokio::sync::broadcast::Receiver<std::sync::Arc<serde_json::Value>> =
                 match subscribe_to(server.name.as_str()).await {
                     Ok(rx) => {
                         info!("[{}] Handle Task Started", server.name);
@@ -388,12 +388,10 @@ pub async fn handle_task() {
                 let server_token = server.token.clone();
                 let server_config = server.clone();
                 per_task.spawn(async move {
-                    let rpc = match message {
-                        Message::Text(text) => text.to_string(),
-                        _ => return,
-                    };
-
-                    let json_rpc: JsonRpcTask = match serde_json::from_str(&rpc) {
+                    // 下行通道广播的已是解析好的 `Arc<Value>`，这里用
+                    // `from_value`（克隆 Value 遍历）而非 `from_str`，省去重复解析。
+                    // 非任务消息（解析失败 / method 不匹配）silently 丢弃，与原逻辑一致。
+                    let json_rpc: JsonRpcTask = match serde_json::from_value((*message).clone()) {
                         Ok(json_rpc) => json_rpc,
                         Err(_) => return,
                     };

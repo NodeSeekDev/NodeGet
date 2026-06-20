@@ -79,7 +79,7 @@ pub async fn query_dynamic(
                 )),
                 Permission::DynamicMonitoring(DynamicMonitoring::Read(DynamicDataQueryField::Gpu)),
             ] {
-                if check_token_limit(&token_or_auth, scopes.clone(), vec![permission]).await? {
+                if check_token_limit(&token_or_auth, &scopes, &[permission]).await? {
                     any_allowed = true;
                     break;
                 }
@@ -92,7 +92,7 @@ pub async fn query_dynamic(
                 .map(|field| Permission::DynamicMonitoring(DynamicMonitoring::Read(*field)))
                 .collect();
 
-            check_token_limit(&token_or_auth, scopes, permissions).await?
+            check_token_limit(&token_or_auth, &scopes, &permissions).await?
         };
 
         if !is_allowed {
