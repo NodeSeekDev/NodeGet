@@ -51,22 +51,29 @@ pub async fn ensure_bytecode_version(
     model: &js_worker::Model,
     db: &sea_orm::DatabaseConnection,
 ) -> anyhow::Result<Vec<u8>> {
-    let bytecode = model.js_byte_code.clone().ok_or_else(|| {
-        NodegetError::InvalidInput(format!(
-            "js_worker '{}' has no precompiled bytecode",
-            model.name
-        ))
-    })?;
+    // 先用引用做版本检查，避免在版本不匹配（重编译）路径上无条件 clone
+    // 整个字节码 Vec（可能达数十 KiB）。
+    let stored_version = model
+        .js_byte_code
+        .as_ref()
+        .and_then(|b| b.first().copied())
+        .ok_or_else(|| {
+            NodegetError::InvalidInput(format!(
+                "js_worker '{}' has no precompiled bytecode",
+                model.name
+            ))
+        })?;
 
     let version = current_bc_version().await;
-    if bytecode.first() == Some(&version) {
-        return Ok(bytecode);
+    if stored_version == version {
+        // 版本匹配（快速路径）：此处才 clone，返回已有字节码
+        return Ok(model.js_byte_code.clone().expect("checked non-empty above"));
     }
 
     info!(
         target: "js_worker",
         name = %model.name,
-        stored_version = bytecode.first().unwrap_or(&0),
+        stored_version,
         current_version = version,
         "Bytecode version mismatch, recompiling from source"
     );

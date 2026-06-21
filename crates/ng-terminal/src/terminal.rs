@@ -263,7 +263,7 @@ async fn handle_agent(
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // 从 User 接收数据 -> 发送给 Agent WS
-    let recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         while let Some(msg) = rx_from_user.recv().await {
             if ws_sender.send(msg).await.is_err() {
                 break;
@@ -272,7 +272,7 @@ async fn handle_agent(
     });
 
     // 从 Agent WS 接收数据 -> 发送给 User
-    let send_task = tokio::spawn(async move {
+    let mut send_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = ws_receiver.next().await {
             if tx_to_user.send(msg).await.is_err() {
                 break;
@@ -280,10 +280,20 @@ async fn handle_agent(
         }
     });
 
-    // 等待 Agent WS 侧断开（send_task 依赖 WS 读取）
-    let _ = send_task.await;
-    // recv_task 依赖 mpsc 通道，Agent WS 断开后通道不会自动关闭，需主动 abort
+    // 等待任一方向结束：User 断开（recv_task 的 rx_from_user 收到 None）
+    // 或 Agent WS 断开（send_task 的 ws_reader 结束）。
+    // 原实现只 `send_task.await`：User 断开时 recv_task 退出但 send_task 仍阻塞在
+    // ws_reader.next()，导致 handle_agent 不返回、session 残留、rx_from_agent 已被
+    // take 走，后续 User 重连同一 (agent_uuid, terminal_id) 被 "AlreadyAttached" 拒绝，
+    // 且 Agent WS 连接 + send_task 永久悬挂泄漏。改用 select! 任一结束即清理。
+    tokio::select! {
+        biased;
+        _ = &mut recv_task => {},
+        _ = &mut send_task => {},
+    }
+    // 主动 abort 另一个仍可能挂起的任务，确保无悬挂 task
     recv_task.abort();
+    send_task.abort();
 
     // 清理会话映射：remove 本身幂等，无需先 contains_key 再删
     {

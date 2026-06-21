@@ -129,7 +129,7 @@ fn filter_entries_by_token(
 
     // 遍历 Token 的所有限制，收集允许的 Scope
 
-    for limit in &token_info.token_limit {
+    for limit in token_info.token_limit.iter() {
         let has_crontab_read = limit
             .permissions
             .iter()

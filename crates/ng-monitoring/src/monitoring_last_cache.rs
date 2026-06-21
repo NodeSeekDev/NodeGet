@@ -326,6 +326,38 @@ pub fn build_static_value(
     serde_json::Value::Object(obj)
 }
 
+/// 从已序列化的各字段构建静态缓存 JSON 值（复用调用方已 `to_value` 的结果）。
+///
+/// 与 [`build_static_value`] 的区别：直接接收 cpu/system/gpu 的已序列化 `Value`，
+/// 避免重复 `to_value`。调用方（如 `report_static`）已对这些字段报错式序列化，
+/// 此处直接插入。uuid/timestamp 仍在此构造。
+///
+/// - `uuid` — 设备 UUID
+/// - `timestamp` — 时间戳（毫秒）
+/// - `cpu`/`system`/`gpu` — 已序列化的字段值
+#[must_use]
+pub fn build_static_value_prebuilt(
+    uuid: Uuid,
+    timestamp: i64,
+    cpu: serde_json::Value,
+    system: serde_json::Value,
+    gpu: serde_json::Value,
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::with_capacity(5);
+    obj.insert(
+        "uuid".to_owned(),
+        serde_json::Value::String(uuid.to_string()),
+    );
+    obj.insert(
+        "timestamp".to_owned(),
+        serde_json::Value::Number(timestamp.into()),
+    );
+    obj.insert("cpu".to_owned(), cpu);
+    obj.insert("system".to_owned(), system);
+    obj.insert("gpu".to_owned(), gpu);
+    serde_json::Value::Object(obj)
+}
+
 /// 从动态监控数据构建用于缓存的 JSON 值。
 ///
 /// - `uuid` — 设备 UUID
@@ -368,6 +400,47 @@ pub fn build_dynamic_value(
     if let Ok(v) = serde_json::to_value(&data.gpu) {
         obj.insert("gpu".to_owned(), v);
     }
+    serde_json::Value::Object(obj)
+}
+
+/// 从已序列化的各字段构建动态缓存 JSON 值（复用调用方已 `to_value` 的结果）。
+///
+/// 与 [`build_dynamic_value`] 的区别：直接接收 7 个字段的已序列化 `Value`，
+/// 避免 `report_dynamic` 路径上重复 `to_value`（原本 `ActiveModel` 构造时序列化一次，
+/// 缓存构造时又序列化一次）。调用方已对这些字段报错式序列化，此处直接插入。
+///
+/// - `uuid` — 设备 UUID
+/// - `timestamp` — 时间戳（毫秒）
+/// - `cpu`/`ram`/`load`/`system`/`disk`/`network`/`gpu` — 已序列化的字段值
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn build_dynamic_value_prebuilt(
+    uuid: Uuid,
+    timestamp: i64,
+    cpu: serde_json::Value,
+    ram: serde_json::Value,
+    load: serde_json::Value,
+    system: serde_json::Value,
+    disk: serde_json::Value,
+    network: serde_json::Value,
+    gpu: serde_json::Value,
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::with_capacity(9);
+    obj.insert(
+        "uuid".to_owned(),
+        serde_json::Value::String(uuid.to_string()),
+    );
+    obj.insert(
+        "timestamp".to_owned(),
+        serde_json::Value::Number(timestamp.into()),
+    );
+    obj.insert("cpu".to_owned(), cpu);
+    obj.insert("ram".to_owned(), ram);
+    obj.insert("load".to_owned(), load);
+    obj.insert("system".to_owned(), system);
+    obj.insert("disk".to_owned(), disk);
+    obj.insert("network".to_owned(), network);
+    obj.insert("gpu".to_owned(), gpu);
     serde_json::Value::Object(obj)
 }
 

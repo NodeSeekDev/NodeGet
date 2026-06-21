@@ -28,8 +28,8 @@ pub async fn list_all_agent_uuids(token: String) -> RpcResult<Box<RawValue>> {
 
         let is_allowed = check_token_limit(
             &token_or_auth,
-            vec![Scope::Global],
-            vec![Permission::MonitoringUuid(MonitoringUuid::List)],
+            &[Scope::Global],
+            &[Permission::MonitoringUuid(MonitoringUuid::List)],
         )
         .await?;
 

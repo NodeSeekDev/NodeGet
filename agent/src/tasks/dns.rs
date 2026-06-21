@@ -10,8 +10,26 @@ use hickory_resolver::system_conf::read_system_conf;
 use log::warn;
 use ng_core::error::NodegetError;
 use ng_task::{DnsRecordResult, DnsRecordType, DnsTask};
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
+
+/// DNS resolver 缓存，按"解析后的 DNS 服务器地址"复用 `TokioAsyncResolver`。
+///
+/// `TokioAsyncResolver` 内部维护 UDP 连接与查询缓存；原先每个 DNS 任务都新建一个
+/// resolver 用完即弃，无法跨任务复用。这里按 `Option<SocketAddr>`（自定义服务器）/
+/// `None`（系统配置）缓存，`TokioAsyncResolver` 是 `Clone`（内部 Arc），
+/// 命中时仅一次原子计数自增。
+///
+/// **权衡**：`None`（系统配置）分支会缓存首次读取的 `/etc/resolv.conf`，之后
+/// resolv.conf 的变更在进程重启前不生效。对常驻 agent 而言复用收益大于实时刷新。
+/// 缓存上限 `RESOLVER_CACHE_MAX`，超限清空防止异常输入撑爆。
+static RESOLVER_CACHE: LazyLock<Mutex<HashMap<Option<SocketAddr>, TokioAsyncResolver>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// resolver 缓存最大条目数。正常只有 1（系统）+ 几个自定义服务器。
+const RESOLVER_CACHE_MAX: usize = 16;
 
 /// 执行 DNS 查询任务。
 ///
@@ -55,25 +73,50 @@ pub async fn query_dns(task: &DnsTask) -> Result<Vec<DnsRecordResult>, NodegetEr
     Ok(results)
 }
 
-/// 构建 DNS 解析器。
+/// 构建 DNS 解析器（带缓存）。
 ///
-/// - `dns_server` - 可选的自定义 DNS 服务器地址
+/// - `dns_server` - 可选的自定义 DNS 服务器地址字符串
 ///
-/// 指定服务器时使用 UDP 协议直连；未指定时读取系统 DNS 配置。
+/// 指定服务器时解析为 `SocketAddr` 后按地址缓存；未指定时读取系统 DNS 配置后按
+/// `None` 缓存。命中缓存仅 clone（Arc 自增），未命中才构建新 resolver。
 #[allow(clippy::unused_async)]
 async fn build_resolver(dns_server: Option<&str>) -> Result<TokioAsyncResolver, NodegetError> {
-    if let Some(server_str) = dns_server {
-        let addr: SocketAddr = server_str.parse().map_err(|e| {
+    // 先把字符串解析为确定的 cache key，避免 "1.1.1.1" 与 "1.1.1.1:53" 各存一份。
+    let key: Option<SocketAddr> = match dns_server {
+        Some(server_str) => Some(server_str.parse().map_err(|e| {
             NodegetError::Other(format!("Invalid DNS server address '{server_str}': {e}"))
-        })?;
+        })?),
+        None => None,
+    };
+
+    // 快速路径：命中缓存。
+    if let Ok(cache) = RESOLVER_CACHE.lock()
+        && let Some(resolver) = cache.get(&key)
+    {
+        return Ok(resolver.clone());
+    }
+
+    // 未命中：构建新 resolver。
+    let resolver = if let Some(addr) = key {
         let mut config = ResolverConfig::new();
         config.add_name_server(NameServerConfig::new(addr, Protocol::Udp));
-        Ok(TokioAsyncResolver::tokio(config, ResolverOpts::default()))
+        TokioAsyncResolver::tokio(config, ResolverOpts::default())
     } else {
         let (config, opts) = read_system_conf()
             .map_err(|e| NodegetError::Other(format!("Failed to read system DNS config: {e}")))?;
-        Ok(TokioAsyncResolver::tokio(config, opts))
+        TokioAsyncResolver::tokio(config, opts)
+    };
+
+    // 写回缓存（超限清空，防异常输入撑爆）。
+    if let Ok(mut cache) = RESOLVER_CACHE.lock() {
+        if cache.len() >= RESOLVER_CACHE_MAX {
+            cache.clear();
+        }
+        // 即使并发下另一线程已插入相同 key，clone 出来的 resolver 等价，覆盖无妨。
+        cache.insert(key, resolver.clone());
     }
+
+    Ok(resolver)
 }
 
 /// 查询单一记录类型的 DNS 记录。

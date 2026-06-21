@@ -169,6 +169,10 @@ async fn main() -> anyhow::Result<()> {
 
         let mut handles = rpc::multi_server::init_connections(servers, connect_timeout).await;
 
+        // 启动进程数低频采集 ticker（默认 5s），从 dynamic tick(1s)解耦，
+        // 避免 /proc 全量遍历拖慢动态监控热路径。ticker 内部 OnceLock 保证只启动一次。
+        monitoring::init_process_count_ticker();
+
         handles.push(tokio::spawn(handle_static_monitoring_data_report()));
         handles.push(tokio::spawn(handle_dynamic_monitoring_data_report()));
         handles.push(tokio::spawn(handle_error_message()));

@@ -46,8 +46,8 @@ pub async fn report_dynamic_summary(
 
         let is_allowed = check_token_limit(
             &token_or_auth,
-            vec![Scope::AgentUuid(agent_uuid)],
-            vec![Permission::DynamicMonitoringSummary(
+            &[Scope::AgentUuid(agent_uuid)],
+            &[Permission::DynamicMonitoringSummary(
                 DynamicMonitoringSummary::Write,
             )],
         )

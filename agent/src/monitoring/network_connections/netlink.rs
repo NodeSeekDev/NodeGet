@@ -7,10 +7,12 @@
 
 use libc::{c_void, close, recvfrom, sendto, sockaddr, sockaddr_nl, socket};
 use log::{error, warn};
+use std::cell::RefCell;
 use std::io;
 use std::mem::{size_of, zeroed};
 use std::os::fd::RawFd;
 use std::ptr;
+use std::sync::OnceLock;
 
 /// Netlink 请求类型：按协议族查询 socket 诊断信息。
 const SOCK_DIAG_BY_FAMILY: u16 = 20;
@@ -20,6 +22,37 @@ const ALL_TCP_STATES: u32 = 0xffffffff;
 const TCP_ESTABLISHED: u32 = 1;
 /// Netlink 消息头部长度。
 const NLMSG_HDRLEN: usize = size_of::<libc::nlmsghdr>();
+
+/// 获取系统页大小（运行时常量），结果缓存避免每次 `sysconf` 系统调用。
+///
+/// `sysconf(_SC_PAGESIZE)` 在进程生命周期内不变，缓存后仅需一次调用。
+fn page_size() -> usize {
+    static PAGE_SIZE: OnceLock<usize> = OnceLock::new();
+    *PAGE_SIZE.get_or_init(|| {
+        let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if ps > 0 { ps as usize } else { 4096 }
+    })
+}
+
+/// 线程本地 Netlink 接收缓冲区，复用避免每次调用重新分配页大小 Vec。
+///
+/// `calc_connections` 经 `tokio::task::spawn_blocking` 在 blocking 池执行
+/// （调用点 `impls.rs` DataFromNetwork::refresh_and_get），同一线程的多次调用
+/// （tcp4/tcp6/udp4/udp6）共享同一缓冲区，消除每秒 4 次页大小堆分配。
+thread_local! {
+    static RECV_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+}
+
+/// 借用线程本地接收缓冲区（保证长度为 page_size），执行闭包。
+///
+/// 复用已有容量，仅 `resize` 调整长度（容量足够时无堆分配）。
+fn with_recv_buf<R>(f: impl FnOnce(&mut [u8]) -> R) -> R {
+    RECV_BUF.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        buf.resize(page_size(), 0);
+        f(&mut buf[..])
+    })
+}
 
 /// ---- 与内核对齐的 C 结构体定义 ----
 
@@ -141,50 +174,44 @@ fn netlink_inet_diag_only_count(request: &[u8]) -> io::Result<u64> {
         return Err(e);
     }
 
-    // 准备读取缓冲区，按页大小分配
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    let page_size = if page_size > 0 {
-        page_size as usize
-    } else {
-        4096
-    };
-    let mut buf: Vec<u8> = vec![0u8; page_size];
+    // 准备读取缓冲区，按页大小分配（线程本地复用，避免每次堆分配）
+    with_recv_buf(|buf| {
+        let mut total_count: u64 = 0;
 
-    let mut total_count: u64 = 0;
+        loop {
+            // 每次用整个 buf 接收，nr 为本批次有效长度
+            let nr = unsafe {
+                recvfrom(
+                    fd,
+                    buf.as_mut_ptr() as *mut c_void,
+                    buf.len(),
+                    0,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            };
+            if nr < 0 {
+                let e = io::Error::last_os_error();
+                error!(target: "monitoring", "Netlink 错误: recvfrom 失败: {e}");
+                return Err(e);
+            }
+            let nr = nr as usize;
+            if nr < NLMSG_HDRLEN {
+                // 短于头部的批次是畸形数据，跳过等待下一个正常批次或 NLMSG_DONE
+                continue;
+            }
 
-    loop {
-        // 每次用整个 buf 接收，nr 为本批次有效长度
-        let nr = unsafe {
-            recvfrom(
-                fd,
-                buf.as_mut_ptr() as *mut c_void,
-                buf.len(),
-                0,
-                ptr::null_mut(),
-                ptr::null_mut(),
-            )
-        };
-        if nr < 0 {
-            let e = io::Error::last_os_error();
-            error!(target: "monitoring", "Netlink 错误: recvfrom 失败: {e}");
-            return Err(e);
+            let slice = &buf[..nr];
+
+            let (count, done) = count_netlink_messages(slice)?;
+            total_count += count;
+            if done {
+                break;
+            }
         }
-        let nr = nr as usize;
-        if nr < NLMSG_HDRLEN {
-            // 短于头部的批次是畸形数据，跳过等待下一个正常批次或 NLMSG_DONE
-            continue;
-        }
 
-        let slice = &buf[..nr];
-
-        let (count, done) = count_netlink_messages(slice)?;
-        total_count += count;
-        if done {
-            break;
-        }
-    }
-
-    Ok(total_count)
+        Ok(total_count)
+    })
 }
 
 /// 统计一批 Netlink 消息中的实际连接记录数。

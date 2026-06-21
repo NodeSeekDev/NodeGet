@@ -70,19 +70,24 @@ pub async fn execute_command(task: ExecuteTask) -> Result<String> {
     let mut stdout_pipe = child.stdout.take();
     let mut stderr_pipe = child.stderr.take();
 
+    // 读取上限：单 pipe 最多把 `max_chars` 字节保留进 buf。
+    // 最终结果字符串 head+tail 合计 ≤ max_chars，保留更多对结果无任何用途；
+    // 上限化避免 `read_to_end` 把失控命令（cat /dev/zero、yes、超大日志）的
+    // 全部输出堆进内存导致 agent OOM。
+    //
+    // **关键**：到上限后必须继续 drain 剩余字节（读到 sink 丢弃），否则 OS 管道
+    // 缓冲（典型 64KiB）填满后 child 的 write() 阻塞，导致 child.wait() 永不返回、
+    // 任务卡到 EXECUTE_TIMEOUT 才以"超时"错误结束——这会让 head/tail 截断逻辑
+    //（下方 116 行起）在输出充足的常见命令上完全失效。drain 保证 child 能正常
+    // 退出，截断逻辑正常生效。max_chars 默认 5000，drain 的总量受 EXECUTE_TIMEOUT
+    //（60s）约束，不会无限。
+    let max_capture = u64::try_from(max_chars).unwrap_or(u64::MAX);
+
     let read_stdout = async {
-        let mut buf = Vec::new();
-        if let Some(p) = stdout_pipe.as_mut() {
-            let _ = p.read_to_end(&mut buf).await;
-        }
-        buf
+        read_capped(stdout_pipe.as_mut(), max_capture).await
     };
     let read_stderr = async {
-        let mut buf = Vec::new();
-        if let Some(p) = stderr_pipe.as_mut() {
-            let _ = p.read_to_end(&mut buf).await;
-        }
-        buf
+        read_capped(stderr_pipe.as_mut(), max_capture).await
     };
 
     let wait_and_collect = async {
@@ -187,4 +192,24 @@ pub async fn execute_command(task: ExecuteTask) -> Result<String> {
             )))
         }
     }
+}
+
+/// 从可选的 reader 读取最多 `max_capture` 字节存入 buf，然后继续 drain 剩余字节到 sink 丢弃。
+///
+/// 仅保留前 `max_capture` 字节控制内存；drain 防止 OS 管道缓冲填满导致 child 写阻塞
+///（见 `execute_command` 中读取上限的注释）。任何读取错误都被吞掉（`read_to_end`
+/// / `copy` 返回的 Result 用 `let _ =` 忽略），与原实现"尽力读取"语义一致。
+async fn read_capped<R>(reader: Option<&mut R>, max_capture: u64) -> Vec<u8>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut buf = Vec::new();
+    let Some(r) = reader else {
+        return buf;
+    };
+    // 先保留前 max_capture 字节。take 返回的 Take 在 read_to_end 到上限后返回，
+    // 底层 reader 不变，之后用同一 r 继续 drain。
+    let _ = r.take(max_capture).read_to_end(&mut buf).await;
+    let _ = tokio::io::copy(r, &mut tokio::io::sink()).await;
+    buf
 }

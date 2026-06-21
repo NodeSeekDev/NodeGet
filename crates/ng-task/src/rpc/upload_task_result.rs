@@ -116,8 +116,8 @@ pub async fn upload_task_result(
         let is_allowed = provider
             .check_token_limit(
                 &token_or_auth,
-                vec![Scope::AgentUuid(task_response.agent_uuid)],
-                vec![Permission::Task(Task::Write(task_name.to_string()))],
+                &[Scope::AgentUuid(task_response.agent_uuid)],
+                &[Permission::Task(Task::Write(task_name.to_string()))],
             )
             .await?;
 

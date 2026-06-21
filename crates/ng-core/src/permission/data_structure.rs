@@ -6,6 +6,7 @@
 
 use crate::monitoring::query::{DynamicDataQueryField, StaticDataQueryField};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// 已验证的 Token 信息，由鉴权层返回。
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,8 +20,8 @@ pub struct Token {
     pub timestamp_from: Option<i64>,
     /// 有效期截止（Unix 毫秒，None 表示无上界）
     pub timestamp_to: Option<i64>,
-    /// 权限限制列表
-    pub token_limit: Vec<Limit>,
+    /// 权限限制列表。用 `Arc` 包裹，鉴权层返回时 `Arc::clone` 零分配而非深拷贝 `Vec`。
+    pub token_limit: Arc<Vec<Limit>>,
     /// 关联的用户名
     pub username: Option<String>,
 }
@@ -686,10 +687,10 @@ mod tests {
             token_key: "abc".into(),
             timestamp_from: Some(1000),
             timestamp_to: Some(2000),
-            token_limit: vec![Limit {
+            token_limit: Arc::new(vec![Limit {
                 scopes: vec![Scope::Global],
                 permissions: vec![Permission::NodeGet(NodeGet::ExecSql)],
-            }],
+            }]),
             username: Some("admin".into()),
         };
         assert_eq!(t.version, 1);
@@ -707,7 +708,7 @@ mod tests {
             token_key: "k".into(),
             timestamp_from: None,
             timestamp_to: None,
-            token_limit: vec![],
+            token_limit: Arc::new(vec![]),
             username: None,
         };
         assert!(t.timestamp_from.is_none());
@@ -723,7 +724,7 @@ mod tests {
             token_key: "k".into(),
             timestamp_from: None,
             timestamp_to: None,
-            token_limit: vec![],
+            token_limit: Arc::new(vec![]),
             username: None,
         };
         let t2 = Token {
@@ -731,7 +732,7 @@ mod tests {
             token_key: "k".into(),
             timestamp_from: None,
             timestamp_to: None,
-            token_limit: vec![],
+            token_limit: Arc::new(vec![]),
             username: None,
         };
         assert_eq!(t1, t2);
@@ -744,7 +745,7 @@ mod tests {
             token_key: "k1".into(),
             timestamp_from: None,
             timestamp_to: None,
-            token_limit: vec![],
+            token_limit: Arc::new(vec![]),
             username: None,
         };
         let t2 = Token {
@@ -752,7 +753,7 @@ mod tests {
             token_key: "k2".into(),
             timestamp_from: None,
             timestamp_to: None,
-            token_limit: vec![],
+            token_limit: Arc::new(vec![]),
             username: None,
         };
         assert_ne!(t1, t2);
@@ -765,10 +766,10 @@ mod tests {
             token_key: "serde_key".into(),
             timestamp_from: Some(100),
             timestamp_to: Some(200),
-            token_limit: vec![Limit {
+            token_limit: Arc::new(vec![Limit {
                 scopes: vec![Scope::JsWorker("w".into())],
                 permissions: vec![Permission::JsWorker(JsWorker::Read)],
-            }],
+            }]),
             username: Some("user".into()),
         };
         let json = serde_json::to_string(&t).unwrap();
@@ -783,7 +784,7 @@ mod tests {
             token_key: "k".into(),
             timestamp_from: None,
             timestamp_to: None,
-            token_limit: vec![],
+            token_limit: Arc::new(vec![]),
             username: None,
         };
         let debug = format!("{t:?}");

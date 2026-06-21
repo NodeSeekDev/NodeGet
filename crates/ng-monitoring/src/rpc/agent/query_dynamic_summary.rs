@@ -77,8 +77,8 @@ pub async fn query_dynamic_summary(
 
         let is_allowed = check_token_limit(
             &token_or_auth,
-            scopes,
-            vec![Permission::DynamicMonitoringSummary(
+            &scopes,
+            &[Permission::DynamicMonitoringSummary(
                 DynamicMonitoringSummary::Read,
             )],
         )

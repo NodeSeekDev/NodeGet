@@ -8,7 +8,7 @@
 //! 权限校验委托至全局 `ng_core::permission::permission_checker::PermissionChecker`。
 
 use ng_core::error::NodegetError;
-use ng_core::permission::data_structure::{Kv, Permission, Scope};
+use ng_core::permission::data_structure::{Kv, Limit, Permission, Scope, Token};
 use ng_core::permission::permission_checker::require_permission_checker as get_checker;
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_core::utils::get_local_timestamp_ms_i64;
@@ -73,6 +73,67 @@ pub fn validate_key_pattern(key: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 解析 Token 后的 KV 权限校验中间态（与 `check_token_limit` 语义一致）。
+///
+/// - `Granted` — 超级令牌，调用方应直接返回 `Ok(())`
+/// - `Denied` — 时间无效（未生效 / 已过期），调用方应返回权限拒绝
+/// - `Token(token)` — 非超级令牌且时间有效，调用方可用 `token.token_limit` 做内存匹配
+///
+/// 这样每个 KV 权限函数只需一次 `get_token` + 内存 `check_limits_cover`，
+/// 替代原先两次 `check_token_limit` 的全量认证。
+enum KvTokenState {
+    /// 超级令牌：直接放行
+    Granted,
+    /// 时间无效：拒绝
+    Denied,
+    /// 普通令牌且时间有效，可做内存匹配
+    Token(Token),
+}
+
+/// 解析 Token 并做超级令牌 / 时间有效性判断。
+///
+/// 错误：认证失败（如 token 不存在）。
+async fn resolve_token_for_kv_check(token_or_auth: &TokenOrAuth) -> anyhow::Result<KvTokenState> {
+    // 超级令牌直接放行
+    let is_super_token = ng_token::check_super_token(token_or_auth)
+        .await
+        .map_err(|e| NodegetError::PermissionDenied(format!("{e}")))?;
+    if is_super_token {
+        debug!(target: "kv", "super token authenticated, all permissions granted");
+        return Ok(KvTokenState::Granted);
+    }
+
+    let token = ng_token::get_token(token_or_auth).await?;
+
+    // 检查 Token 有效期（与 check_token_limit 一致）
+    let now = get_local_timestamp_ms_i64()?;
+    if let Some(from) = token.timestamp_from
+        && now < from
+    {
+        warn!(target: "auth", token_key = %token.token_key, "token not yet valid (timestamp_from)");
+        return Ok(KvTokenState::Denied);
+    }
+    if let Some(to) = token.timestamp_to
+        && now > to
+    {
+        warn!(target: "auth", token_key = %token.token_key, "token expired (timestamp_to)");
+        return Ok(KvTokenState::Denied);
+    }
+
+    Ok(KvTokenState::Token(token))
+}
+
+/// 在已解析的 token_limit 上做全局 OR 具体 key 的内存匹配。
+fn limits_cover_global_or_specific(
+    limits: &[Limit],
+    scope: &Scope,
+    global_perm: Permission,
+    specific_perm: Permission,
+) -> bool {
+    ng_token::get::check_limits_cover(limits, scope, &global_perm)
+        || ng_token::get::check_limits_cover(limits, scope, &specific_perm)
+}
+
 /// 检查是否有 KV 读权限
 ///
 /// # 参数
@@ -91,34 +152,31 @@ pub async fn check_kv_read_permission(
     // 验证 key 不包含非法字符
     validate_key(key)?;
 
-    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-    // 构建 scope - 使用 KvNamespace
+    // 一次取 token + 内存匹配全局 OR 具体 key（替代两次 check_token_limit 全量认证）
+    let token_info = match resolve_token_for_kv_check(&token_or_auth).await? {
+        KvTokenState::Granted => return Ok(()),
+        KvTokenState::Denied => {
+            warn!(target: "kv", namespace = %namespace, key = %key, "read permission denied");
+            return Err(NodegetError::PermissionDenied(format!(
+                "No read permission for key '{key}' in namespace '{namespace}'"
+            ))
+            .into());
+        }
+        KvTokenState::Token(t) => t,
+    };
+
     let scope = Scope::KvNamespace(namespace.to_owned());
+    let covered = limits_cover_global_or_specific(
+        &token_info.token_limit,
+        &scope,
+        Permission::Kv(Kv::Read("*".to_owned())),
+        Permission::Kv(Kv::Read(key.to_owned())),
+    );
 
-    // 先检查是否有全局读权限（key 为 "*" 表示所有 key）
-    let global_read_perm = Permission::Kv(Kv::Read("*".to_owned()));
-    let has_global_read = checker
-        .check_token_limit(&token_or_auth, vec![scope.clone()], vec![global_read_perm])
-        .await?;
-
-    if has_global_read {
-        return Ok(());
-    }
-
-    // 检查是否有特定 key 的读权限
-    let specific_read_perm = Permission::Kv(Kv::Read(key.to_owned()));
-    let has_specific_read = checker
-        .check_token_limit(
-            &token_or_auth,
-            vec![scope.clone()],
-            vec![specific_read_perm],
-        )
-        .await?;
-
-    if has_specific_read {
+    if covered {
         return Ok(());
     }
 
@@ -146,31 +204,30 @@ pub async fn check_kv_read_permission_with_pattern(
     trace!(target: "kv", namespace = %namespace, key_pattern = %key_pattern, "checking read permission with pattern");
     validate_key_pattern(key_pattern)?;
 
-    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
+    let token_info = match resolve_token_for_kv_check(&token_or_auth).await? {
+        KvTokenState::Granted => return Ok(()),
+        KvTokenState::Denied => {
+            warn!(target: "kv", namespace = %namespace, key_pattern = %key_pattern, "read permission denied for pattern");
+            return Err(NodegetError::PermissionDenied(format!(
+                "No read permission for key '{key_pattern}' in namespace '{namespace}'"
+            ))
+            .into());
+        }
+        KvTokenState::Token(t) => t,
+    };
+
     let scope = Scope::KvNamespace(namespace.to_owned());
+    let covered = limits_cover_global_or_specific(
+        &token_info.token_limit,
+        &scope,
+        Permission::Kv(Kv::Read("*".to_owned())),
+        Permission::Kv(Kv::Read(key_pattern.to_owned())),
+    );
 
-    let global_read_perm = Permission::Kv(Kv::Read("*".to_owned()));
-    let has_global_read = checker
-        .check_token_limit(&token_or_auth, vec![scope.clone()], vec![global_read_perm])
-        .await?;
-
-    if has_global_read {
-        return Ok(());
-    }
-
-    let specific_read_perm = Permission::Kv(Kv::Read(key_pattern.to_owned()));
-    let has_specific_read = checker
-        .check_token_limit(
-            &token_or_auth,
-            vec![scope.clone()],
-            vec![specific_read_perm],
-        )
-        .await?;
-
-    if has_specific_read {
+    if covered {
         return Ok(());
     }
 
@@ -199,34 +256,30 @@ pub async fn check_kv_write_permission(
     // 验证 key 不包含非法字符
     validate_key(key)?;
 
-    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-    // 构建 scope - 使用 KvNamespace
+    let token_info = match resolve_token_for_kv_check(&token_or_auth).await? {
+        KvTokenState::Granted => return Ok(()),
+        KvTokenState::Denied => {
+            warn!(target: "kv", namespace = %namespace, key = %key, "write permission denied");
+            return Err(NodegetError::PermissionDenied(format!(
+                "No write permission for key '{key}' in namespace '{namespace}'"
+            ))
+            .into());
+        }
+        KvTokenState::Token(t) => t,
+    };
+
     let scope = Scope::KvNamespace(namespace.to_owned());
+    let covered = limits_cover_global_or_specific(
+        &token_info.token_limit,
+        &scope,
+        Permission::Kv(Kv::Write("*".to_owned())),
+        Permission::Kv(Kv::Write(key.to_owned())),
+    );
 
-    // 先检查是否有全局写权限（key 为 "*" 表示所有 key）
-    let global_write_perm = Permission::Kv(Kv::Write("*".to_owned()));
-    let has_global_write = checker
-        .check_token_limit(&token_or_auth, vec![scope.clone()], vec![global_write_perm])
-        .await?;
-
-    if has_global_write {
-        return Ok(());
-    }
-
-    // 检查是否有特定 key 的写权限
-    let specific_write_perm = Permission::Kv(Kv::Write(key.to_owned()));
-    let has_specific_write = checker
-        .check_token_limit(
-            &token_or_auth,
-            vec![scope.clone()],
-            vec![specific_write_perm],
-        )
-        .await?;
-
-    if has_specific_write {
+    if covered {
         return Ok(());
     }
 
@@ -255,38 +308,30 @@ pub async fn check_kv_delete_permission(
     // 验证 key 不包含非法字符
     validate_key(key)?;
 
-    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-    // 构建 scope - 使用 KvNamespace
+    let token_info = match resolve_token_for_kv_check(&token_or_auth).await? {
+        KvTokenState::Granted => return Ok(()),
+        KvTokenState::Denied => {
+            warn!(target: "kv", namespace = %namespace, key = %key, "delete permission denied");
+            return Err(NodegetError::PermissionDenied(format!(
+                "No delete permission for key '{key}' in namespace '{namespace}'"
+            ))
+            .into());
+        }
+        KvTokenState::Token(t) => t,
+    };
+
     let scope = Scope::KvNamespace(namespace.to_owned());
+    let covered = limits_cover_global_or_specific(
+        &token_info.token_limit,
+        &scope,
+        Permission::Kv(Kv::Delete("*".to_owned())),
+        Permission::Kv(Kv::Delete(key.to_owned())),
+    );
 
-    // 先检查是否有全局删除权限（key 为 "*" 表示所有 key）
-    let global_delete_perm = Permission::Kv(Kv::Delete("*".to_owned()));
-    let has_global_delete = checker
-        .check_token_limit(
-            &token_or_auth,
-            vec![scope.clone()],
-            vec![global_delete_perm],
-        )
-        .await?;
-
-    if has_global_delete {
-        return Ok(());
-    }
-
-    // 检查是否有特定 key 的删除权限
-    let specific_delete_perm = Permission::Kv(Kv::Delete(key.to_owned()));
-    let has_specific_delete = checker
-        .check_token_limit(
-            &token_or_auth,
-            vec![scope.clone()],
-            vec![specific_delete_perm],
-        )
-        .await?;
-
-    if has_specific_delete {
+    if covered {
         return Ok(());
     }
 
@@ -306,17 +351,30 @@ pub async fn check_kv_delete_namespace_permission(
 ) -> anyhow::Result<()> {
     trace!(target: "kv", namespace = %namespace, "checking delete namespace permission");
 
-    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-    let scope = Scope::KvNamespace(namespace.to_owned());
-    let global_delete_perm = Permission::Kv(Kv::Delete("*".to_owned()));
-    let has_global_delete = checker
-        .check_token_limit(&token_or_auth, vec![scope], vec![global_delete_perm])
-        .await?;
+    let token_info = match resolve_token_for_kv_check(&token_or_auth).await? {
+        KvTokenState::Granted => return Ok(()),
+        KvTokenState::Denied => {
+            warn!(target: "kv", namespace = %namespace, "delete namespace permission denied");
+            return Err(NodegetError::PermissionDenied(format!(
+                "No permission to delete namespace '{namespace}'"
+            ))
+            .into());
+        }
+        KvTokenState::Token(t) => t,
+    };
 
-    if has_global_delete {
+    // 删除整个命名空间需对该命名空间拥有全局删除权限 (`Kv::Delete`("*"))
+    let scope = Scope::KvNamespace(namespace.to_owned());
+    let covered = ng_token::get::check_limits_cover(
+        &token_info.token_limit,
+        &scope,
+        &Permission::Kv(Kv::Delete("*".to_owned())),
+    );
+
+    if covered {
         return Ok(());
     }
 
@@ -337,18 +395,28 @@ pub async fn check_kv_delete_namespace_permission(
 /// 如果有权限返回 Ok(()，否则返回错误
 pub async fn check_kv_list_keys_permission(token: &str, namespace: &str) -> anyhow::Result<()> {
     trace!(target: "kv", namespace = %namespace, "checking list keys permission");
-    let checker = get_checker()?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
-    // 构建 scope - 使用 KvNamespace
-    let scope = Scope::KvNamespace(namespace.to_owned());
+    let token_info = match resolve_token_for_kv_check(&token_or_auth).await? {
+        KvTokenState::Granted => return Ok(()),
+        KvTokenState::Denied => {
+            warn!(target: "kv", namespace = %namespace, "list keys permission denied");
+            return Err(NodegetError::PermissionDenied(format!(
+                "No permission to list keys in namespace '{namespace}'"
+            ))
+            .into());
+        }
+        KvTokenState::Token(t) => t,
+    };
 
     // 检查 ListAllKeys 权限
-    let list_perm = Permission::Kv(Kv::ListAllKeys);
-    let has_list_permission = checker
-        .check_token_limit(&token_or_auth, vec![scope], vec![list_perm])
-        .await?;
+    let scope = Scope::KvNamespace(namespace.to_owned());
+    let has_list_permission = ng_token::get::check_limits_cover(
+        &token_info.token_limit,
+        &scope,
+        &Permission::Kv(Kv::ListAllKeys),
+    );
 
     if has_list_permission {
         return Ok(());
@@ -408,7 +476,7 @@ pub async fn resolve_kv_list_namespace_permission(
 
     let mut allowed_namespaces = HashSet::new();
 
-    for limit in &token_info.token_limit {
+    for limit in token_info.token_limit.iter() {
         let has_list_namespace_permission = limit
             .permissions
             .iter()

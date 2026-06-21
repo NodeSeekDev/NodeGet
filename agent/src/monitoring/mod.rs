@@ -20,6 +20,14 @@ mod network_connections;
 // 系统实现模块
 mod system_impls;
 
+/// 启动进程数低频采集 ticker（转发至 `system_impls`，默认 5s 间隔）。
+///
+/// 从 dynamic tick(1s)解耦 `/proc` 遍历，避免每秒采集拖慢动态监控热路径。
+/// 内部 `OnceLock` 保证只启动一次。
+pub fn init_process_count_ticker() {
+    system_impls::init_process_count_ticker();
+}
+
 /// 全局系统信息实例（sysinfo `System`），用于获取和刷新 CPU/内存信息。
 static GLOBAL_SYSTEM: OnceCell<Mutex<System>> = OnceCell::const_new();
 

@@ -32,8 +32,8 @@ pub async fn list(token: String) -> RpcResult<Box<RawValue>> {
         let is_allowed = provider
             .check_token_limit(
                 &token_or_auth,
-                vec![Scope::Global],
-                vec![Permission::Db(DbPermission::List)],
+                &[Scope::Global],
+                &[Permission::Db(DbPermission::List)],
             )
             .await?;
 

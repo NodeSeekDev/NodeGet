@@ -6,7 +6,7 @@
 
 use crate::data_structure::DynamicMonitoringData;
 use crate::monitoring_buffer;
-use crate::monitoring_last_cache::{MonitoringLastCache, build_dynamic_value};
+use crate::monitoring_last_cache::{MonitoringLastCache, build_dynamic_value_prebuilt};
 use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use jsonrpsee::core::RpcResult;
 use ng_core::error::NodegetError;
@@ -46,8 +46,8 @@ pub async fn report_dynamic(
 
         let is_allowed = check_token_limit(
             &token_or_auth,
-            vec![Scope::AgentUuid(agent_uuid)],
-            vec![Permission::DynamicMonitoring(DynamicMonitoring::Write)],
+            &[Scope::AgentUuid(agent_uuid)],
+            &[Permission::DynamicMonitoring(DynamicMonitoring::Write)],
         )
         .await?;
 
@@ -90,13 +90,15 @@ pub async fn report_dynamic(
             uuid_id: Set(uuid_id),
             timestamp: Set(timestamp),
             storage_time: Set(Some(get_local_timestamp_ms_i64()?)),
-            cpu_data: Set(cpu_val),
-            ram_data: Set(ram_val),
-            load_data: Set(load_val),
-            system_data: Set(system_val),
-            disk_data: Set(disk_val),
-            network_data: Set(network_val),
-            gpu_data: Set(gpu_val),
+            // ActiveModel 各字段 clone（Value 结构复制，远比 to_value 反射序列化廉价），
+            // 原值 move 给 cache_value，避免 build_dynamic_value 重新 to_value 7 次。
+            cpu_data: Set(cpu_val.clone()),
+            ram_data: Set(ram_val.clone()),
+            load_data: Set(load_val.clone()),
+            system_data: Set(system_val.clone()),
+            disk_data: Set(disk_val.clone()),
+            network_data: Set(network_val.clone()),
+            gpu_data: Set(gpu_val.clone()),
         };
 
         debug!(target: "monitoring", agent_uuid = %dynamic_monitoring_data.uuid, "Received dynamic data, sending to buffer");
@@ -108,7 +110,17 @@ pub async fn report_dynamic(
             .dynamic_mon
             .send(in_data);
 
-        let cache_value = build_dynamic_value(agent_uuid, timestamp, &dynamic_monitoring_data);
+        let cache_value = build_dynamic_value_prebuilt(
+            agent_uuid,
+            timestamp,
+            cpu_val,
+            ram_val,
+            load_val,
+            system_val,
+            disk_val,
+            network_val,
+            gpu_val,
+        );
         MonitoringLastCache::global()
             .ok_or_else(|| {
                 NodegetError::ConfigNotFound("MonitoringLastCache not initialized".to_owned())

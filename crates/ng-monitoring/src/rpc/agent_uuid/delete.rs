@@ -30,8 +30,8 @@ pub async fn delete_agent_uuid(token: String, agent_uuid: Uuid) -> RpcResult<Box
 
         let is_allowed = check_token_limit(
             &token_or_auth,
-            vec![Scope::Global],
-            vec![Permission::MonitoringUuid(MonitoringUuid::Delete)],
+            &[Scope::Global],
+            &[Permission::MonitoringUuid(MonitoringUuid::Delete)],
         )
         .await?;
 

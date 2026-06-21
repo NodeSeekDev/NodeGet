@@ -207,7 +207,14 @@ impl DataFromNetwork {
                 .collect()
         };
 
-        let (udp_connections, tcp_connections) = calc_connections();
+        // calc_connections() 在 Linux 走 netlink、Windows 走 netstat2，
+        // 均为同步阻塞 I/O（每秒 4 次 socket/sendto/recvfrom 或全表枚举），
+        // 不能直接在 tokio worker 上跑，卸到 blocking 池避免拖慢动态监控热路径。
+        // panic 时 unwrap_or_default 退化为 (0,0)，与原先内部错误兜底语义一致。
+        let (udp_connections, tcp_connections) =
+            tokio::task::spawn_blocking(calc_connections)
+                .await
+                .unwrap_or_default();
 
         Self(DynamicNetworkData {
             interfaces: Arc::new(network_vec),

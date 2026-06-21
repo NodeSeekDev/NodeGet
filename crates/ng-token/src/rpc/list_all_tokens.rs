@@ -60,7 +60,7 @@ pub async fn list_all_tokens(token: String) -> RpcResult<Box<RawValue>> {
                 token_key: entry.model.token_key.clone(),
                 timestamp_from: entry.model.time_stamp_from,
                 timestamp_to: entry.model.time_stamp_to,
-                token_limit: entry.parsed_limits.clone(),
+                token_limit: std::sync::Arc::clone(&entry.parsed_limits),
                 username: entry.model.username.clone(),
             })
             .collect();

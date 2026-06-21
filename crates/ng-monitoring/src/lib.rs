@@ -46,7 +46,6 @@ pub mod static_hash_cache;
 /// 合并了 `agent`、`agent-uuid`、`nodeget-server` 三个命名空间。
 /// 调用方应在启动时将此模块 merge 到主 RPC 模块中。
 ///
-/// - 注册 `agent_ping` 心跳方法（直接返回 `"pong"`）
 /// - 合并 `AgentRpcImpl`（agent 命名空间）
 /// - 合并 `AgentUuidRpcImpl`（agent-uuid 命名空间）
 /// - 合并 `NodegetServerRpcImpl`（nodeget-server 命名空间）
@@ -62,12 +61,6 @@ pub fn rpc_module() -> jsonrpsee::RpcModule<()> {
     use rpc::nodeget::RpcServer as NodegetServerRpcServer;
 
     let mut module = jsonrpsee::RpcModule::new(());
-
-    module
-        .register_method("agent_ping", |_, (), _| {
-            Ok::<&str, jsonrpsee::types::ErrorObjectOwned>("pong")
-        })
-        .ok();
 
     let agent_impl = rpc::agent::AgentRpcImpl;
     module

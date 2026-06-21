@@ -26,6 +26,16 @@
 - `globalThis.getDatabaseType(token)` — 获取当前节点使用的数据库类型（`sqlite`/`postgres`）。
   需要 `NodeGet::ExecSql` 权限。
 - `globalThis.randomUUID()` — 生成随机 UUID v4 字符串
+- `globalThis.nodegetLog` — 将日志桥接到 Server 端 Rust `tracing`
+  日志系统。详见 [JS Worker 日志](/dev/worker/logging.md)。
+    - `nodegetLog.trace(namespace, message)`
+    - `nodegetLog.debug(namespace, message)`
+    - `nodegetLog.info(namespace, message)`
+    - `nodegetLog.warn(namespace, message)`
+    - `nodegetLog.error(namespace, message)`
+    - `nodegetLog.log(namespace, message)`（`info` 别名）
+    - `namespace` 为空/`null`/`undefined` 时落到 `default` 空间；`message` 会强制 `String()` 转换。
+    - 输出 target 为 `js_worker`，并携带 `worker`、`namespace` 结构化字段；通过 `RUST_LOG=js_worker=debug` 等环境变量控制级别。
 
 ### `execSql` 使用说明
 

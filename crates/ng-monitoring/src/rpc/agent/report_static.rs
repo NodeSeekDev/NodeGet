@@ -9,7 +9,7 @@
 
 use crate::data_structure::StaticMonitoringData;
 use crate::monitoring_buffer;
-use crate::monitoring_last_cache::{MonitoringLastCache, build_static_value};
+use crate::monitoring_last_cache::{MonitoringLastCache, build_static_value_prebuilt};
 use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::rpc::agent::AgentRpcImpl;
 use crate::static_hash_cache::StaticHashCache;
@@ -56,8 +56,8 @@ pub async fn report_static(
 
         let is_allowed = check_token_limit(
             &token_or_auth,
-            vec![Scope::AgentUuid(agent_uuid)],
-            vec![Permission::StaticMonitoring(StaticMonitoring::Write)],
+            &[Scope::AgentUuid(agent_uuid)],
+            &[Permission::StaticMonitoring(StaticMonitoring::Write)],
         )
         .await?;
 
@@ -88,7 +88,13 @@ pub async fn report_static(
         let gpu_val = serde_json::to_value(&static_monitoring_data.gpu)
             .map_err(|e| NodegetError::SerializationError(format!("gpu_data: {e}")))?;
 
-        let cache_value = build_static_value(agent_uuid, timestamp, &static_monitoring_data);
+        let cache_value = build_static_value_prebuilt(
+            agent_uuid,
+            timestamp,
+            cpu_val.clone(),
+            system_val.clone(),
+            gpu_val.clone(),
+        );
         MonitoringLastCache::global()
             .ok_or_else(|| {
                 NodegetError::ConfigNotFound("MonitoringLastCache not initialized".to_owned())

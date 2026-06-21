@@ -53,7 +53,7 @@ NodeGet/
 ├── crates/
 │   ├── ng-core/           # Errors, version, utils, NameValidator, Token/Scope/Permission/Limit/TokenOrAuth, PermissionChecker
 │   ├── ng-db/             # Entities (13 tables), DB connection global, DbRegistry, db RPC
-│   │   └── migration/     #   SeaORM migrations (18 steps)
+│   │   └── migration/     #   SeaORM migrations (19 steps)
 │   ├── ng-infra/          # DbBackedCache + make_global_cache!, rpc_exec!, RpcHelper, token_identity
 │   ├── ng-config/         # ServerConfig, AgentConfig, CLI args, global config, read/edit_config RPC
 │   ├── ng-monitoring/     # Monitoring data structures, caches (UUID/Last/StaticHash), buffer, agent/agent-uuid RPC
@@ -113,9 +113,14 @@ All RPC methods return `RpcResult<Box<RawValue>>` via the `rpc_exec!` macro for 
 
 ### Caching Pattern
 
-All "load-all-from-DB" caches use `ng_infra::server::DbBackedCache` trait + `ng_infra::server::make_global_cache!`
-macro (ng-infra's `server` feature). Generates a `OnceLock` global singleton with `init()` / `global()` / `reload()`
-methods. Used by: TokenCache, CrontabCache, StaticCache, MonitoringUuidCache, MonitoringLastCache, StaticHashCache.
+"Load-all-from-DB" caches use `ng_infra::server::DbBackedCache` trait + `ng_infra::server::make_global_cache!`
+macro (defined in `crates/ng-infra/src/server.rs`; ng-infra's `server` feature). Generates a `OnceLock` global
+singleton with `init()` / `global()` / `reload()` methods. Used by: TokenCache, CrontabCache, StaticCache,
+MonitoringUuidCache.
+
+In-memory caches (`MonitoringLastCache`, `StaticHashCache`) are NOT DB-backed — they use a hand-written
+`static CACHE: OnceLock<...>` singleton instead of the macro, since they hold derived/last-seen state rather than
+a full DB table load.
 
 ### Trait Injection Pattern
 
@@ -135,7 +140,12 @@ All implementations ultimately delegate to `ng_token` functions.
 
 QuickJS runtime pool (ng-js-runtime): each registered script gets its own OS thread + QuickJS instance. Communication
 via channels (`Execute`/`Shutdown`). Bytecode caching avoids recompilation. OS thread watchdog enforces hard timeout (
-kills CPU-bound loops). Built-in APIs: `nodeget()` for internal RPC, `execSql()`, `db.*`, `fetch`, `randomUUID()`.
+kills CPU-bound loops). Built-in APIs (injected in `server_runtime.rs::init_js_runtime_globals`): `nodeget()` for
+internal RPC, `inlineCall()` for inline worker calls, `execSql()`, `getDatabaseType()`, `db.*` (create/read/update/
+remove/list/execSql), `fetch`, `randomUUID()`, `nodegetLog` (structured logging via `tracing` — **not** a browser/Node
+`console`, no format placeholders; added in c95743f), plus timer wrappers (`setTimeout`/`setInterval`/`setImmediate`).
+Web platform primitives come from `llrt_*` crates: `Buffer`/`Blob`/`atob`/`btoa`, `ReadableStream`/`WritableStream`/
+`TransformStream`, `URL`/`URLSearchParams`, `TextEncoder`/`TextDecoder`.
 
 ng-js-worker provides CRUD, execution service, and auth-gated RPC on top of the runtime pool.
 
@@ -152,13 +162,15 @@ Agent depends on `ng-core/for-agent`, `ng-config`, `ng-task`, `ng-monitoring` �
 
 ### HTTP Routes (non-RPC)
 
-| Path                         | Handler                             | Source                        |
-|------------------------------|-------------------------------------|-------------------------------|
-| `/`, `/nodeget/rpc`          | JSON-RPC + WebSocket + landing      | server binary                 |
-| `/nodeget/static/*` + WebDAV | Static file service                 | `ng_static::router::router()` |
-| `/worker-route/{name}/*`     | JS worker HTTP routes               | server binary inline          |
-| `/terminal`                  | Terminal WebSocket                  | `ng_terminal::router()`       |
-| `.fallback()`                | WS upgrade / static root / JSON-RPC | server binary                 |
+| Path                             | Handler                                      | Source                        |
+|----------------------------------|----------------------------------------------|-------------------------------|
+| `/`, `/nodeget/rpc`              | JSON-RPC + WebSocket + landing               | server binary                 |
+| `/nodeget/static/{name}/{*path}` | Static file service                          | `ng_static::router::router()` |
+| `/nodeget/static-webdav/{*path}` | WebDAV (Basic Auth)                          | `ng_static::router::router()` |
+| `/nodeget/worker-route/{name}/*` | JS worker HTTP routes (new prefix)           | server binary inline          |
+| `/worker-route/{name}/*`         | JS worker HTTP routes (legacy, transitional) | server binary inline          |
+| `/terminal`                      | Terminal WebSocket                           | `ng_terminal::router()`       |
+| `.fallback()`                    | WS upgrade / static root / JSON-RPC          | server binary                 |
 
 ### RBAC Permission Model
 

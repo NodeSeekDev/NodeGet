@@ -24,7 +24,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinSet;
 use tokio::time;
-use tokio_tungstenite::tungstenite::Message;
 
 /// `get_agent_config_safe` 的兼容别名，防止外部模块未同步更新引用。
 ///
@@ -153,21 +152,24 @@ pub async fn handle_error_message() {
                 };
                 let server_name = server.name.clone();
                 per_message_tasks.spawn(async move {
-                    let rpc = match message {
-                        Message::Text(text) => text.to_string(),
-                        _ => {
-                            return;
-                        }
-                    };
-
-                    let Ok(json) = serde_json::from_str::<JsonRpcErrorMessage>(&rpc) else {
+                    // 下行通道广播的已是解析好的 `Arc<Value>`，这里不再 from_str；
+                    // 直接读字段判断是否为错误通知（`result` 对象里带 `error_id`）。
+                    // error_id 在协议上是 101..=999 的小整数，远在 i64 范围内，
+                    // 因此用 as_i64 取值即可（serde_json::Value 不支持 as_i128）。
+                    let Some(error_id) = message
+                        .get("result")
+                        .and_then(|r| r.get("error_id"))
+                        .and_then(serde_json::Value::as_i64)
+                    else {
                         return;
                     };
+                    let error_message = message
+                        .get("result")
+                        .and_then(|r| r.get("error_message"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("<unknown>");
 
-                    warn!(
-                        "[{}] Received Error Message: {}: {}",
-                        server_name, json.result.error_id, json.result.error_message
-                    );
+                    warn!("[{server_name}] Received Error Message: {error_id}: {error_message}");
                 });
             }
 

@@ -53,7 +53,7 @@ const TASK_POOL_PER_TASK_TIMEOUT: Duration = Duration::from_secs(10);
 /// 全局网络 I/O 任务池。
 ///
 /// 使用 [`Semaphore`] 限制同时运行的网络任务数量，避免多 server
-/// 同时下发大量 ping / http_request / dns 任务时打爆 FD 或耗尽连接池。
+/// 同时下发大量 ping / `http_request` / dns 任务时打爆 FD 或耗尽连接池。
 /// 超过并发上限的任务会在 `acquire()` 处等待；等待期间不占用执行资源。
 struct TaskPool {
     semaphore: Semaphore,
@@ -99,12 +99,24 @@ impl TaskPool {
 static TASK_POOL: std::sync::LazyLock<TaskPool> =
     std::sync::LazyLock::new(|| TaskPool::new(TASK_POOL_MAX_CONCURRENCY));
 
+/// WebShell（PTY）同时活跃会话数上限。
+///
+/// WebShell 是长驻 PTY 会话，每个会话占用一个 tokio task + 一个 PTY 子进程 +
+/// per_task JoinSet 插槽。无上限时恶意/异常 server 下发大量 WebShell 任务会
+/// 在小内存机器上累积子进程与 FD，耗尽资源。用信号量限制活跃会话数，超额
+/// 直接失败上报（不排队，避免堆积）。
+const WEBSHELL_MAX_SESSIONS: usize = 8;
+
+/// 全局 WebShell 活跃会话信号量。
+static WEBSHELL_SESSION_SEMAPHORE: std::sync::LazyLock<Semaphore> =
+    std::sync::LazyLock::new(|| Semaphore::new(WEBSHELL_MAX_SESSIONS));
+
 /// 判断任务类型是否应纳入网络 I/O 任务池。
 ///
 /// 仅对涉及网络 I/O 的短任务限流；长驻会话（WebShell）、本地操作
 ///（ReadConfig/EditConfig/Version）、有独立进程管理的 Execute/SelfUpdate
 /// 不纳入池。
-fn is_pool_managed(task_type: &TaskEventType) -> bool {
+const fn is_pool_managed(task_type: &TaskEventType) -> bool {
     matches!(
         task_type,
         TaskEventType::Ping(_)
@@ -339,7 +351,7 @@ pub async fn handle_task() {
             if !server.allow_task.unwrap_or(false) {
                 return;
             }
-            let mut rx: tokio::sync::broadcast::Receiver<Message> =
+            let mut rx: tokio::sync::broadcast::Receiver<std::sync::Arc<serde_json::Value>> =
                 match subscribe_to(server.name.as_str()).await {
                     Ok(rx) => {
                         info!("[{}] Handle Task Started", server.name);
@@ -388,12 +400,10 @@ pub async fn handle_task() {
                 let server_token = server.token.clone();
                 let server_config = server.clone();
                 per_task.spawn(async move {
-                    let rpc = match message {
-                        Message::Text(text) => text.to_string(),
-                        _ => return,
-                    };
-
-                    let json_rpc: JsonRpcTask = match serde_json::from_str(&rpc) {
+                    // 下行通道广播的已是解析好的 `Arc<Value>`，这里用
+                    // `from_value`（克隆 Value 遍历）而非 `from_str`，省去重复解析。
+                    // 非任务消息（解析失败 / method 不匹配）silently 丢弃，与原逻辑一致。
+                    let json_rpc: JsonRpcTask = match serde_json::from_value((*message).clone()) {
                         Ok(json_rpc) => json_rpc,
                         Err(_) => return,
                     };
@@ -425,7 +435,15 @@ pub async fn handle_task() {
                                 server_config.ignore_cert.unwrap_or(false),
                             ));
                             if matches!(task_type, TaskEventType::WebShell(_)) {
-                                fut.await
+                                // WebShell 长驻会话上限：try_acquire 非阻塞，满则立即失败上报，
+                                // 防止恶意/异常 server 下发大量 WebShell 在小内存机器上累积
+                                // PTY 子进程。permit 持有到 fut 结束自动释放。
+                                match WEBSHELL_SESSION_SEMAPHORE.try_acquire() {
+                                    Ok(_session_permit) => fut.await,
+                                    Err(_) => Err(NodegetError::Other(format!(
+                                        "WebShell session limit reached (max {WEBSHELL_MAX_SESSIONS} concurrent sessions)"
+                                    )).into()),
+                                }
                             } else {
                                 time::timeout(TASK_MAX_TIMEOUT, fut)
                                     .await

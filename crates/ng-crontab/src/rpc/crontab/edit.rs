@@ -88,8 +88,11 @@ pub async fn edit(
 
         debug!(target: "crontab", id = updated.id, name = %name, "Crontab edited successfully");
 
-        // 刷新缓存，使调度器感知配置变更
-        if let Err(e) = CrontabCache::reload().await {
+        // 增量更新缓存（仅解析该条目），替代全量 reload 避免 O(N²) 重解析
+        if let Some(cache) = CrontabCache::global() {
+            cache.upsert(updated.clone());
+            crate::server_cron::notify_crontab_changed();
+        } else if let Err(e) = CrontabCache::reload().await {
             tracing::error!(target: "crontab", error = %e, "failed to reload crontab cache after edit");
         }
 

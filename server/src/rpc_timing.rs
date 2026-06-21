@@ -24,33 +24,6 @@ pub struct RpcTimingMiddleware<S> {
     pub level: Level,
 }
 
-/// 按指定 tracing 级别输出 RPC 耗时日志
-///
-/// - level：输出级别
-/// - method：RPC 方法名
-/// - kind：请求类型（"call" / "batch" / "notification"）
-/// - `elapsed_us`：耗时（微秒）
-/// - extra：附加信息（请求 ID、批量大小等）
-fn log_with_level(level: Level, method: &str, kind: &str, elapsed_us: u128, extra: &str) {
-    match level {
-        Level::ERROR => {
-            tracing::error!(target: "rpc", rpc_kind = kind, method = method, elapsed_us = elapsed_us, "{extra}");
-        }
-        Level::WARN => {
-            tracing::warn!(target: "rpc", rpc_kind = kind, method = method, elapsed_us = elapsed_us, "{extra}");
-        }
-        Level::INFO => {
-            tracing::info!(target: "rpc", rpc_kind = kind, method = method, elapsed_us = elapsed_us, "{extra}");
-        }
-        Level::DEBUG => {
-            tracing::debug!(target: "rpc", rpc_kind = kind, method = method, elapsed_us = elapsed_us, "{extra}");
-        }
-        Level::TRACE => {
-            tracing::trace!(target: "rpc", rpc_kind = kind, method = method, elapsed_us = elapsed_us, "{extra}");
-        }
-    }
-}
-
 impl<S> RpcServiceT for RpcTimingMiddleware<S>
 where
     S: RpcServiceT + Send + Sync + Clone + 'static,
@@ -64,6 +37,8 @@ where
         &self,
         request: Request<'a>,
     ) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
+        // method_name/id 必须在 `service.call(request)`（move request）前提取，
+        // 且 future 内仍需使用，故需 owned（受 jsonrpsee `Request<'a>` 借用约束）。
         let method_name = request.method_name().to_owned();
         let request_id = request.id().into_owned();
         let level = self.level;
@@ -73,13 +48,25 @@ where
         async move {
             let response = service.call(request).await;
             let elapsed_us = started_at.elapsed().as_micros();
-            log_with_level(
-                level,
-                &method_name,
-                "call",
-                elapsed_us,
-                &format!("rpc.call completed id={request_id:?}"),
-            );
+            // id 作为独立 tracing 字段内联，避免每请求 format! 分配 String；
+            // 字段值仅在 level 启用时才格式化（tracing 惰性求值）。
+            match level {
+                Level::ERROR => tracing::error!(
+                    target: "rpc", rpc_kind = "call", method = %method_name, elapsed_us, id = ?request_id, "rpc.call completed"
+                ),
+                Level::WARN => tracing::warn!(
+                    target: "rpc", rpc_kind = "call", method = %method_name, elapsed_us, id = ?request_id, "rpc.call completed"
+                ),
+                Level::INFO => tracing::info!(
+                    target: "rpc", rpc_kind = "call", method = %method_name, elapsed_us, id = ?request_id, "rpc.call completed"
+                ),
+                Level::DEBUG => tracing::debug!(
+                    target: "rpc", rpc_kind = "call", method = %method_name, elapsed_us, id = ?request_id, "rpc.call completed"
+                ),
+                Level::TRACE => tracing::trace!(
+                    target: "rpc", rpc_kind = "call", method = %method_name, elapsed_us, id = ?request_id, "rpc.call completed"
+                ),
+            }
             response
         }
     }
@@ -94,6 +81,7 @@ where
                 Err(_) => method_names.push("<invalid>".to_owned()),
             }
         }
+        // 方法名列表仅在 level 启用时 join（延迟到 tracing 字段求值），避免未启用时分配。
         let methods = if method_names.is_empty() {
             "<empty>".to_owned()
         } else {
@@ -107,13 +95,23 @@ where
         async move {
             let response = service.batch(batch).await;
             let elapsed_us = started_at.elapsed().as_micros();
-            log_with_level(
-                level,
-                &methods,
-                "batch",
-                elapsed_us,
-                &format!("rpc.batch completed size={batch_size}"),
-            );
+            match level {
+                Level::ERROR => tracing::error!(
+                    target: "rpc", rpc_kind = "batch", methods = %methods, elapsed_us, size = batch_size, "rpc.batch completed"
+                ),
+                Level::WARN => tracing::warn!(
+                    target: "rpc", rpc_kind = "batch", methods = %methods, elapsed_us, size = batch_size, "rpc.batch completed"
+                ),
+                Level::INFO => tracing::info!(
+                    target: "rpc", rpc_kind = "batch", methods = %methods, elapsed_us, size = batch_size, "rpc.batch completed"
+                ),
+                Level::DEBUG => tracing::debug!(
+                    target: "rpc", rpc_kind = "batch", methods = %methods, elapsed_us, size = batch_size, "rpc.batch completed"
+                ),
+                Level::TRACE => tracing::trace!(
+                    target: "rpc", rpc_kind = "batch", methods = %methods, elapsed_us, size = batch_size, "rpc.batch completed"
+                ),
+            }
             response
         }
     }
@@ -131,13 +129,23 @@ where
         async move {
             let response = service.notification(n).await;
             let elapsed_us = started_at.elapsed().as_micros();
-            log_with_level(
-                level,
-                &method_name,
-                "notification",
-                elapsed_us,
-                "rpc.notification completed",
-            );
+            match level {
+                Level::ERROR => tracing::error!(
+                    target: "rpc", rpc_kind = "notification", method = %method_name, elapsed_us, "rpc.notification completed"
+                ),
+                Level::WARN => tracing::warn!(
+                    target: "rpc", rpc_kind = "notification", method = %method_name, elapsed_us, "rpc.notification completed"
+                ),
+                Level::INFO => tracing::info!(
+                    target: "rpc", rpc_kind = "notification", method = %method_name, elapsed_us, "rpc.notification completed"
+                ),
+                Level::DEBUG => tracing::debug!(
+                    target: "rpc", rpc_kind = "notification", method = %method_name, elapsed_us, "rpc.notification completed"
+                ),
+                Level::TRACE => tracing::trace!(
+                    target: "rpc", rpc_kind = "notification", method = %method_name, elapsed_us, "rpc.notification completed"
+                ),
+            }
             response
         }
     }

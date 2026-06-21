@@ -26,6 +26,19 @@ export default [
         ]
     },
     {
+        text: '脚本 Worker',
+        items: [
+            {
+                text: 'Worker 开发',
+                link: '/dev/worker/index.md'
+            },
+            {
+                text: 'JS Worker 日志',
+                link: '/dev/worker/logging.md'
+            },
+        ]
+    },
+    {
         text: 'Bootstrap',
         items: [
             {

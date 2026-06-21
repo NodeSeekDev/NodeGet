@@ -72,7 +72,7 @@ pub async fn query_static(
                 Permission::StaticMonitoring(StaticMonitoring::Read(StaticDataQueryField::System)),
                 Permission::StaticMonitoring(StaticMonitoring::Read(StaticDataQueryField::Gpu)),
             ] {
-                if check_token_limit(&token_or_auth, scopes.clone(), vec![permission]).await? {
+                if check_token_limit(&token_or_auth, &scopes, &[permission]).await? {
                     any_allowed = true;
                     break;
                 }
@@ -85,7 +85,7 @@ pub async fn query_static(
                 .map(|field| Permission::StaticMonitoring(StaticMonitoring::Read(*field)))
                 .collect();
 
-            check_token_limit(&token_or_auth, scopes, permissions).await?
+            check_token_limit(&token_or_auth, &scopes, &permissions).await?
         };
 
         if !is_allowed {

@@ -11,16 +11,60 @@ use ng_monitoring::data_structure::{
 };
 use process::count_processes;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use sysinfo::System;
 use tokio::sync::{Mutex, MutexGuard, OnceCell};
 use virtualization_detect::detect_virtualization;
 
-/// 将 `count_processes()` 的同步 IO（Linux 下遍历 `/proc`，Windows 下 `EnumProcesses`）
-/// 卸到 tokio blocking 池，避免阻塞 runtime worker。失败时返回 0 与同步路径一致。
-async fn count_processes_async() -> u32 {
-    tokio::task::spawn_blocking(count_processes)
+/// 进程数采集间隔（秒）。
+///
+/// 进程数是缓变量，1s 与 `PROCESS_REFRESH_INTERVAL_SECS` 秒的分辨率差异对监控可忽略，
+/// 但 `/proc` 遍历（Linux）或 `EnumProcesses`（Windows）开销显著，独立低频 ticker
+/// 把它从 dynamic tick（1s）解耦，避免每秒遍历全部 PID。
+const PROCESS_REFRESH_INTERVAL_SECS: u64 = 5;
+
+/// 全局缓存的进程数，由独立后台 ticker 周期更新，dynamic tick 直接读取（无采集开销）。
+static PROCESS_COUNT_CACHE: AtomicU64 = AtomicU64::new(0);
+
+/// 保证进程数采集 ticker 只启动一次。
+static PROCESS_TICKER_STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// 启动独立后台协程周期性采集进程数（默认每 `PROCESS_REFRESH_INTERVAL_SECS` 秒）。
+///
+/// 首次立即采集填充缓存，避免 dynamic tick 读到 0。应在 agent 启动时调用一次。
+pub fn init_process_count_ticker() {
+    if PROCESS_TICKER_STARTED.set(()).is_err() {
+        return;
+    }
+    tokio::spawn(async move {
+        // 首次立即采集
+        refresh_process_count().await;
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            PROCESS_REFRESH_INTERVAL_SECS,
+        ));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await; // 消费首次立即触发
+        loop {
+            interval.tick().await;
+            refresh_process_count().await;
+        }
+    });
+}
+
+/// 采集一次进程数写入全局缓存（卸到 blocking 池）。
+async fn refresh_process_count() {
+    let count = tokio::task::spawn_blocking(count_processes)
         .await
-        .unwrap_or(0)
+        .unwrap_or(0);
+    PROCESS_COUNT_CACHE.store(u64::from(count), Ordering::Relaxed);
+}
+
+/// 读取缓存的进程数（最近一次采集值，无 `/proc` 遍历开销）。
+///
+/// 注：dynamic summary 上报的 `process_count` 是最近一次 ticker 刷新值
+/// （最多滞后 `PROCESS_REFRESH_INTERVAL_SECS` 秒），而非精确到当前秒。
+fn cached_process_count() -> u64 {
+    PROCESS_COUNT_CACHE.load(Ordering::Relaxed)
 }
 
 /// 获取精确的 OS 版本号。
@@ -218,7 +262,7 @@ impl DynamicDataFromSystem {
             DynamicSystemData {
                 boot_time: System::boot_time(),
                 uptime: System::uptime(),
-                process_count: u64::from(count_processes_async().await),
+                process_count: cached_process_count(),
             },
         )
     }
@@ -260,7 +304,7 @@ impl DynamicDataFromSystem {
 
         self.3.boot_time = System::boot_time();
         self.3.uptime = System::uptime();
-        self.3.process_count = u64::from(count_processes_async().await);
+        self.3.process_count = cached_process_count();
     }
 
     /// 异步刷新并获取动态系统数据。

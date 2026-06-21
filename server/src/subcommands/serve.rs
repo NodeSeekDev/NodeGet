@@ -169,8 +169,18 @@ pub async fn run(config: &ServerConfig) {
                             {
                                 let path = req.uri().path().to_owned();
                                 let method = req.method().clone();
-                                return serve_static_file(&model.path, &path, model.cors, &method)
-                                    .await;
+                                let inm = req
+                                    .headers()
+                                    .get(axum::http::header::IF_NONE_MATCH)
+                                    .and_then(|v| v.to_str().ok());
+                                return serve_static_file(
+                                    &model.path,
+                                    &path,
+                                    model.cors,
+                                    &method,
+                                    inm,
+                                )
+                                .await;
                             }
                             return axum::response::Response::builder()
                                 .status(StatusCode::OK)
@@ -218,8 +228,18 @@ pub async fn run(config: &ServerConfig) {
                             {
                                 let path = req.uri().path().to_owned();
                                 let method = req.method().clone();
-                                return serve_static_file(&model.path, &path, model.cors, &method)
-                                    .await;
+                                let inm = req
+                                    .headers()
+                                    .get(axum::http::header::IF_NONE_MATCH)
+                                    .and_then(|v| v.to_str().ok());
+                                return serve_static_file(
+                                    &model.path,
+                                    &path,
+                                    model.cors,
+                                    &method,
+                                    inm,
+                                )
+                                .await;
                             }
                             return axum::response::Response::builder()
                                 .status(StatusCode::OK)
@@ -314,7 +334,12 @@ pub async fn run(config: &ServerConfig) {
                     {
                         let path = req.uri().path().to_owned();
                         let method = req.method().clone();
-                        return serve_static_file(&model.path, &path, model.cors, &method).await;
+                        let inm = req
+                            .headers()
+                            .get(axum::http::header::IF_NONE_MATCH)
+                            .and_then(|v| v.to_str().ok());
+                        return serve_static_file(&model.path, &path, model.cors, &method, inm)
+                            .await;
                     }
                     rpc_service.call(req).await.unwrap_or_else(|e| {
                         tracing::error!(target: "server", error = %e, "RPC call failed");
@@ -877,6 +902,7 @@ async fn serve_static_file(
     path: &str,
     cors: bool,
     method: &axum::http::Method,
+    if_none_match: Option<&str>,
 ) -> axum::http::Response<jsonrpsee::server::HttpBody> {
     // 仅允许 GET / HEAD；其它方法（包括非 CORS 预检的 OPTIONS）返回 405
     if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
@@ -904,30 +930,62 @@ async fn serve_static_file(
         Err(e) => return build_static_error(StatusCode::BAD_REQUEST, format!("{e}"), cors),
     };
 
-    let data = match tokio::fs::read(&resolved).await {
-        Ok(d) => d,
+    // 取文件元数据生成 ETag；若目标不存在但对应目录，回退到 index.html
+    let (resolved, metadata) = match tokio::fs::metadata(&resolved).await {
+        Ok(m) => (resolved.clone(), m),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // 如果请求路径对应的是一个目录，自动返回该目录下的 index.html
             let index_html_path = resolved.join("index.html");
-            if let Ok(d) = tokio::fs::read(&index_html_path).await {
-                d
-            } else {
-                return build_static_error(StatusCode::NOT_FOUND, "File not found", cors);
+            match tokio::fs::metadata(&index_html_path).await {
+                Ok(m) => (index_html_path, m),
+                Err(_) => return build_static_error(StatusCode::NOT_FOUND, "File not found", cors),
             }
         }
         Err(e) => {
             return build_static_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to read file: {e}"),
+                format!("Failed to stat file: {e}"),
                 cors,
             );
         }
     };
 
+    // ETag = 修改时间(秒) + 字节数，弱验证器。
+    let mtime_secs = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    let etag = format!("\"{mtime_secs}-{}\"", metadata.len());
+
+    // If-None-Match 命中：返回 304，不读文件内容（省带宽 + 读盘）
+    if if_none_match.is_some_and(|h| {
+        h.trim() == "*"
+            || h.split(',').any(|part| {
+                let p = part.trim();
+                let p = p.strip_prefix("W/").unwrap_or(p);
+                p == etag
+            })
+    }) {
+        let mut builder = axum::http::Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(axum::http::header::ETAG, etag.as_str());
+        if cors {
+            builder = builder.header(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
+        }
+        return builder
+            .body(jsonrpsee::server::HttpBody::default())
+            .expect("Failed to build 304 response");
+    }
+
+    let Ok(data) = tokio::fs::read(&resolved).await else {
+        return build_static_error(StatusCode::NOT_FOUND, "File not found", cors);
+    };
+
     let content_type = guess_mime_type(&resolved);
     let mut builder = axum::http::Response::builder()
         .status(StatusCode::OK)
-        .header(axum::http::header::CONTENT_TYPE, content_type);
+        .header(axum::http::header::CONTENT_TYPE, content_type)
+        .header(axum::http::header::ETAG, etag.as_str());
 
     if cors {
         builder = builder.header(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
@@ -1028,38 +1086,42 @@ async fn cleanup_unix_socket_file(path: Option<&str>) {
 struct ServerPermissionChecker;
 
 impl ng_core::permission::permission_checker::PermissionChecker for ServerPermissionChecker {
-    fn check_token_limit(
-        &self,
-        token_or_auth: &TokenOrAuth,
-        scopes: Vec<Scope>,
-        permissions: Vec<Permission>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>> {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(
-            async move { ng_token::check_token_limit(&token_or_auth, scopes, permissions).await },
-        )
+    fn check_token_limit<'a>(
+        &'a self,
+        token_or_auth: &'a TokenOrAuth,
+        scopes: &'a [Scope],
+        permissions: &'a [Permission],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>>
+    {
+        // 直接借用参数（future 为 `+ 'a`），无需 clone 成 owned Vec，
+        // 避免每请求分配两个 Vec。`ng_token::check_token_limit` 接收 `&[T]`。
+        Box::pin(ng_token::check_token_limit(
+            token_or_auth,
+            scopes,
+            permissions,
+        ))
     }
 
-    fn check_super_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send>> {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(async move { ng_token::check_super_token(&token_or_auth).await })
+    fn check_super_token<'a>(
+        &'a self,
+        token_or_auth: &'a TokenOrAuth,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>>
+    {
+        Box::pin(ng_token::check_super_token(token_or_auth))
     }
 
-    fn get_token(
-        &self,
-        token_or_auth: &TokenOrAuth,
+    fn get_token<'a>(
+        &'a self,
+        token_or_auth: &'a TokenOrAuth,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
                     Output = anyhow::Result<ng_core::permission::data_structure::Token>,
-                > + Send,
+                > + Send
+                + 'a,
         >,
     > {
-        let token_or_auth = token_or_auth.clone();
-        Box::pin(async move { ng_token::get_token(&token_or_auth).await })
+        Box::pin(ng_token::get_token(token_or_auth))
     }
 }
 

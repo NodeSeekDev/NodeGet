@@ -66,8 +66,8 @@ pub async fn create_task(
         let is_allowed = provider
             .check_token_limit(
                 &token_or_auth,
-                vec![Scope::AgentUuid(target_uuid)],
-                vec![Permission::Task(Task::Create(task_name.to_string()))],
+                &[Scope::AgentUuid(target_uuid)],
+                &[Permission::Task(Task::Create(task_name.to_string()))],
             )
             .await?;
 

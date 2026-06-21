@@ -38,8 +38,8 @@ pub async fn get_database_type(token: String) -> RpcResult<Box<RawValue>> {
         let is_allowed = provider
             .check_token_limit(
                 &token_or_auth,
-                vec![Scope::Global],
-                vec![Permission::NodeGet(NodeGetPermission::ExecSql)],
+                &[Scope::Global],
+                &[Permission::NodeGet(NodeGetPermission::ExecSql)],
             )
             .await?;
 

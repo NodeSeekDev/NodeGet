@@ -15,6 +15,7 @@ use ng_core::permission::data_structure::{
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_core::utils::get_local_timestamp_ms_i64;
 use serde_json::Value;
+use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tracing::{debug, warn};
 
@@ -86,7 +87,7 @@ pub async fn get_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<Token> {
         token_key: cached_token.model.token_key.clone(),
         timestamp_from: cached_token.model.time_stamp_from,
         timestamp_to: cached_token.model.time_stamp_to,
-        token_limit: cached_token.parsed_limits.clone(),
+        token_limit: Arc::clone(&cached_token.parsed_limits),
         username: cached_token.model.username.clone(),
     })
 }
@@ -124,7 +125,7 @@ pub async fn get_token_by_key_or_username(identifier: &str) -> anyhow::Result<To
         token_key: cached_token.model.token_key.clone(),
         timestamp_from: cached_token.model.time_stamp_from,
         timestamp_to: cached_token.model.time_stamp_to,
-        token_limit: cached_token.parsed_limits.clone(),
+        token_limit: Arc::clone(&cached_token.parsed_limits),
         username: cached_token.model.username.clone(),
     })
 }
@@ -294,6 +295,39 @@ fn scope_matches(limit_scope: &Scope, req_scope: &Scope) -> bool {
     }
 }
 
+/// 判断给定 Limit 列表是否覆盖单个 (scope, permission) 组合（纯内存匹配，无认证/无 DB）。
+///
+/// 供已持有 token_limit 的调用方做批量权限判断，避免每个 worker/key 都重新
+/// `get_token`（重新 ct_eq 验证 + clone limits）。例如 JS worker 列表过滤、
+/// KV 全局/具体 key 的 OR 判断。
+///
+/// 复用与 [`check_token_limit`] 相同的 `scope_matches`/`permission_matches` 规则。
+///
+/// - `limits` — Token 的权限限制列表
+/// - `req_scope` — 请求所需的 Scope
+/// - `req_perm` — 请求所需的 Permission
+/// - 返回：limits 是否存在某条同时覆盖 scope 与 permission 的 Limit
+#[must_use]
+pub fn check_limits_cover(limits: &[Limit], req_scope: &Scope, req_perm: &Permission) -> bool {
+    for limit in limits {
+        let scope_covered = limit
+            .scopes
+            .iter()
+            .any(|limit_scope| scope_matches(limit_scope, req_scope));
+        if !scope_covered {
+            continue;
+        }
+        if limit
+            .permissions
+            .iter()
+            .any(|perm| permission_matches(perm, req_perm))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// 检查 Token 是否具备指定的 Scope + Permission 组合。
 ///
 /// 超级令牌直接放行；普通令牌需逐一检查每个请求的 Scope/Permission
@@ -312,8 +346,8 @@ fn scope_matches(limit_scope: &Scope, req_scope: &Scope) -> bool {
 /// 4. 任一组合未被覆盖则返回 false
 pub async fn check_token_limit(
     token_or_auth: &TokenOrAuth,
-    scopes: Vec<Scope>,
-    permissions: Vec<Permission>,
+    scopes: &[Scope],
+    permissions: &[Permission],
 ) -> anyhow::Result<bool> {
     let is_super_token = check_super_token(token_or_auth)
         .await
@@ -340,30 +374,9 @@ pub async fn check_token_limit(
         return Ok(false);
     }
 
-    for req_scope in &scopes {
-        for req_perm in &permissions {
-            let mut is_allowed = false;
-
-            for limit in &token.token_limit {
-                let scope_covered = limit
-                    .scopes
-                    .iter()
-                    .any(|limit_scope| scope_matches(limit_scope, req_scope));
-                if !scope_covered {
-                    continue;
-                }
-
-                if limit
-                    .permissions
-                    .iter()
-                    .any(|perm| permission_matches(perm, req_perm))
-                {
-                    is_allowed = true;
-                    break;
-                }
-            }
-
-            if !is_allowed {
+    for req_scope in scopes {
+        for req_perm in permissions {
+            if !check_limits_cover(&token.token_limit, req_scope, req_perm) {
                 warn!(
                     target: "auth",
                     token_key = %token.token_key,

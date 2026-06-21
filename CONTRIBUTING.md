@@ -92,7 +92,7 @@ ng-config (独立，被 server/agent 直接引用)
 | **ng-js-worker**   | JS Worker 记录管理：CRUD、执行调度、`js-worker`/`js-result` RPC                                   | `server`                            | `enqueue_defined_js_worker_run()`, `run_inline_call_and_record_result()`, `rpc_module()`                  |
 | **ng-static**      | 静态文件服务：Bucket 管理、上传/下载、WebDAV、`static-bucket`/`static-bucket-file` RPC                 | `server`                            | `StaticCache`, `router()`, `validate_name()`, `validate_sub_path()`                                       |
 | **ng-terminal**    | WebSocket 终端：会话管理、Agent 检查、`terminal` WS handler                                       | `server`                            | `router()`, `TerminalState`, `TokenPermissionChecker`                                                     |
-| **ng-migration**   | SeaORM 数据库迁移（16 步）                                                                     | 无                                   | `Migrator`                                                                                                |
+| **ng-migration**   | SeaORM 数据库迁移（19 步）                                                                     | 无                                   | `Migrator`                                                                                                |
 | **nodeget-server** | 服务端二进制：薄入口，组装所有 RPC + HTTP 路由 + 初始化注入                                                  | 无                                   | —                                                                                                         |
 | **nodeget-agent**  | Agent 二进制：监控采集、多服务器连接、任务执行                                                             | 无                                   | —                                                                                                         |
 
@@ -274,7 +274,8 @@ make_global_cache!(TokenCache, TOKEN_CACHE_GLOBAL);
 // → init() / global() / reload() 方法自动生成
 ```
 
-现有缓存：TokenCache, CrontabCache, StaticCache, MonitoringUuidCache, MonitoringLastCache, StaticHashCache。
+现有 DB-backed 缓存（使用宏）：TokenCache, CrontabCache, StaticCache, MonitoringUuidCache。
+纯内存缓存（手写 `OnceLock` 单例，非 DB 全量加载）：MonitoringLastCache, StaticHashCache。
 
 ### Serde 约定
 

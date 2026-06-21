@@ -37,8 +37,8 @@ pub async fn check_static_bucket_permission(
     let is_allowed = checker
         .check_token_limit(
             &token_or_auth,
-            vec![Scope::StaticBucket(name.to_owned())],
-            vec![Permission::StaticBucket(permission)],
+            &[Scope::StaticBucket(name.to_owned())],
+            &[Permission::StaticBucket(permission)],
         )
         .await?;
 
@@ -74,8 +74,8 @@ pub async fn check_static_bucket_file_permission(
     let is_allowed = checker
         .check_token_limit(
             &token_or_auth,
-            vec![Scope::StaticBucket(name.to_owned())],
-            vec![Permission::StaticBucketFile(permission)],
+            &[Scope::StaticBucket(name.to_owned())],
+            &[Permission::StaticBucketFile(permission)],
         )
         .await?;
 

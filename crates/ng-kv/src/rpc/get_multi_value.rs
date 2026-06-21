@@ -1,7 +1,7 @@
 //! `kv_get_multi_value` RPC 方法：批量读取多个 namespace/key 的值，支持后缀通配符
 
 use crate::auth::check_kv_read_permission_with_pattern;
-use crate::db::get_kv_store_optional;
+use crate::db::{get_kv_store_optional, get_v_from_kv_lenient};
 use crate::rpc::KvValueItem;
 use crate::rpc::NamespaceKeyItem;
 use jsonrpsee::core::RpcResult;
@@ -67,8 +67,8 @@ pub async fn get_multi_value(
         }
         debug!(target: "kv", items_count = namespace_key.len(), "get_multi_value permission checks passed");
 
-        // 按 namespace 缓存 KVStore，避免重复读取
-        let mut namespace_cache = HashMap::new();
+        // 按 namespace 缓存 KVStore（仅通配符请求会填充），避免重复读取
+        let mut namespace_cache: HashMap<String, crate::KVStore> = HashMap::new();
         let mut output = Vec::<KvValueItem>::new();
 
         // 输出顺序与请求顺序保持一致；通配符命中项按 key 字典序输出
@@ -76,6 +76,27 @@ pub async fn get_multi_value(
             let namespace = item.namespace;
             let key_pattern = item.key;
 
+            // 精确 key 快速路径：若该 namespace 未被通配符请求加载过缓存，
+            // 直接单行查询，跳过加载整个 namespace（避免 10000 key 的 namespace
+            // 仅为读 1 个精确 key 而全量加载）。若 namespace 已在缓存中（前面的
+            // 通配符请求加载），则复用缓存避免重复查询。
+            if wildcard_prefix(&key_pattern).is_none() {
+                let value = if let Some(store) = namespace_cache.get(&namespace) {
+                    store.get(&key_pattern).cloned().unwrap_or(Value::Null)
+                } else {
+                    get_v_from_kv_lenient(&namespace, &key_pattern)
+                        .await?
+                        .unwrap_or(Value::Null)
+                };
+                output.push(KvValueItem {
+                    namespace,
+                    key: key_pattern,
+                    value,
+                });
+                continue;
+            }
+
+            // 通配符路径：必须加载整个 namespace 才能按前缀过滤
             if !namespace_cache.contains_key(&namespace)
                 && let Some(kv_store) = get_kv_store_optional(namespace.clone()).await?
             {
@@ -85,42 +106,28 @@ pub async fn get_multi_value(
             let kv_store = if let Some(store) = namespace_cache.get(&namespace) {
                 store
             } else {
-                // namespace 不存在：精确 key 返回 null，通配符跳过
-                if wildcard_prefix(&key_pattern).is_none() {
-                    output.push(KvValueItem {
-                        namespace: namespace.clone(),
-                        key: key_pattern,
-                        value: Value::Null,
-                    });
-                }
+                // namespace 不存在：通配符跳过（无命中）
                 continue;
             };
 
-            if let Some(prefix) = wildcard_prefix(&key_pattern) {
-                let mut matched_keys: Vec<&str> = kv_store
-                    .inner()
-                    .keys()
-                    .filter(|k| k.starts_with(prefix))
-                    .map(String::as_str)
-                    .collect();
-                matched_keys.sort_unstable();
+            // 通配符分支（wildcard_prefix 必为 Some）
+            let prefix = wildcard_prefix(&key_pattern).expect("checked wildcard above");
+            let mut matched_keys: Vec<&str> = kv_store
+                .inner()
+                .keys()
+                .filter(|k| k.starts_with(prefix))
+                .map(String::as_str)
+                .collect();
+            matched_keys.sort_unstable();
 
-                for key in matched_keys {
-                    if let Some(value) = kv_store.get(key) {
-                        output.push(KvValueItem {
-                            namespace: namespace.clone(),
-                            key: key.to_owned(),
-                            value: value.clone(),
-                        });
-                    }
+            for key in matched_keys {
+                if let Some(value) = kv_store.get(key) {
+                    output.push(KvValueItem {
+                        namespace: namespace.clone(),
+                        key: key.to_owned(),
+                        value: value.clone(),
+                    });
                 }
-            } else {
-                let value = kv_store.get(&key_pattern).cloned().unwrap_or(Value::Null);
-                output.push(KvValueItem {
-                    namespace: namespace.clone(),
-                    key: key_pattern,
-                    value,
-                });
             }
         }
 

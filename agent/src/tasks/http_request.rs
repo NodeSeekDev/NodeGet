@@ -31,6 +31,13 @@ static IP_BOUND_CLIENTS: std::sync::LazyLock<std::sync::Mutex<HashMap<IpAddr, Cl
 const IP_BOUND_CLIENTS_MAX_CAPACITY: usize = 32;
 /// HTTP 请求超时时间，30 秒。
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// HTTP 响应体最大捕获字节数（64 MiB）。
+///
+/// reqwest 0.13 的 `ClientBuilder` 没有 `max_response_body_size`，`bytes()` 会把
+/// 整个响应体一次性读进内存。这里用 `chunk()` 流式累计，超过上限立即停止并报错，
+/// 防止恶意/异常对端返回超大响应导致 agent OOM。`HTTP_REQUEST_TIMEOUT` 只限时长不限体积。
+/// （与 `execute.rs` 的 `max_capture` 同类防御。）
+const HTTP_RESPONSE_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 /// 确保 rustls aws-lc-rs crypto provider 已安装（幂等）。
 fn ensure_rustls_aws_lc_rs_provider() {
@@ -136,7 +143,7 @@ pub async fn execute_http_request(task: HttpRequestTask) -> Result<HttpRequestTa
         (None, None) => {}
     }
 
-    let resp = req.send().await.map_err(|e| {
+    let mut resp = req.send().await.map_err(|e| {
         warn!(target: "task", "HTTP 请求发送失败: url={url_str}, error={e}");
         NodegetError::Other(format!("HTTP request failed: {e}"))
     })?;
@@ -157,11 +164,36 @@ pub async fn execute_http_request(task: HttpRequestTask) -> Result<HttpRequestTa
         })
         .collect();
 
-    let bytes = resp.bytes().await.map_err(|e| {
-        warn!(target: "task", "HTTP 响应体读取失败: error={e}");
-        NodegetError::Other(format!("Failed to read HTTP response body: {e}"))
-    })?;
-    let (body, body_base64) = String::from_utf8(bytes.to_vec()).map_or_else(
+    // 流式读取响应体，超 HTTP_RESPONSE_MAX_BYTES 即报错，避免对端返回超大响应 OOM。
+    // 用 `chunk()` 而非 `bytes()`：后者无界缓冲，前者可逐块累计并在超限时中断。
+    let limit = HTTP_RESPONSE_MAX_BYTES;
+    let mut bytes = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                let new_len = bytes.len().saturating_add(chunk.len());
+                if new_len > limit {
+                    warn!(
+                        target: "task",
+                        "HTTP 响应体超过上限: url={url_str}, limit={limit} bytes, got>={new_len}",
+                    );
+                    return Err(NodegetError::Other(format!(
+                        "HTTP response body too large: exceeds {limit} bytes"
+                    ))
+                    .into());
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(e) => {
+                warn!(target: "task", "HTTP 响应体读取失败: error={e}");
+                return Err(
+                    NodegetError::Other(format!("Failed to read HTTP response body: {e}")).into(),
+                );
+            }
+        }
+    }
+    let (body, body_base64) = String::from_utf8(bytes.clone()).map_or_else(
         |_| (None, Some(BASE64_STANDARD.encode(&bytes))),
         |s| (Some(s), None),
     );

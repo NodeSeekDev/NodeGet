@@ -30,8 +30,9 @@ const AUTH_FAILED_MESSAGE: &str = "Invalid credentials";
 pub struct CachedToken {
     /// 数据库中的 Token 原始模型
     pub model: Arc<token::Model>,
-    /// 预解析的权限限制列表，避免每次认证时重复反序列化
-    pub parsed_limits: Vec<Limit>,
+    /// 预解析的权限限制列表，避免每次认证时重复反序列化。
+    /// 用 `Arc` 包裹，使 `get_token` 返回 `Token` 时可零分配 `Arc::clone` 而非深拷贝 `Vec`。
+    pub parsed_limits: Arc<Vec<Limit>>,
     /// token_secret 的 SHA256 原始摘要（32 字节），用于常量时间比较
     pub token_hash_bytes: [u8; 32],
     /// password 的 SHA256 原始摘要，仅用户名/密码认证时使用；无密码则为 None
@@ -177,8 +178,8 @@ impl TokenCache {
 
         for model in all_tokens {
             // 预解析权限列表；解析失败时记录警告并使用空列表，避免因脏数据导致整个缓存不可用
-            let parsed_limits = parse_token_limit_with_compat(model.token_limit.clone())
-                .unwrap_or_else(|e| {
+            let parsed_limits = Arc::new(
+                parse_token_limit_with_compat(model.token_limit.clone()).unwrap_or_else(|e| {
                     tracing::warn!(
                         target: "token",
                         token_key = %model.token_key,
@@ -186,7 +187,8 @@ impl TokenCache {
                         "failed to pre-parse token_limit, using empty"
                     );
                     Vec::new()
-                });
+                }),
+            );
 
             // hex → 原始字节；转换失败时填零而非跳过，确保后续常量时间比较不会误匹配
             let token_hash_bytes = hex_to_bytes(&model.token_hash).unwrap_or([0u8; 32]);
@@ -300,7 +302,15 @@ impl TokenCache {
                     if hash_match {
                         return Ok((Arc::clone(&super_entry), true));
                     }
-                    // key 匹配超级令牌但 secret 不匹配，继续检查普通令牌
+                    // key 命中超级令牌但 secret 不匹配：key 全局唯一，不可能在 by_key 中
+                    // 命中别的普通令牌（超级令牌 id=1 也被插入 by_key，会再次命中自身并重复
+                    // 一次必然失败的 SHA256）。直接返回失败，避免冗余计算——且使该失败
+                    // 路径与"普通令牌 secret 错"路径的 SHA256 次数一致（各 1 次），改善
+                    // 常量时间性（ct_eq 本身常量时间，不泄露 key 是否为超级令牌）。
+                    warn!(target: "auth", "auth failed: super token secret mismatch");
+                    return Err(
+                        NodegetError::PermissionDenied(AUTH_FAILED_MESSAGE.to_owned()).into(),
+                    );
                 }
 
                 // 在 by_key 索引中查找普通令牌（需主 RwLock 读锁）
@@ -327,15 +337,25 @@ impl TokenCache {
                     .username
                     .as_deref()
                     .is_some_and(|u| u.as_bytes().ct_eq(username.as_bytes()).into());
-                if username_match && let Some(stored) = &super_entry.password_hash_bytes {
-                    let computed = hash_to_bytes(password);
-                    if bool::from(computed.ct_eq(stored)) {
-                        debug!(target: "auth", is_super = true, "authenticate: super token (basic auth)");
-                        return Ok((Arc::clone(&super_entry), true));
+                if username_match {
+                    // username 命中超级令牌：username 全局唯一，不可能在 by_username 命中别的
+                    // 普通令牌（超级令牌 id=1 也被插入 by_username）。直接判定，避免 fallthrough
+                    // 再次命中自身并重复一次必然失败的哈希比较。
+                    if let Some(stored) = &super_entry.password_hash_bytes {
+                        let computed = hash_to_bytes(password);
+                        if bool::from(computed.ct_eq(stored)) {
+                            debug!(target: "auth", is_super = true, "authenticate: super token (basic auth)");
+                            return Ok((Arc::clone(&super_entry), true));
+                        }
+                        debug!(target: "auth", is_super = false, "super token check (basic auth), password mismatch");
+                    } else {
+                        debug!(target: "auth", is_super = false, "super token has no password set");
                     }
-                    debug!(target: "auth", is_super = false, "super token check (basic auth), password mismatch");
+                    warn!(target: "auth", "auth failed: super token credential mismatch");
+                    return Err(
+                        NodegetError::PermissionDenied(AUTH_FAILED_MESSAGE.to_owned()).into(),
+                    );
                 }
-                // username 匹配超级令牌但 password 不匹配（或未设置密码），继续检查普通令牌
 
                 // 在 by_username 索引中查找普通令牌（需主 RwLock 读锁）
                 let inner = recover_read(&self.inner);

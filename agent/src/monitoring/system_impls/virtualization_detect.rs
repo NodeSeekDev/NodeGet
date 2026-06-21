@@ -4,7 +4,7 @@
 pub async fn detect_virtualization() -> String {
     use vmaware::VM;
     let vm = VM::brand(None);
-    if vm == String::from("Unknown") {
+    if vm == "Unknown" {
         "Physical".to_string()
     } else {
         vm

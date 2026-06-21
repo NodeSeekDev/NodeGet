@@ -27,9 +27,15 @@ fn get_db_conn() -> Result<&'static sea_orm::DatabaseConnection> {
 }
 
 /// 检查命名空间是否存在
+///
+/// 仅 SELECT `namespace` 列（而非整行），避免在仅判断存在性时
+/// 把可能很大的 `value` JSON 列一起加载进内存。
 async fn namespace_exists(db: &sea_orm::DatabaseConnection, namespace: &str) -> Result<bool> {
     let exists = kv::Entity::find()
         .filter(kv::Column::Namespace.eq(namespace))
+        .select_only()
+        .column(kv::Column::Namespace)
+        .into_tuple::<String>()
         .one(db)
         .await?
         .is_some();
@@ -80,6 +86,31 @@ pub async fn create_kv(namespace: String) -> Result<KVStore> {
 
     debug!(target: "kv", namespace = %namespace_name, "namespace created");
     Ok(KVStore::new(namespace_name))
+}
+
+/// 从 KV 存储中获取指定 key 的值（宽松版，namespace/key 不存在均返回 None）。
+///
+/// 与 [`get_v_from_kv`] 区别：不调用 `ensure_namespace_exists`，namespace 不存在
+/// 时直接返回 `None`（而非报错）。供 `get_multi_value` 精确 key 快速路径使用，
+/// 避免 namespace 缺失时返回错误（与通配符路径的 null 语义一致），且单行查询
+/// 不加载整个 namespace。
+///
+/// # 参数
+/// * `namespace` - 命名空间名称
+/// * `key` - 要查找的键
+///
+/// # 返回值
+/// 命名空间或 key 不存在返回 `None`，存在返回对应值
+pub async fn get_v_from_kv_lenient(namespace: &str, key: &str) -> Result<Option<Value>> {
+    let db = get_db_conn()?;
+    let model = kv::Entity::find()
+        .filter(kv::Column::Namespace.eq(namespace))
+        .filter(kv::Column::Key.eq(key))
+        .one(db)
+        .await?;
+    let found = model.is_some();
+    debug!(target: "kv", namespace = %namespace, key = %key, found, "get_v_from_kv_lenient completed");
+    Ok(model.map(|record| record.value))
 }
 
 /// 从 KV 存储中获取指定 key 的值
