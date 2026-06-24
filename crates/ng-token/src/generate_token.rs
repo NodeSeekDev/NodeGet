@@ -69,6 +69,19 @@ pub async fn generate_and_store_token(
         .into());
     }
 
+    // username 不能含 `:` / `|`：TokenOrAuth::from_full_token 用这两个字符分隔
+    // (冒号优先 Token 模式,管道 Auth 模式)。含分隔符的 username 会导致
+    // `username|password` 登录时被误解析为 Token 模式而认证失败(非安全漏洞,
+    // 但用户无法正常登录)。fail-fast 在创建时拒绝。
+    if let Some(ref username) = username
+        && (username.contains(':') || username.contains('|'))
+    {
+        return Err(NodegetError::InvalidInput(
+            "Username cannot contain ':' or '|' characters".to_owned(),
+        )
+        .into());
+    }
+
     let has_credentials = username.is_some();
     let token_key = generate_random_string(16);
     let token_secret = generate_random_string(32);

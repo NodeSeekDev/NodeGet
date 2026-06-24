@@ -246,7 +246,8 @@ async fn serve_static_file(
     if if_none_match_is_match(if_none_match, &etag) {
         let mut builder = axum::http::Response::builder()
             .status(StatusCode::NOT_MODIFIED)
-            .header(axum::http::header::ETAG, etag.as_str());
+            .header(axum::http::header::ETAG, etag.as_str())
+            .header("X-Content-Type-Options", "nosniff");
         if cors {
             builder = builder.header(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
         }
@@ -266,7 +267,10 @@ async fn serve_static_file(
     let mut builder = axum::http::Response::builder()
         .status(StatusCode::OK)
         .header(axum::http::header::CONTENT_TYPE, content_type)
-        .header(axum::http::header::ETAG, etag.as_str());
+        .header(axum::http::header::ETAG, etag.as_str())
+        // 防止浏览器对响应做 MIME 嗅探,强制按 Content-Type 解释(配合用户上传内容,
+        // 避免 octet-stream 被嗅探成可执行类型)。
+        .header("X-Content-Type-Options", "nosniff");
 
     if cors {
         builder = builder.header(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");

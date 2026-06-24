@@ -175,7 +175,7 @@ SelfUpdate 任务触发 Agent 从 `https://install.nodeget.com/` 下载对应架
 - Unix 平台：使用 execv 替换当前进程（不创建新进程）
 - Windows 平台：拉起新进程后自身退出
 
-错误示例 — Agent 未注册:
+错误示例 — Agent 未注册 / 任务队列已满:
 
 ```json
 {
@@ -183,6 +183,16 @@ SelfUpdate 任务触发 Agent 从 `https://install.nodeget.com/` 下载对应架
   "error_message": "Error sending task event: Agent AGENT_UUID_HERE is not connected"
 }
 ```
+
+```json
+{
+  "error_id": 104,
+  "error_message": "Error sending task event: Agent AGENT_UUID_HERE task queue is full"
+}
+```
+
+> 任务下发采用有界队列（容量 32）。Agent 离线时返回 `not connected`;Agent 在线但任务积压队列已满时返回 `task queue is full`
+> （不再阻塞等待排空,调用方可稍后重试）。两者错误码均为 `104`。
 
 ## Create Task Blocking
 

@@ -21,6 +21,9 @@
 - `globalThis.inlineCall(js_worker_name, params, timeout_sec?)` — 调用其他 JS Worker。`timeout_sec`
   为可选的软超时（秒，正有限数），最终生效超时取 `timeout_sec` 与目标 Worker `max_run_time` 中较小者；不传时仅受目标 Worker
   `max_run_time` 约束。
+    - **递归深度上限**:`inlineCall` 嵌套层数最多 **10 层**(顶层 worker 为 depth 0,每层 `inlineCall` +1)。超过上限会抛出
+      `inlineCall recursion depth limit reached` 异常。该限制同时覆盖自递归(A→A)与互递归(A↔B),用于防止无限递归堆叠阻塞线程。
+      若业务需要更深的调用链,建议改用 `nodeget()` RPC 解耦,或拆分为多个独立 worker。
 - `globalThis.execSql(token, sql, params?)` — 执行原始 SQL 语句，参数化查询，返回 JSON 格式结果。
   需要 `NodeGet::ExecSql` 权限。详见下方说明。
 - `globalThis.getDatabaseType(token)` — 获取当前节点使用的数据库类型（`sqlite`/`postgres`）。

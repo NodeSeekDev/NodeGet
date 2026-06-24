@@ -143,7 +143,8 @@ All implementations ultimately delegate to `ng_token` functions.
 QuickJS runtime pool (ng-js-runtime): each registered script gets its own OS thread + QuickJS instance. Communication
 via channels (`Execute`/`Shutdown`). Bytecode caching avoids recompilation. OS thread watchdog enforces hard timeout (
 kills CPU-bound loops). Built-in APIs (injected in `server_runtime.rs::init_js_runtime_globals`): `nodeget()` for
-internal RPC, `inlineCall()` for inline worker calls, `execSql()`, `getDatabaseType()`, `db.*` (create/read/update/
+internal RPC, `inlineCall()` for inline worker calls (max nesting depth **10**, enforced via
+`__nodeget_inline_depth` + JS/Rust dual check), `execSql()`, `getDatabaseType()`, `db.*` (create/read/update/
 remove/list/execSql), `fetch`, `randomUUID()`, `nodegetLog` (structured logging via `tracing` — **not** a browser/Node
 `console`, no format placeholders; added in c95743f), plus timer wrappers (`setTimeout`/`setInterval`/`setImmediate`).
 Web platform primitives come from `llrt_*` crates: `Buffer`/`Blob`/`atob`/`btoa`, `ReadableStream`/`WritableStream`/
