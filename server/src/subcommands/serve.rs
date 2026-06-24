@@ -1164,6 +1164,7 @@ impl ng_js_runtime::js_worker_service::JsWorkerService for JsWorkerServiceImpl {
         params_json: String,
         timeout_sec: Option<f64>,
         inline_caller: Option<String>,
+        inline_depth: u32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>> {
         Box::pin(async move {
             ng_js_worker::service::run_inline_call_and_record_result(
@@ -1171,6 +1172,7 @@ impl ng_js_runtime::js_worker_service::JsWorkerService for JsWorkerServiceImpl {
                 params_json,
                 timeout_sec,
                 inline_caller,
+                inline_depth,
             )
             .await
         })

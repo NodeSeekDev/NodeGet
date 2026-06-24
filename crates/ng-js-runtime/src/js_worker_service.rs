@@ -26,6 +26,7 @@ pub trait JsWorkerService: Send + Sync + 'static {
         params_json: String,
         timeout_sec: Option<f64>,
         inline_caller: Option<String>,
+        inline_depth: u32,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send>>;
 
     /// 获取 RPC Module 的克隆，用于分发内部 JSON-RPC 请求。

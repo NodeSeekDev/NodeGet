@@ -31,8 +31,9 @@ pub async fn js_inline_call(
     params_json: String,
     timeout_sec: Option<f64>,
     inline_caller: Option<String>,
+    inline_depth: u32,
 ) -> StdResult<String, Error> {
-    debug!(target: "js_runtime", js_worker_name = %js_worker_name, "executing inline call");
+    debug!(target: "js_runtime", js_worker_name = %js_worker_name, inline_depth, "executing inline call");
 
     let result_json = spawn_on_server_runtime(async move {
         get_js_worker_service()
@@ -42,6 +43,7 @@ pub async fn js_inline_call(
                 params_json,
                 timeout_sec,
                 inline_caller,
+                inline_depth,
             )
             .await
             .map_err(|e| e.to_string())

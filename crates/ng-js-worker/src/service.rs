@@ -243,7 +243,26 @@ pub async fn run_inline_call_and_record_result(
     params_json: String,
     timeout_sec: Option<f64>,
     inline_caller: Option<String>,
+    inline_depth: u32,
 ) -> anyhow::Result<String> {
+    /// inlineCall 递归深度上限：worker 自递归/互递归每层 +1，超过即拒绝，
+    /// 避免无限递归堆叠 spawn_blocking 线程挤占阻塞池。
+    /// 与 server_runtime.rs 的 JS 侧 MAX_INLINE_DEPTH 保持一致。
+    const MAX_INLINE_DEPTH: u32 = 10;
+    if inline_depth > MAX_INLINE_DEPTH {
+        warn!(
+            target: "js_worker",
+            script_name = %js_script_name,
+            inline_caller = ?inline_caller,
+            inline_depth,
+            "inlineCall recursion depth limit reached"
+        );
+        return Err(NodegetError::Other(format!(
+            "inlineCall recursion depth limit reached (max {MAX_INLINE_DEPTH}): attempted to call '{js_script_name}' at depth {inline_depth}"
+        ))
+        .into());
+    }
+
     let script_name = js_script_name.trim().to_owned();
     if script_name.is_empty() {
         warn!(target: "js_worker", "验证失败: js_worker_name 为空");
@@ -315,6 +334,7 @@ pub async fn run_inline_call_and_record_result(
             env,
             Some(target_script_name),
             inline_caller,
+            inline_depth,
             timeout_duration,
             limits,
         )

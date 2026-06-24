@@ -655,6 +655,7 @@ async fn execute_on_worker(
             env,
             Some(script_name),
             None,
+            0,
         )?;
 
         let invoke_promise: Promise<'_> =
