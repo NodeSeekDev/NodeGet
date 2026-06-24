@@ -99,15 +99,15 @@ impl TaskPool {
 static TASK_POOL: std::sync::LazyLock<TaskPool> =
     std::sync::LazyLock::new(|| TaskPool::new(TASK_POOL_MAX_CONCURRENCY));
 
-/// WebShell（PTY）同时活跃会话数上限。
+/// `WebShell`（PTY）同时活跃会话数上限。
 ///
-/// WebShell 是长驻 PTY 会话，每个会话占用一个 tokio task + 一个 PTY 子进程 +
-/// per_task JoinSet 插槽。无上限时恶意/异常 server 下发大量 WebShell 任务会
+/// `WebShell` 是长驻 PTY 会话，每个会话占用一个 tokio task + 一个 PTY 子进程 +
+/// `per_task` `JoinSet` 插槽。无上限时恶意/异常 server 下发大量 `WebShell` 任务会
 /// 在小内存机器上累积子进程与 FD，耗尽资源。用信号量限制活跃会话数，超额
 /// 直接失败上报（不排队，避免堆积）。
 const WEBSHELL_MAX_SESSIONS: usize = 8;
 
-/// 全局 WebShell 活跃会话信号量。
+/// 全局 `WebShell` 活跃会话信号量。
 static WEBSHELL_SESSION_SEMAPHORE: std::sync::LazyLock<Semaphore> =
     std::sync::LazyLock::new(|| Semaphore::new(WEBSHELL_MAX_SESSIONS));
 

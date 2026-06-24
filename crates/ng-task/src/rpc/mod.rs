@@ -28,6 +28,14 @@ use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{Instrument, debug, trace, warn};
 use uuid::Uuid;
 
+/// 转义 SQL LIKE 特殊字符，防止注入攻击。
+///
+/// SQL LIKE 中 `%` 匹配任意字符序列，`_` 匹配单个字符，这些字符需要转义才能在
+/// JSON 文本搜索中进行精确匹配。配合 `.escape('\\')` 使用。
+pub(crate) fn escape_like_pattern(pattern: &str) -> String {
+    pattern.replace('\\', r"\\").replace('%', r"\%").replace('_', r"\_")
+}
+
 mod create_task;
 mod create_task_blocking;
 mod delete;

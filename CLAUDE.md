@@ -79,7 +79,9 @@ client. Custom jsonrpsee fork (`infinitefield/jsonrpsee`) uses `_` as namespace 
 file; agent receives `EditConfig` task then restarts runtime tasks.
 
 **Agent multi-server**: One agent connects to N servers simultaneously. Each server gets an independent
-`connection_manager` coroutine with exponential-backoff reconnect.
+`connection_manager` coroutine. Reconnect backoff is two-stage: the WebSocket handshake
+(`connect_with_retry`) uses exponential backoff (1s→2s→…→60s cap) with ±20% jitter; after an established
+connection drops, the main loop sleeps a fixed 3s before retrying.
 
 ### Data Flow
 
@@ -177,6 +179,12 @@ Agent depends on `ng-core/for-agent`, `ng-config`, `ng-task`, `ng-monitoring` �
 Every RPC method authenticates via `TokenOrAuth` (key:secret token OR username|password). Tokens carry a `Vec<Limit>`
 specifying scope+permission constraints. Super-token (id=1, constant-time comparison) bypasses all limits. Token auth
 uses SHA256 with "NODEGET" salt.
+
+**`NodeGet::ExecSql` is intentionally a full-trust permission** — it runs arbitrary SQL on the main DB. On the SQLite
+backend, `ATTACH DATABASE 'any/path'` escalates this to arbitrary filesystem read/write under the server uid (creating/
+overwriting files, reading other `.db` files, bypassing the `db_registry` path constraints). This is a documented
+feature, not a bug; see `docs/api/nodeget/crud.md#权限要求`. Grant only to fully-trusted operators, run the server
+under a least-privilege uid.
 
 ## Key Conventions
 

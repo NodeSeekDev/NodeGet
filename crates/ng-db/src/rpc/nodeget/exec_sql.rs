@@ -1,4 +1,12 @@
 //! `nodeget-server::exec_sql` RPC 实现 — 在主库上执行 SQL
+//!
+//! # 权限范围（重要）
+//!
+//! `NodeGet::ExecSql` 是**完全信任权限**，允许在主库执行任意 SQL——这是设计意图，不是缺陷。
+//! `SQLite` 后端下，`ATTACH DATABASE '任意路径' AS x; ...` 可在 server 进程 uid 可写的任意文件路径
+//! 创建/覆盖文件、读取其他 `.db` 库，即等价于“server uid 的文件系统读写权限”，远超“读写主库数据”。
+//! 这是 `SQLite` 的固有特性（无独立权限模型），不可关闭。`PostgreSQL` 后端受其自身权限模型约束，风险面大幅收敛。
+//! 授予建议：仅给完全可信的运维/汇聚端，server 用最小权限 uid 运行。详见 `docs/api/nodeget/crud.md`。
 
 use crate::db_registry::{json_to_sea_value, row_to_json};
 use crate::rpc::{to_rpc_error, token_identity};
@@ -12,6 +20,8 @@ use serde_json::value::RawValue;
 use tracing::{debug, warn};
 
 /// 在主库上执行 SQL 语句，需要 `NodeGet::ExecSql` 权限（Global 作用域）
+///
+/// **完全信任权限**：`SQLite` 后端下 `ATTACH DATABASE` 可写任意路径文件（见模块级文档）。
 ///
 /// - `token` — 认证 Token
 /// - `sql` — SQL 语句

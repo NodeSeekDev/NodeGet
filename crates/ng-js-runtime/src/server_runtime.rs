@@ -298,6 +298,7 @@ pub fn format_js_error(err: &Error) -> String {
 ///
 /// 输出 target 固定为 `js_worker`，`worker` 与 `namespace` 作为结构化字段附加，
 /// 方便通过 tracing subscriber 统一收集，也避免与 `js_runtime` 内部日志混杂。
+#[allow(clippy::needless_pass_by_value)] // 参数按值是 rquickjs `Func::from` 绑定的自然签名(JS 值转换出 owned String),改引用会破坏自动参数绑定
 pub(crate) fn js_log_emit(
     level: String,
     worker: Option<String>,

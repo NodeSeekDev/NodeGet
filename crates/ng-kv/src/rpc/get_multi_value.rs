@@ -55,14 +55,8 @@ pub async fn get_multi_value(
             );
         }
 
-        // 先做完整权限校验：任一项无权限则直接拒绝
+        // 先做完整权限校验：任一项无权限则直接拒绝（namespace/key 合法性由 check 内的 validate_* 保证）
         for item in &namespace_key {
-            if item.namespace.is_empty() {
-                warn!(target: "kv", "验证失败: namespace 为空");
-                return Err(
-                    NodegetError::InvalidInput("namespace cannot be empty".to_owned()).into(),
-                );
-            }
             check_kv_read_permission_with_pattern(&token, &item.namespace, &item.key).await?;
         }
         debug!(target: "kv", items_count = namespace_key.len(), "get_multi_value permission checks passed");

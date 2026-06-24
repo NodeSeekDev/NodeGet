@@ -37,14 +37,18 @@ pub fn scopes_from_conditions(conditions: &[QueryCondition]) -> Vec<Scope> {
 /// 从查询条件中提取 Limit 值和 Last 标记。
 ///
 /// - 返回值 — `(limit_count, is_last)`
+///
+/// Limit 会被钳制到 `MAX_LIMIT`(与 `crontab_result`/`js_result`/`task.query` 对齐),
+/// 避免 select 出海量 id 致 `Vec<i64>` OOM。
 pub fn extract_limit_and_last(conditions: &[QueryCondition]) -> (Option<u64>, bool) {
+    const MAX_LIMIT: u64 = 10_000;
     let mut limit_count = None;
     let mut is_last = false;
 
     for cond in conditions {
         match cond {
             QueryCondition::Limit(n) => {
-                limit_count = Some(*n);
+                limit_count = Some(std::cmp::min(*n, MAX_LIMIT));
             }
             QueryCondition::Last => {
                 is_last = true;

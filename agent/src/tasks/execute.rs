@@ -79,7 +79,7 @@ pub async fn execute_command(task: ExecuteTask) -> Result<String> {
     // 缓冲（典型 64KiB）填满后 child 的 write() 阻塞，导致 child.wait() 永不返回、
     // 任务卡到 EXECUTE_TIMEOUT 才以"超时"错误结束——这会让 head/tail 截断逻辑
     //（下方 116 行起）在输出充足的常见命令上完全失效。drain 保证 child 能正常
-    // 退出，截断逻辑正常生效。max_chars 默认 5000，drain 的总量受 EXECUTE_TIMEOUT
+    // 退出，截断逻辑正常生效。max_chars 默认 10000（`DEFAULT_EXEC_MAX_CHARACTER`），drain 的总量受 EXECUTE_TIMEOUT
     //（60s）约束，不会无限。
     let max_capture = u64::try_from(max_chars).unwrap_or(u64::MAX);
 

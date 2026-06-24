@@ -28,6 +28,31 @@ pub enum KvNamespaceListPermission {
     Scoped(HashSet<String>),
 }
 
+/// 校验 namespace 非空且不含通配符 `*`
+///
+/// 与 `validate_key` 一致:`*` 是 KV 权限模型中的全局通配符,namespace 作为精确标识不应包含;
+/// 空 namespace 无业务意义且与各 RPC 行为不一致(仅 `get_multi_value` 曾拒绝),统一拒绝。
+///
+/// # 参数
+/// * `namespace` - 要检查的 namespace
+///
+/// # 返回值
+/// 合法返回 Ok(()),否则返回错误
+pub fn validate_namespace(namespace: &str) -> anyhow::Result<()> {
+    if namespace.is_empty() {
+        return Err(
+            NodegetError::InvalidInput("Namespace cannot be empty".to_owned()).into(),
+        );
+    }
+    if namespace.contains('*') {
+        warn!(target: "kv", namespace = %namespace, "namespace validation failed: contains '*'");
+        return Err(
+            NodegetError::InvalidInput("Namespace cannot contain '*' character".to_owned()).into(),
+        );
+    }
+    Ok(())
+}
+
 /// 检查 key 是否包含非法字符（如 *）
 ///
 /// # 参数
@@ -149,7 +174,8 @@ pub async fn check_kv_read_permission(
     key: &str,
 ) -> anyhow::Result<()> {
     trace!(target: "kv", namespace = %namespace, key = %key, "checking read permission");
-    // 验证 key 不包含非法字符
+    // 验证 namespace 与 key 合法
+    validate_namespace(namespace)?;
     validate_key(key)?;
 
     let token_or_auth = TokenOrAuth::from_full_token(token)
@@ -202,6 +228,7 @@ pub async fn check_kv_read_permission_with_pattern(
     key_pattern: &str,
 ) -> anyhow::Result<()> {
     trace!(target: "kv", namespace = %namespace, key_pattern = %key_pattern, "checking read permission with pattern");
+    validate_namespace(namespace)?;
     validate_key_pattern(key_pattern)?;
 
     let token_or_auth = TokenOrAuth::from_full_token(token)
@@ -253,7 +280,8 @@ pub async fn check_kv_write_permission(
     key: &str,
 ) -> anyhow::Result<()> {
     trace!(target: "kv", namespace = %namespace, key = %key, "checking write permission");
-    // 验证 key 不包含非法字符
+    // 验证 namespace 与 key 合法
+    validate_namespace(namespace)?;
     validate_key(key)?;
 
     let token_or_auth = TokenOrAuth::from_full_token(token)
@@ -305,7 +333,8 @@ pub async fn check_kv_delete_permission(
     key: &str,
 ) -> anyhow::Result<()> {
     trace!(target: "kv", namespace = %namespace, key = %key, "checking delete permission");
-    // 验证 key 不包含非法字符
+    // 验证 namespace 与 key 合法
+    validate_namespace(namespace)?;
     validate_key(key)?;
 
     let token_or_auth = TokenOrAuth::from_full_token(token)
@@ -350,6 +379,7 @@ pub async fn check_kv_delete_namespace_permission(
     namespace: &str,
 ) -> anyhow::Result<()> {
     trace!(target: "kv", namespace = %namespace, "checking delete namespace permission");
+    validate_namespace(namespace)?;
 
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
@@ -395,6 +425,7 @@ pub async fn check_kv_delete_namespace_permission(
 /// 如果有权限返回 Ok(()，否则返回错误
 pub async fn check_kv_list_keys_permission(token: &str, namespace: &str) -> anyhow::Result<()> {
     trace!(target: "kv", namespace = %namespace, "checking list keys permission");
+    validate_namespace(namespace)?;
     let token_or_auth = TokenOrAuth::from_full_token(token)
         .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 

@@ -4,7 +4,7 @@
 
 ```toml
 # 日志等级，可选，可选 trace / debug / info / warn / error
-# 未设置时 Agent 不会因此报错退出，默认值取决于日志初始化逻辑
+# 必填：未设置时 Agent 启动会报错退出（Parse error: log_level is not set）
 # 如果你正在测试或遇到问题，请至少选择 debug
 log_level = "info"
 
