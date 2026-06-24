@@ -141,6 +141,9 @@ impl DbRegistryManager {
             match Database::connect(&db_url).await {
                 Ok(conn) => {
                     if conn.get_database_backend() == sea_orm::DatabaseBackend::Sqlite {
+                        // auto_vacuum 必须在库为空（建库阶段）设置才生效，老库会被忽略。
+                        // 新子库已在 create_conn 时设过；此处兜底，确保任何首次连接都尝试设一次。
+                        let _ = conn.execute_unprepared("PRAGMA auto_vacuum = INCREMENTAL;").await;
                         let _ = conn.execute_unprepared("PRAGMA journal_mode=WAL;").await;
                         let _ = conn.execute_unprepared("PRAGMA synchronous=NORMAL;").await;
                         let _ = conn.execute_unprepared("PRAGMA busy_timeout = 5000;").await;
@@ -312,6 +315,11 @@ impl DbRegistryManager {
         );
         let conn = Database::connect(&db_url).await?;
         if conn.get_database_backend() == sea_orm::DatabaseBackend::Sqlite {
+            // auto_vacuum 必须在库为空（建库阶段）设置才生效，老库会被忽略。
+            // 故在其余 PRAGMA 之前抢先设置，确保新子库建库即启用 INCREMENTAL。
+            let _ = conn
+                .execute_unprepared("PRAGMA auto_vacuum = INCREMENTAL;")
+                .await;
             let _ = conn
                 .execute_unprepared(
                     "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;",

@@ -375,15 +375,18 @@ async fn handle_user(
         AlreadyAttached,
         NotFound,
     }
+    // UUID 解析与 session_key 构造提前到外层：select! 结束后还需用 session_key
+    // remove session，因此它的生命周期必须超出 slot_result 块（原实现把它锁在内部作用域，
+    // 导致 handle_user 无法在断开后清理槽位）。
+    let Ok(parsed_uuid) = Uuid::parse_str(&agent_uuid) else {
+        warn!(target: "terminal", agent_uuid = %agent_uuid, "User connection rejected: invalid UUID format");
+        return;
+    };
+    let session_key = TerminalSessionKey {
+        agent_uuid: parsed_uuid,
+        terminal_id,
+    };
     let slot_result = {
-        let Ok(parsed_uuid) = Uuid::parse_str(&agent_uuid) else {
-            warn!(target: "terminal", agent_uuid = %agent_uuid, "User connection rejected: invalid UUID format");
-            return;
-        };
-        let session_key = TerminalSessionKey {
-            agent_uuid: parsed_uuid,
-            terminal_id,
-        };
         let mut sessions = state
             .sessions
             .write()
@@ -429,7 +432,7 @@ async fn handle_user(
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let mut rx_from_agent = rx_from_agent;
 
-    let recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         while let Some(msg) = rx_from_agent.recv().await {
             if ws_sender.send(msg).await.is_err() {
                 break;
@@ -437,7 +440,7 @@ async fn handle_user(
         }
     });
 
-    let send_task = tokio::spawn(async move {
+    let mut send_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = ws_receiver.next().await {
             if tx_to_agent.send(msg).await.is_err() {
                 break;
@@ -445,10 +448,30 @@ async fn handle_user(
         }
     });
 
+    // 等待任一方向结束：Agent 主动断流（recv_task 的 rx_from_agent 收到 None）
+    // 或 User WS 断开（send_task 的 ws_reader 结束）。
     tokio::select! {
         biased;
-        _ = recv_task => {},
-        _ = send_task => {},
+        _ = &mut recv_task => {},
+        _ = &mut send_task => {},
+    }
+
+    // 关键清理（修复 issue #152 的 session 泄漏）：
+    // 1) abort 两个 task，确保 recv_task 释放 rx_from_agent、send_task 释放 tx_to_agent 的 clone；
+    //    原实现只 drop JoinHandle 不 abort，recv_task 悬挂在 rx_from_agent.recv()，持有 receiver 不归还。
+    // 2) remove session slot，drop 槽位持有的原 tx_to_agent。此时 tx_to_agent 的所有 Sender 归零，
+    //    Agent 侧 handle_agent 的 rx_from_user.recv() 收到 None → 其 recv_task 退出 →
+    //    handle_agent 的 select! 结束并执行它自己的 abort + remove（幂等）。
+    //    若不 remove，slot 永久占位，User 用同一 terminal_id 重连时 rx_from_agent 已是 None，
+    //    被 "already has an attached user" 拒绝。
+    recv_task.abort();
+    send_task.abort();
+    {
+        let mut sessions = state
+            .sessions
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        sessions.remove(&session_key);
     }
 
     info!(target: "terminal", agent_uuid = %agent_uuid, terminal_id = %terminal_id, "User terminal disconnected");

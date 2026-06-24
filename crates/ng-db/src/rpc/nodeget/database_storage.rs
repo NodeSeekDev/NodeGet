@@ -165,18 +165,25 @@ struct TableNameRow {
     table_name: String,
 }
 
-/// SQLite：动态发现用户表并使用 dbstat 虚拟表查询各表占用的页面总大小
+/// SQLite：动态发现用户表并使用 dbstat 虚拟表（aggregate 模式）查询各表占用
 ///
-/// 内部步骤：
-/// 1. 从 `sqlite_master` 发现所有用户表（排除 `EXCLUDED_TABLES`）
-/// 2. 使用 dbstat 虚拟表批量查询各表 SUM(pgsize)
-/// 3. 为 dbstat 未覆盖的空表补 0
+/// 性能要点（A+B 方案）：
+/// - **A 逐表等值下推**：`JOIN dbstat('main', 1) d ON d.name = m.name` 让 dbstat 虚拟表
+///   对每个表名走 `xBestIndex` 等值下推——先查 root page，只遍历该表自身的 b-tree，
+///   避免原 `WHERE name IN (...)` 无法下推导致的**全库所有页（表+索引）全扫**。
+///   原 `IN` 写法在 100MB+ 库上需数十秒（逐页物化 + 海量中间行 GROUP BY），本写法降到秒级。
+/// - **B aggregate 模式**：`dbstat('main', 1)` 第二参数 `1` = aggregate=TRUE，每棵 b-tree
+///   仅输出一行（内部已累加），输出行数从"页数"降到"表数"，消除 GROUP BY 聚合开销。
+/// - **单次 round-trip**：用 `sqlite_master LEFT JOIN dbstat` 在一条 SQL 内同时完成
+///   "发现表名 + 取大小"，免去原先两次查询。
+/// - **空表**：`LEFT JOIN` + `COALESCE(..., 0)` 保证无页面的空表也出现在结果（值为 0），
+///   与原语义一致。
 ///
 /// 注意：`dbstat` 虚拟表需要 `SQLite` 编译时启用 `SQLITE_ENABLE_DBSTAT_VTAB`，
-/// sqlx 的 bundled `SQLite` 默认已启用
+/// sqlx 的 bundled `SQLite` 默认已启用。
 async fn query_sqlite(db: &DatabaseConnection) -> anyhow::Result<BTreeMap<String, i64>> {
     debug!(target: "server", "querying sqlite table sizes");
-    // 从 sqlite_master 动态获取所有用户表
+    // EXCLUDED_TABLES 参数化绑定（NOT IN 占位符），保持可配置性。
     let excluded: Vec<String> = EXCLUDED_TABLES.iter().map(ToString::to_string).collect();
     let placeholders: Vec<String> = excluded
         .iter()
@@ -186,40 +193,21 @@ async fn query_sqlite(db: &DatabaseConnection) -> anyhow::Result<BTreeMap<String
     let not_in_clause = if placeholders.is_empty() {
         String::new()
     } else {
-        format!(" AND name NOT IN ({})", placeholders.join(", "))
+        format!(" AND m.name NOT IN ({})", placeholders.join(", "))
     };
-    let discover_sql = format!(
-        "SELECT name AS table_name FROM sqlite_master WHERE type = 'table'{not_in_clause} ORDER BY name"
+
+    // LEFT JOIN sqlite_master 与 dbstat('main',1)：
+    // - m 侧提供完整用户表名（含空表）
+    // - d 侧按 name 等值匹配，aggregate 模式每树一行
+    // COALESCE 兜底：dbstat 无该表行（空表/刚建）时记 0。
+    let sql = format!(
+        "SELECT m.name AS table_name, COALESCE(d.pgsize, 0) AS table_size \
+         FROM sqlite_master m \
+         LEFT JOIN dbstat('main', 1) d ON d.name = m.name \
+         WHERE m.type = 'table'{not_in_clause} \
+         ORDER BY m.name"
     );
     let values: Vec<sea_orm::Value> = excluded.into_iter().map(std::convert::Into::into).collect();
-    let table_names: Vec<String> = TableNameRow::find_by_statement(Statement::from_sql_and_values(
-        DatabaseBackend::Sqlite,
-        &discover_sql,
-        values,
-    ))
-    .all(db)
-    .await
-    .map_err(|e| NodegetError::DatabaseError(e.to_string()))?
-    .into_iter()
-    .map(|r| r.table_name)
-    .collect();
-
-    let mut result = BTreeMap::new();
-    if table_names.is_empty() {
-        return Ok(result);
-    }
-
-    // 单次查询批量获取所有表大小，避免 N+1 round-trip
-    let placeholders: Vec<String> = table_names
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("?{}", i + 1))
-        .collect();
-    let sql = format!(
-        "SELECT name AS table_name, COALESCE(SUM(pgsize), 0) AS table_size FROM dbstat WHERE name IN ({}) GROUP BY name",
-        placeholders.join(", ")
-    );
-    let values: Vec<sea_orm::Value> = table_names.iter().map(|n| n.as_str().into()).collect();
     let rows = TableSizeRow::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Sqlite,
         &sql,
@@ -229,13 +217,9 @@ async fn query_sqlite(db: &DatabaseConnection) -> anyhow::Result<BTreeMap<String
     .await
     .map_err(|e| NodegetError::DatabaseError(e.to_string()))?;
 
+    let mut result = BTreeMap::new();
     for row in rows {
         result.insert(row.table_name, row.table_size);
-    }
-
-    // dbstat 不包含无页面的空表，补 0 以保证所有表名都出现在结果中
-    for name in &table_names {
-        result.entry(name.clone()).or_insert(0);
     }
     debug!(target: "server", table_count = result.len(), "SQLite table sizes queried");
 

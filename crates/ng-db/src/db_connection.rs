@@ -85,6 +85,13 @@ pub async fn init_db_connection(config: DbConnectionConfig) -> anyhow::Result<()
 
     info!(target: "db", "Database connected successfully");
 
+    // SQLite: auto_vacuum 必须在库为空（建库阶段）设置才生效，老库会被忽略。
+    // 故在 Migrator::up 建表之前抢先设置，确保新库建库即启用 INCREMENTAL。
+    // 对已有数据的老库，此设置不生效（auto_vacuum 值保持 NONE），需用官方迁移教程转库。
+    if db.get_database_backend() == sea_orm::DatabaseBackend::Sqlite {
+        let _ = db.execute_unprepared("PRAGMA auto_vacuum = INCREMENTAL;").await;
+    }
+
     Migrator::up(&db, None).await.map_err(|e| {
         error!(target: "db", error = %e, "Unable to apply migrations");
         e
@@ -107,7 +114,20 @@ pub async fn init_db_connection(config: DbConnectionConfig) -> anyhow::Result<()
         db.execute_unprepared("PRAGMA busy_timeout = 5000;").await?;
         db.execute_unprepared("PRAGMA foreign_keys = ON;").await?;
         db.execute_unprepared("PRAGMA cache_size = -64000;").await?;
-        info!(target: "db", "SQLite PRAGMAs applied: WAL, synchronous=NORMAL, busy_timeout=5000, foreign_keys=ON, cache_size=-64000");
+        // 读回 auto_vacuum 当前值（0=NONE,1=FULL,2=INCREMENTAL）用于日志诊断。
+        // 老库即便上面设了 INCREMENTAL 也不会改变值，运维可凭此判断是否需走迁移教程。
+        let auto_vacuum = db
+            .query_one_raw(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DatabaseBackend::Sqlite,
+                "PRAGMA auto_vacuum",
+                [],
+            ))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|row| row.try_get::<Option<i64>>("", "auto_vacuum").ok().flatten())
+            .unwrap_or(-1);
+        info!(target: "db", "SQLite PRAGMAs applied: WAL, synchronous=NORMAL, busy_timeout=5000, foreign_keys=ON, cache_size=-64000; auto_vacuum={}", auto_vacuum);
     }
 
     set_db(db);
