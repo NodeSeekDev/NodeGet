@@ -33,10 +33,11 @@ pub async fn update(token: String, name: String, new_name: String) -> RpcResult<
     let (tk, un) = token_identity(&token);
 
     let process_logic = async {
+        // 先校验新名称合法性，再做鉴权（见 create.rs 同款注释）。
+        validate_db_name(&new_name)?;
         // 新旧名称均需 Update 权限
         check_db_permission(&token, &name, DbPermission::Update).await?;
         check_db_permission(&token, &new_name, DbPermission::Update).await?;
-        validate_db_name(&new_name)?;
 
         let db = get_db().ok_or_else(|| {
             NodegetError::DatabaseError("Main database not initialized".to_owned())

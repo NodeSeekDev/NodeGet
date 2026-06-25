@@ -227,14 +227,41 @@ impl MonitoringUuidCache {
             soft_delete: Set(false),
         };
 
-        let result = monitoring_uuid::Entity::insert(new_model)
-            .exec(db)
-            .await
-            .map_err(|e| {
-                NodegetError::DatabaseError(format!("Failed to insert monitoring_uuid: {e}"))
-            })?;
+        // 并发首次注册同一 UUID 时，两个请求都可能通过上方的 DB 不存在检查后
+        // 进入 insert；其一成功，另一触发 UNIQUE(uuid) 冲突。此处识别该冲突并
+        // 回退查询已插入行（INSERT OR IGNORE 语义），避免给调用方返回错误的
+        // DatabaseError(103)。与 super_token::generate_super_token 的处理同构。
+        let id = match monitoring_uuid::Entity::insert(new_model).exec(db).await {
+            Ok(result) => result.last_insert_id as i16,
+            Err(e) => {
+                if matches!(
+                    e.sql_err(),
+                    Some(sea_orm::SqlErr::UniqueConstraintViolation(_))
+                ) {
+                    debug!(target: "monitoring", %uuid, "get_or_insert: insert 冲突，回退查询已存在行");
+                    monitoring_uuid::Entity::find()
+                        .filter(monitoring_uuid::Column::Uuid.eq(uuid))
+                        .one(db)
+                        .await
+                        .map_err(|qe| {
+                            NodegetError::DatabaseError(format!(
+                                "Failed to query monitoring_uuid after unique conflict: {qe}"
+                            ))
+                        })?
+                        .ok_or_else(|| {
+                            NodegetError::DatabaseError(format!(
+                                "monitoring_uuid insert conflicted but row not found: {e}"
+                            ))
+                        })?
+                        .id as i16
+                } else {
+                    return Err(NodegetError::DatabaseError(format!(
+                        "Failed to insert monitoring_uuid: {e}"
+                    )));
+                }
+            }
+        };
 
-        let id = result.last_insert_id as i16;
         debug!(target: "monitoring", %uuid, id, "get_or_insert: 新记录插入成功");
         let mut guard = recover_write(&self.inner);
         guard.by_uuid.insert(uuid, (id, false));

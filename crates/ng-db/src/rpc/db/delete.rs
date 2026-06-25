@@ -26,8 +26,9 @@ pub async fn delete(token: String, name: String) -> RpcResult<Box<RawValue>> {
     let (tk, un) = token_identity(&token);
 
     let process_logic = async {
-        check_db_permission(&token, &name, DbPermission::Delete).await?;
+        // 先校验名称合法性，再做鉴权（见 create.rs 同款注释）。
         validate_db_name(&name)?;
+        check_db_permission(&token, &name, DbPermission::Delete).await?;
 
         let db = get_db().ok_or_else(|| {
             NodegetError::DatabaseError("Main database not initialized".to_owned())

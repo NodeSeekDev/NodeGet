@@ -26,8 +26,11 @@ pub async fn create(token: String, name: String) -> RpcResult<Box<RawValue>> {
     let (tk, un) = token_identity(&token);
 
     let process_logic = async {
-        check_db_permission(&token, &name, DbPermission::Create).await?;
+        // 先校验名称合法性，再做鉴权：非法名称对无权限调用方应返回 108
+        // （InvalidInput）而非 102（PermissionDenied）；且避免用未校验的 name
+        // 构造 Scope 做无意义的权限查询。
         validate_db_name(&name)?;
+        check_db_permission(&token, &name, DbPermission::Create).await?;
 
         let db = get_db().ok_or_else(|| {
             NodegetError::DatabaseError("Main database not initialized".to_owned())

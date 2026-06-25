@@ -3,8 +3,7 @@
     clippy::cast_sign_loss,
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::similar_names,
-    dead_code
+    clippy::similar_names
 )]
 
 //! `ng-db` — `NodeGet` 数据库层
