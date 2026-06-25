@@ -378,6 +378,10 @@ pub async fn update_static(
     }
 
     StaticCache::reload().await?;
+    // path 变更后，DavHandler 缓存里按 name 绑定的 LocalFs 仍指向旧磁盘路径
+    //（LocalFs 在构建时永久绑定）。清缓存使下次 WebDAV 请求按新 path 重建，
+    // 避免出现 HTTP 服务新目录、WebDAV 仍写旧目录的视图分裂。
+    crate::router::clear_dav_handler_cache();
     debug!(target: "static", name = %name_trimmed, path = %new_path_trimmed, "static updated");
     Ok(updated)
 }
@@ -409,6 +413,9 @@ pub async fn delete_static(name: &str) -> anyhow::Result<()> {
         .await?;
 
     StaticCache::reload().await?;
+    // 桶删除后，清理 DavHandler 缓存中该 name 残留的 handler（否则同名桶重建
+    // 前会复用指向旧磁盘路径的 handler）。
+    crate::router::clear_dav_handler_cache();
     debug!(target: "static", name = %name_trimmed, "static deleted");
     Ok(())
 }

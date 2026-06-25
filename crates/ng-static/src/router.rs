@@ -359,6 +359,12 @@ async fn static_webdav_handler(req: axum::extract::Request) -> axum::response::R
         warn!(target: "webdav", method = %method, uri = %uri_path, bucket = %name, "bucket not found");
         return build_webdav_error(StatusCode::NOT_FOUND, "Static bucket not found");
     };
+    // 与 HTTP GET 路径一致：enable == Some(false) 视为桶已下线，拒绝访问。
+    // 否则会出现「HTTP 已 404 但 WebDAV 仍开放读写删」的访问控制不一致。
+    if model.enable == Some(false) {
+        debug!(target: "webdav", method = %method, uri = %uri_path, bucket = %name, "bucket disabled, treating as not found");
+        return build_webdav_error(StatusCode::NOT_FOUND, "Static bucket not found");
+    }
     debug!(target: "webdav", bucket = %name, path = %model.path, cors = model.cors, "bucket resolved");
 
     // 2. Extract Basic Auth

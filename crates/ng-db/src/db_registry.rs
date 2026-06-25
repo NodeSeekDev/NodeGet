@@ -4,7 +4,7 @@
 //! - 管理用户通过 `db.create` RPC 创建的 `SQLite` 数据库连接池
 //! - 后台定时清理过期连接（基于 `max_lifetime_ms`）
 //! - 启动时从 `db_registry` 表种子恢复已有连接
-//! - 提供 SQL 执行结果转换工具（`row_to_json`、`json_to_sea_value`、`is_read_query`）
+//! - 提供 SQL 执行结果转换工具（`row_to_json`、`json_to_sea_value`）
 //!
 //! 协作关系：
 //! - `db` 命名空间 RPC 通过 `DbRegistryManager::global()` 访问连接池
@@ -598,27 +598,4 @@ pub fn json_to_sea_value(json: &serde_json::Value) -> sea_orm::Value {
             sea_orm::Value::Json(Some(Box::new(json.clone())))
         }
     }
-}
-
-/// 判断 SQL 语句是否为只读查询
-///
-/// - `sql` — 待判定的 SQL 语句
-/// - 返回值：若为 SELECT / PRAGMA / EXPLAIN / WITH 开头则返回 true
-///
-/// 注意：仅检查语句开头，CTE 后接 DML 的情况仍返回 true（保守策略）
-#[must_use]
-pub fn is_read_query(sql: &str) -> bool {
-    let s = sql.trim_start_matches(|c: char| c.is_whitespace() || c == '(' || c == ';');
-    starts_with_ascii_ci(s, "SELECT")
-        || starts_with_ascii_ci(s, "PRAGMA")
-        || starts_with_ascii_ci(s, "EXPLAIN")
-        || starts_with_ascii_ci(s, "WITH")
-}
-
-/// ASCII 大小写不敏感的前缀匹配
-fn starts_with_ascii_ci(s: &str, prefix: &str) -> bool {
-    s.as_bytes()
-        .iter()
-        .zip(prefix.as_bytes())
-        .all(|(a, b)| a.to_ascii_uppercase() == *b)
 }

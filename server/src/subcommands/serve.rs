@@ -150,7 +150,15 @@ pub async fn run(config: &ServerConfig) {
                     let landing_html = landing_html.clone();
                     async move {
                         if is_websocket_upgrade(req.headers()) {
-                            return rpc_service.call(req).await.unwrap();
+                            // 与下方非 WS 路径一致的错误兜底：upgrade/service 层抛错时
+                            // 返回 500 并记录日志，而非 unwrap() 致 handler task panic。
+                            return rpc_service.call(req).await.unwrap_or_else(|e| {
+                                tracing::error!(target: "server", error = %e, "RPC WebSocket upgrade call failed");
+                                axum::http::Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
+                                    .expect("Failed to build error response")
+                            });
                         }
 
                         if req.method() == axum::http::Method::GET {
@@ -209,7 +217,15 @@ pub async fn run(config: &ServerConfig) {
                     let landing_html = landing_html_for_rpc.clone();
                     async move {
                         if is_websocket_upgrade(req.headers()) {
-                            return rpc_service.call(req).await.unwrap();
+                            // 与下方非 WS 路径一致的错误兜底：upgrade/service 层抛错时
+                            // 返回 500 并记录日志，而非 unwrap() 致 handler task panic。
+                            return rpc_service.call(req).await.unwrap_or_else(|e| {
+                                tracing::error!(target: "server", error = %e, "RPC WebSocket upgrade call failed");
+                                axum::http::Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
+                                    .expect("Failed to build error response")
+                            });
                         }
 
                         if req.method() == axum::http::Method::GET {

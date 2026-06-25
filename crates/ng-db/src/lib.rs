@@ -13,7 +13,7 @@
 //! - 通过 `SeaORM` 管理 13 张实体表（`entity` 模块）
 //! - 提供主库连接的全局单例（`get_db` / `set_db`），服务端启动时初始化
 //! - `DbRegistryManager` 管理用户创建的 `SQLite` 数据库池，含过期清理与自动种子恢复
-//! - SQL 辅助工具：`row_to_json`、`json_to_sea_value`、`is_read_query`
+//! - SQL 辅助工具：`row_to_json`、`json_to_sea_value`
 //! - 数据库名称校验：`validate_db_name`
 //!
 //! 协作关系：
@@ -89,8 +89,6 @@ pub mod rpc;
 #[cfg(feature = "server")]
 pub use db_connection::{DbConnectionConfig, init_db_connection};
 #[cfg(feature = "server")]
-pub use db_registry::{
-    DbExecResult, DbInfo, DbRegistryManager, is_read_query, json_to_sea_value, row_to_json,
-};
+pub use db_registry::{DbExecResult, DbInfo, DbRegistryManager, json_to_sea_value, row_to_json};
 #[cfg(feature = "server")]
 pub use rpc::db::auth::validate_db_name;
