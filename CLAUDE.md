@@ -8,9 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |-------------------|---------------------------------------------------------------------------|
 | `README.md`       | Project overview and entry point                                          |
 | `CLAUDE.md`       | Architecture, conventions, and workflow guide for Claude Code (this file) |
-| `CONTRIBUTING.md` | Contribution guidelines, code style, and module conventions               |
+| `CONTRIBUTING/`   | **Authoritative developer reference** — line-precise per-crate docs, architecture & data flow, convention enforcement handbook, cross-cutting mechanisms. Generated from a full source read. See `CONTRIBUTING/README.md`. Large changes MUST consult these docs first (see `.claude/contributing-enforcement.md`). |
 | `docs/`           | VitePress user and developer documentation                                |
 | `rp.md`           | 技术全解：comprehensive technical reference for Rust developers                |
+
+> **When `CLAUDE.md` and `CONTRIBUTING/` disagree, `CONTRIBUTING/` wins** — it is more precise and
+> closer to the source. `CLAUDE.md` is a high-density summary; `CONTRIBUTING/` is the expanded,
+> line-anchored reference. Large/refactoring changes must read the relevant `CONTRIBUTING/crates/<name>.md`
+> and `CONTRIBUTING/topics/*.md` before proceeding (enforced via `.claude/contributing-enforcement.md`).
 
 ## Build & Run
 
