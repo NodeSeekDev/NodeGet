@@ -1,6 +1,6 @@
 # ng-crontab
 
-> 概览：ng-crontab 实现 NodeGet 的定时任务（cron）子系统。default feature 仅暴露共享数据类型（`Cron`、`CronType`、`AgentCronType`、`ServerCronType`、`CrontabResult`）以及 `CrontabResult` 的查询 DSL，使 agent 可安全依赖而不引入 DB/RPC 代码；`server` feature 额外提供：(1) 全表 DB-backed 内存缓存，(2) 分钟对齐的调度器循环，(3) `crontab` 与 `crontab-result` 两个 JSON-RPC 命名空间。JS 执行通过 OnceLock 注入的 `JsWorkerScheduler` trait 与 ng-js-worker 解耦，权限校验通过 ng-core 的 `PermissionChecker` 解耦。
+> 概览：ng-crontab 实现 NodeGet 的定时任务（cron）子系统。default feature 仅暴露共享数据类型（`Cron`、`CronType`、`AgentCronType`、`ServerCronType`、`CrontabResult`）以及 `CrontabResult` 的查询 DSL，使 agent 侧或其他轻量消费者可安全依赖而不引入 DB/RPC 代码；`server` feature 额外提供：(1) 全表 DB-backed 内存缓存，(2) 按最近触发 deadline 唤醒、单次 sleep 最长 60s 的调度器循环，(3) `crontab` 与 `crontab-result` 两个 JSON-RPC 命名空间。JS 执行通过 OnceLock 注入的 `JsWorkerScheduler` trait 与 ng-js-worker 解耦，权限校验通过 ng-core 的 `PermissionChecker` 解耦。
 
 ## 模块结构
 
@@ -41,7 +41,7 @@ crates/ng-crontab/src/
 | `CrontabResultQueryCondition` | `pub enum CrontabResultQueryCondition { Id(i64), CronId(i64), CronName(String), RunTimeFromTo(i64,i64), RunTimeFrom(i64), RunTimeTo(i64), IsSuccess, IsFailure, Limit(u64), Last }` | 查询 DSL，条件 AND 组合；`Limit` 上限 10000，无 `Limit`/`Last` 时默认 1000。 |
 | `CrontabResultDataQuery` | `pub struct CrontabResultDataQuery { condition: Vec<CrontabResultQueryCondition> }` | RPC 请求体。 |
 | `rpc_module` | `pub fn rpc_module() -> jsonrpsee::RpcModule<()>`（server） | 合并 `crontab` 与 `crontab-result` 两个命名空间；任一合并失败会 `.expect` panic。 |
-| `CrontabCache::init / global / reload` | `init(models: Vec<crontab::Model>)`；`global() -> Option<&'static Arc<CrontabCache>>`；`reload() -> anyhow::Result<()>` | `make_global_cache!` 生成；`init` 从 DB 填充，`global` 返回单例，`reload` 重读全表。 |
+| `CrontabCache::init / global / reload` | `init() -> anyhow::Result<()>`；`global() -> Option<&'static CrontabCache>`；`reload() -> anyhow::Result<()>` | `make_global_cache!` 生成；`init` 从 DB 全量加载并注册单例，`global` 返回单例引用；`reload` 仅在已初始化时重读全表，未初始化时是 no-op。 |
 | `CrontabCache::upsert / remove / remove_by_name` | `upsert(&self, m)`；`remove(&self, id)`；`remove_by_name(&self, name)` | 增量更新（按 id/按名）。 |
 | `CrontabCache::get_enabled_entries / get_all_entries` | `-> Vec<Arc<CachedCrontab>>` | 前者仅 `enable==true`（调度器用），后者含禁用项（`crontab.get` RPC 用）。 |
 | `CrontabCache::get_last_run_time / update_last_run_time` | `(id, model_last) -> Option<i64>`；`(id, ts)` | 读：优先 override map，回退 `model_last`；写：仅写 override map。 |
@@ -68,7 +68,7 @@ crates/ng-crontab/src/
 - `recover_read/recover_write` (`cache.rs:50`)： poison 时 `e.into_inner()` 恢复 + warning log，**绝不 panic**。
 - `parse_one` (`cache.rs:118`)：解析单个 `Model` 为 `CachedCrontab`，用 `std::mem::take` 取走 `model.cron_type` 避免克隆；解析失败返回 `None` + warning（skip 语义）。
 - `upsert` (`cache.rs:162`) / `remove` (`cache.rs:180`) / `remove_by_name` (`cache.rs:193`) / `get_enabled_entries` (`cache.rs:209`) / `get_all_entries` (`cache.rs:220`) / `get_last_run_time` (`cache.rs:231`) / `update_last_run_time` (`cache.rs:242`)。
-- `make_global_cache!(CrontabCache, CRONTAB_CACHE_GLOBAL)` (`cache.rs:66`)：展开为 `static CRONTAB_CACHE_GLOBAL: OnceLock<Option<Arc<CrontabCache>>>` + `init`/`global`/`reload`。
+- `make_global_cache!(CrontabCache, CRONTAB_CACHE_GLOBAL)` (`cache.rs:66`)：展开为 `static CRONTAB_CACHE_GLOBAL: OnceLock<CrontabCache>` + `init`/`global`/`reload`；`reload()` 在未初始化时直接返回 `Ok(())`。
 - `impl DbBackedCache for CrontabCache` (`cache.rs:68`)：`type Model = crontab::Model`；`cache_name() -> "crontab"`；`reload_from_models` 替换 `inner.by_id` 但**保留** `last_run_times`。
 
 ### `query.rs`
@@ -96,7 +96,7 @@ crates/ng-crontab/src/
 
 ### 调度器生命周期与唤醒节奏
 
-`init_crontab_worker` (`server_cron.rs:119`) 通过 `CRONTAB_WORKER_STARTED` OnceLock 守卫 spawn 单个 tokio 任务。循环：`process_crontab()` -> `compute_next_deadline()` -> `tokio::select!` 在 `sleep_until(deadline)` 与 `reload_notify().notified()` 之间竞争。`compute_next_deadline` (`server_cron.rs:147`) 遍历 enabled 项取最近 `next-after-last_run`，**最多 sleep 60s**，即使无 job 或远期触发也能自我纠正。
+`init_crontab_worker` (`server_cron.rs:119`) 通过 `CRONTAB_WORKER_STARTED` OnceLock 守卫 spawn 单个 tokio 任务。循环：`process_crontab()` -> `compute_next_deadline()` -> `tokio::select!` 在 `sleep_until(deadline)` 与 `reload_notify().notified()` 之间竞争。`compute_next_deadline` (`server_cron.rs:147`) 遍历 enabled 项取最近 `next-after-last_run`，按最早 deadline 休眠，**单次 sleep 最多 60s**，即使无 job 或下次触发很远也能周期性自检。
 
 ### Due-job 批处理避免 N 次往返
 
@@ -108,7 +108,7 @@ crates/ng-crontab/src/
 
 ### 增量缓存更新 vs 全量 reload
 
-写操作（create/edit/delete/set_enable 及 server_cron 辅助函数）优先使用 `cache.upsert/remove/remove_by_name` + `notify_crontab_changed()`；仅当 `CrontabCache::global()` 为 `None` 时回退到 `CrontabCache::reload().await`（全量重解析）。`parse_one` (`cache.rs:118`) 用 `std::mem::take` 避免 `Value` 克隆。
+写操作（create/edit/delete/set_enable 及 server_cron 辅助函数）优先使用 `cache.upsert/remove/remove_by_name` + `notify_crontab_changed()`；仅当 `CrontabCache::global()` 为 `None` 时才会尝试 `CrontabCache::reload().await`，但该 `reload()` 在 cache 尚未初始化时是 no-op。`parse_one` (`cache.rs:118`) 用 `std::mem::take` 避免 `Value` 克隆。
 
 ### last_run_times 跨 reload 存活
 
@@ -136,7 +136,7 @@ crates/ng-crontab/src/
 
 ### Tracing target 与 span
 
-`crontab` 命名空间 target `"crontab"`；`crontab_result` 命名空间 target `"crontab_result"`；缓存内部用 `"crontab_cache"`。每个 `RpcServer` 方法开 `info_span!`（如 `crontab::create`、`crontab-result::query`），携带 `token_key`、`username`、`name` 等。`crontab_task` 与 `run_job_logic` 有自己的嵌套 span（`crontab::dispatch_task`、`crontab::run_job`）。
+领域日志主要使用 `"crontab"` 与 `"crontab_result"`；`cache.rs` 的锁 poison 恢复用 `"crontab_cache"`，但同模块的解析失败告警仍记到 `"crontab"`。另外，`make_global_cache!` 与 `rpc_exec!` 带来的基础设施日志分别落在 `"cache"` 与 `"rpc"`。每个 `RpcServer` 方法开 `info_span!`（如 `crontab::create`、`crontab-result::query`），携带 `token_key`、`username`、`name` 等。`crontab_task` 与 `run_job_logic` 有自己的嵌套 span（`crontab::dispatch_task`、`crontab::run_job`）。
 
 ## RPC 方法
 
@@ -159,7 +159,9 @@ crates/ng-crontab/src/
 
 ### 鉴权流程
 
-`crontab` 命名空间：`TokenOrAuth::from_full_token` 解析 -> `require_permission_checker()` 取注入的 `PermissionChecker` -> `check_token_limit(token, &[scopes], &[permissions])`。`scopes_from_cron_type`（`auth.rs:22`）将 `Agent` 映射为 per-uuid 的 `AgentUuid`（HashSet 去重）、`Server` 映射为 `[Global]`；`write_permissions_from_cron_type`（`auth.rs:38`）恒含 `[Crontab::Write]`，Agent Task 另加 `Task::Create(task_name)`。
+`crontab` 命名空间分两类路径：
+- `create/edit/delete/set_enable` 走 `TokenOrAuth::from_full_token` -> `require_permission_checker()` -> `check_token_limit(...)`。`scopes_from_cron_type`（`auth.rs:22`）将 `Agent` 映射为 per-uuid 的 `AgentUuid`（HashSet 去重）、`Server` 映射为 `[Global]`；`write_permissions_from_cron_type`（`auth.rs:38`）恒含 `[Crontab::Write]`，Agent Task 另加 `Task::Create(task_name)`。
+- `get` 是例外：先 `TokenOrAuth::from_full_token`，再直接调用 `ng_token::check_super_token` / `ng_token::get_token`，手动校验时间窗与是否存在任一 `Crontab::Read` limit，然后按 Global/AgentUuid scope 过滤可见条目；它**不**经过 `PermissionChecker` 注入路径。
 
 `crontab-result` 命名空间：仅 Global scope；先查通配 `*`，再查具体 `cron_name`；delete 时 `cron_name=None` 仅校验通配。
 
@@ -167,21 +169,21 @@ crates/ng-crontab/src/
 
 | 表名 | 列 | 约束/索引/关系 | 备注 |
 |------|----|-----------------|------|
-| `crontab` | `id`（i64 自增 PK）、`name`（text，按约定全局唯一）、`cron_expression`（text）、`cron_type`（JSON Value，序列化 `CronType`）、`enable`（bool）、`last_run_time`（nullable i64 毫秒） | 由 ng-db entity crate 拥有；ng-crontab 经 SeaORM ActiveModel 读写 | create/edit 校验 cron 表达式；缓存加载校验 cron_type JSON。`set_enable` 仅改 enable；`edit` 仅改 `cron_expression`+`cron_type`。 |
-| `crontab_result` | `id`（i64 自增 PK）、`cron_id`（i64 逻辑 FK -> crontab.id）、`cron_name`（text，结果创建时 crontab.name 的去规范化快照）、`relative_id`（nullable i64；Agent task id 或 JS Worker run id）、`run_time`（nullable i64 毫秒）、`success`（nullable bool）、`message`（nullable text） | `run_time` 默认 `ORDER BY DESC`；无强制 FK；无 soft-delete，`delete_many` 物理删除 | 经动态 SeaORM filter 链读写；`message` 含中文。 |
+| `crontab` | `id`（i64 自增 PK）、`name`（text，唯一）、`cron_expression`（text）、`cron_type`（JSON Value，序列化 `CronType`）、`enable`（bool）、`last_run_time`（nullable i64 毫秒） | `id` 为 PK；`name` 在 entity 与迁移层都强制唯一（列定义 `unique_key`，另有唯一索引 `idx-crontab-name`）；由 ng-db entity crate 拥有，ng-crontab 经 SeaORM ActiveModel 读写 | create/edit 校验 cron 表达式；缓存加载校验 cron_type JSON。`set_enable` 仅改 enable；`edit` 仅改 `cron_expression`+`cron_type`。注意 `idx-crontab-name` 目前与列唯一约束重复。 |
+| `crontab_result` | `id`（i64 自增 PK）、`cron_id`（i64 逻辑 FK -> crontab.id）、`cron_name`（text，结果创建时 crontab.name 的去规范化快照）、`relative_id`（nullable i64；Agent task id 或 JS Worker run id）、`run_time`（nullable i64 毫秒）、`success`（nullable bool）、`message`（nullable text） | `id` 为 PK；迁移中另建了冗余唯一索引 `idx-crontab_result-id`；普通索引含 `idx-crontab_result-relative_id`、`idx-crontab_result-cron_id`、`idx-crontab_result-cron_name`，以及 `idx-crontab_result-run_time` DESC；无强制 FK；无 soft-delete，`delete_many` 物理删除 | 经动态 SeaORM filter 链读写；`message` 含中文。 |
 
 迁移由 `crates/ng-db/migration/` 拥有，ng-crontab 本身不定义迁移步骤。
 
 ## Crate 内部约定
 
 - **Feature 门控**：`default = []` 仅暴露类型（`Cron`、`CronType`、`AgentCronType`、`ServerCronType`、`CrontabResult`、query DSL）；`server` feature 引入 cache/rpc/server_cron/task 模块。
-- **Serde**：`cron_type.rs` 与 `query.rs` 中所有 enum/struct 使用 `#[serde(rename_all = "snake_case")]`（变体 `agent`/`server`，条件 `id`/`cron_id`/`run_time_from_to` 等）。
-- **Logging target**：`crontab`（crontab 命名空间）、`crontab_result`（crontab-result 命名空间）、`crontab_cache`（缓存内部）。
+- **Serde**：`cron_type.rs` 中的共享类型与 `query.rs` 里的 `CrontabResultQueryCondition` 使用 `#[serde(rename_all = "snake_case")]`；`CrontabResultDataQuery` / `CrontabResultResponseItem` 没有该属性。
+- **Logging target**：领域日志主要见于 `crontab` 与 `crontab_result`；`crontab_cache` 仅用于锁 poison 恢复；基础设施层还会出现 `cache`（全局缓存 init/reload）与 `rpc`（`rpc_exec!`）target。
 - **中文**：注释与日志/result 消息（如 `'任务下发成功'`、`'定时任务_1'`）含中文；`crontab_result.message` 嵌入中文。
 - **RPC 风格**：所有方法返回 `RpcResult<Box<RawValue>>`；一律 `#[rpc(server, namespace = "...")]` + `#[method(name = "...")]`；业务逻辑包在 `rpc_exec!`（来自 ng-infra）。
 - **jsonrpsee 分隔符**：自定义 fork 以 `_` 为命名空间分隔符，故 `crontab-result` 命名空间方法被调用为 `crontab-result_query` 等。
 - **错误处理**：业务逻辑返回 `anyhow::Result`/`Result<_, NodegetError>`；外层经 `anyhow_to_nodeget_error` 映射为 `ErrorObject::owned(code, msg, None::<()>)`。
-- **权限**：`TokenOrAuth::from_full_token` 解析；`require_permission_checker()` 取注入器；`check_token_limit(token, &[scopes], &[permissions])`。CrontabResult 仅 Global scope，通配 `*` 或具体 cron_name。
+- **权限**：`crontab` 的 create/edit/delete/set_enable 走 `TokenOrAuth::from_full_token` + `PermissionChecker::check_token_limit(...)`；`get` 则直接用 `ng_token::check_super_token/get_token` 做时间窗与 limit/scope 过滤。`CrontabResult` 相关权限仅 Global scope，通配 `*` 或具体 cron_name。
 - **缓存写纪律**：写操作（create/edit/delete/set_enable）调 `cache.upsert/remove/remove_by_name` + 若已初始化则 `notify_crontab_changed()`；否则回退 `CrontabCache::reload().await`。
 - **DB 访问**：一律经 `ng_db::get_db() -> Option<&'static DatabaseConnection>`；`None` 时映射为合成 `DbErr::Conn(Internal)` 或 `NodegetError::DatabaseError`。
 - **Edition 2024**：使用 `if let ... && let ...` 链、let-else、`.is_some_and`。
@@ -196,12 +198,12 @@ crates/ng-crontab/src/
 - **注意** `init_crontab_worker` 无关闭句柄：`CRONTAB_WORKER_STARTED` 是不可重置的 `OnceLock<()>`，spawn 的任务带无 cancellation token 地永久循环；除结束进程外无法停止调度器（`crates/ng-crontab/src/server_cron.rs:128`）。
 - **注意** 文档中的 `CrontabResultResponseItem`（`query.rs:44`）与 `result.rs::CrontabResult` **并非** `crontab-result.query` 的返回类型；实际响应是 SeaORM `crontab_result::Model` 的裸序列化，字段名以 entity 序列化为准（`crates/ng-crontab/src/rpc/crontab_result/query.rs:122`）。
 - **注意** 空 UUID 列表的 Agent cron 写权限降级为仅 Global `Crontab::Write`（无 `Task::Create`），等同空操作下发但权限语义更弱；改动 `Task::Create` 校验须记得此空列表特例（`crates/ng-crontab/src/rpc/crontab/auth.rs:93`）。
-- **注意** `edit` 同时对**原** cron_type scope 与**新** cron_type scope 做写权限校验；用户编辑一个已无权限的 agent 目标 cron 会被拒（即使新配置不指向那些 agent）——这是设计行为，易被误诊为权限 bug（`crates/ng-crontab/src/rpc/crontab/auth.rs:58`）。
+- **注意** `edit` 同时对**原** cron_type scope 与**新** cron_type scope 做写权限校验；用户编辑一个已无权限的 agent 目标 cron 会被拒（即使新配置不指向那些 agent）——这是设计行为，易被误诊为权限 bug（`crates/ng-crontab/src/rpc/crontab/edit.rs:57`）。
 - **注意** `delete` 存在冗余双重查找：先 find 做权限校验，`delete_crontab_by_name` 又自行 `delete_many WHERE name=`；两步间的 race 可使第二步删 0 行并返回 NotFound。`set_enable` 的 find+update 同样非原子（`crates/ng-crontab/src/rpc/crontab/delete.rs:63`）。
-- **注意** `validate_name` 仅在 RPC 层（create/edit/delete/set_enable）应用；底层 `delete_crontab_by_name`/`set_crontab_enable_by_name` **不**校验 name，直接传给 SQL filter。直接内部调用者可能注入含 `/` 或控制字符的 name——路径安全不变量依赖始终经 RPC（`crates/ng-crontab/src/server_cron.rs:111`）。
+- **注意** `validate_name` 仅在 RPC 层（create/edit/delete/set_enable）应用；底层 `delete_crontab_by_name`/`set_crontab_enable_by_name` **不**校验 name，直接传给 SQL filter。直接内部调用者可能注入含 `/` 或控制字符的 name——路径安全不变量依赖始终经 RPC（`crates/ng-crontab/src/server_cron.rs:41`）。
 - **注意** `crontab.get` 中，仅有 AgentUuid scope 的 `Crontab::Read`（无 Global）的 token 看不到任何 Server 类型 job（`filter_entries_by_token` 在 `!has_global` 时对 Server 项返回 false）；无 Global scope 的 token 持有者会发现 Server cron 完全不可见（`crates/ng-crontab/src/rpc/crontab/get.rs:83`）。
 - **注意** `cron_name=None` 的 CrontabResult delete 仅校验通配 `Delete("*")`；无 CronName 过滤的查询若不具备全局通配删除权限即被拒——无 fallback 到具体名权限（`crates/ng-crontab/src/rpc/crontab_result/auth.rs:119`）。
 
 ## 依赖关系
 
-ng-crontab 依赖工作区内的 ng-core（`CronType`、`PermissionChecker`/`Permission`/`Scope`、`NodegetError`、`TokenOrAuth`、`Token`、`Limit`、`get_local_timestamp_ms_i64`、`generate_random_string`）、ng-db（`crontab`/`crontab_result`/`task` entity、`get_db`、`DbErr`）、ng-infra（`DbBackedCache`、`make_global_cache!`、`rpc_exec!`、`RpcHelper`、`token_identity`、`require_permission_checker`、`anyhow_to_nodeget_error`）、ng-task（`TaskEventType`、`TaskManager`、`task::ActiveModel`、`TaskEvent`）。Cron 表达式解析依赖外部 `cron` crate；UUID 依赖 `uuid`。Agent 依赖 ng-crontab default feature（仅类型/DQL）。服务器二进制启用 `server` feature 并在启动时调用 `init_crontab_worker()`、`CrontabCache::init`、`set_js_worker_scheduler`，并把 `rpc_module()` 合并入主模块；该 crate 也是 `CronJsWorkerScheduler`（实现 `JsWorkerScheduler`，将 cron 触发的 JS 任务交给 ng-js-worker）与 `crontab`/`crontab-result` 命名空间的提供方。
+ng-crontab 依赖工作区内的 ng-core（`PermissionChecker`/`Permission`/`Scope`、`NodegetError`、`TokenOrAuth`、`Token`、`get_local_timestamp_ms_i64`、`generate_random_string`、`anyhow_to_nodeget_error`）、ng-db（`crontab`/`crontab_result`/`task` entity、`get_db`、`DbErr`）、ng-infra（`DbBackedCache`、`make_global_cache!`、`rpc_exec!`、`RpcHelper`、`token_identity`）、ng-task（`TaskEventType`、`TaskManager`、`task::ActiveModel`、`TaskEvent`）。`Cron`/`CronType`/`AgentCronType`/`ServerCronType` 由 ng-crontab 自身定义。Cron 表达式解析依赖外部 `cron` crate；UUID 依赖 `uuid`。default feature 对 agent 侧消费者是安全的，但当前 `nodeget-agent` crate 实际并**不**依赖 ng-crontab。服务器二进制启用 `server` feature 并在启动时调用 `init_crontab_worker()`、`CrontabCache::init()`、`set_js_worker_scheduler`，并把 `rpc_module()` 合并入主模块；`JsWorkerScheduler` trait 定义在 ng-crontab，而具体的 `CronJsWorkerScheduler` 实现在 `server/src/subcommands/serve.rs` 中。

@@ -1,6 +1,6 @@
 # NodeGet 开发者参考文档（CONTRIBUTING/）
 
-本目录是 NodeGet 后端（Rust workspace）的**权威开发者参考**，由逐行阅读全部源码（250 个 `.rs` 文件、~44,400 行）后综合而成。每一份文档都基于对源码的精确读取与对抗性校验，并标注 `文件:行号` 锚点。
+本目录是 NodeGet 后端（Rust workspace）的**开发者参考**，由逐行阅读全部源码（250 个 `.rs` 文件、约 44k 行）后综合而成。文档以源码为依据，覆盖逐 crate 参考、横向机制与维护约定；其中很多章节带有 `文件:行号` 锚点，但锚点覆盖率并非对所有文档、所有条目都完全一致。
 
 > 维护者**必须**在本目录文档的指导下进行大型修改。详见 `.claude/contributing-enforcement.md`。
 
@@ -46,7 +46,7 @@ CONTRIBUTING/
 | 改 server/agent 启动或接线 | [`binaries/nodeget-server.md`](binaries/nodeget-server.md) / [`binaries/nodeget-agent.md`](binaries/nodeget-agent.md) |
 | 提 Issue / PR、代码风格 | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
-### 每个 crate 文档的统一结构
+### 每个 crate / binary 文档的统一结构
 
 1. **概览**（blockquote）— crate 职责一句话
 2. **模块结构** — 源文件树与各自角色
@@ -81,4 +81,4 @@ CONTRIBUTING/
 | `docs/`（VitePress） | 终端用户 + 主题/Worker/扩展开发者 | 面向用户的安装、配置、API、扩展开发 |
 | `rp.md` | Rust 开发者 | 技术全解速查（高层） |
 
-本目录与根 `CLAUDE.md` 互补：`CLAUDE.md` 是高密度速览，本目录是展开的逐 crate 参考。两者冲突时，**以本目录的 `crates/<name>.md` 为准**（更精确、更新）。
+本目录与根 `CLAUDE.md` 互补：`CLAUDE.md` 是高密度速览，本目录是展开的逐 crate / 主题参考。两者冲突时，**优先参考本目录中与当前改动直接相关的 `crates/<name>.md`、`binaries/*.md` 与 `topics/*.md`**；若文档与当前源码冲突，则以源码为准并同步订正文档。

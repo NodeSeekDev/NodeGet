@@ -6,26 +6,21 @@
 
 业务 crate 之间存在循环依赖（如 ng-task 需要 ng-token 鉴权，ng-token 又依赖 ng-infra 的 RPC 设施）。NodeGet 用 **OnceLock + trait object** 在运行时注入实现，编译期只依赖 trait 定义（在 `ng-core` 或下层 crate）。
 
-### 注入点全景
+### 当前注入点全景
 
 | 注入函数 | 定义 Crate | 用途 | server 实现 |
 |----------|-----------|------|------------|
-| `set_auth_checker` | ng-infra | 认证 → Token 元数据 | server binary |
-| `set_token_checker` | ng-kv / ng-static / ng-terminal / ng-js-worker | 各命名空间权限 | server binary（委托 ng-token） |
-| `set_auth_provider` | ng-db / ng-task | db / task 命名空间权限 | server binary |
-| `set_monitoring_uuid_provider` | ng-task | UUID 缓存访问 | `TaskMonitoringUuidProvider` |
-| `set_check_super_token_fn` | ng-config | config RPC super-token 校验 | server binary |
-| `set_js_worker_service` | ng-js-runtime | JS 执行调度（内联调用 + rpc module） | `JsWorkerServiceImpl` |
+| `set_permission_checker` | ng-core | 统一认证 / Token 元数据 / 权限校验（替代旧的多套 auth checker） | `ServerPermissionChecker` |
+| `set_monitoring_uuid_provider` | ng-task | task 创建时登记/刷新 monitoring_uuid | `TaskMonitoringUuidProvider` |
+| `set_js_worker_service` | ng-js-runtime | inlineCall 执行 + RPC module 分发器 | `JsWorkerServiceImpl` |
 | `set_js_worker_scheduler` | ng-crontab | cron → JS worker 调度 | `CronJsWorkerScheduler` |
-| `require_permission_checker` | ng-core（`permission_checker.rs`，for-server） | 对象安全 async trait，替代原先 6 个分散 auth trait | `ServerPermissionChecker` |
 
 ### 约定
 
-- `set_*` 静默忽略重复初始化：`let _ = LOCK.set(val);`。
-- `get_*` / `require_*` 未初始化时 **panic**（`.expect("... not initialized -- call set_* first")`）——这是 fail-fast，比静默返回错误更安全（启动接线错误会立刻暴露）。
-- 部分函数返回 `Option`（如 `ng_db::get_db()`）而非 panic——这些是可选设施。
-- **所有 server 实现最终委托给 `ng_token` 函数**——ng-token 是权限的单一事实源。
-- server binary 在 `serve.rs` **集中注册**，顺序敏感（缓存 init 依赖 trait 注入完成）。
+- 很多 `set_*` 会用 `let _ = LOCK.set(val);` 忽略重复初始化，但这不是仓库内所有 setter 的统一硬规则；具体行为以对应 crate 实现为准。
+- 读取侧也不完全统一：有的 helper 在未初始化时 panic，有的返回 `Option` 或 `NodegetError`，由调用方决定如何向上报错。
+- server binary 在 `serve.rs` **集中注册当前实际使用的 4 个 provider**。
+- 其中只有 `ServerPermissionChecker` 直接委派到 `ng_token`；其余 provider 分别委派到 `ng_monitoring`、`ng_js_worker`、`ng_crontab`/`ng_js_runtime`。
 
 ## 2. RBAC 权限模型
 
@@ -127,7 +122,7 @@ server 子命令输出凭据（如 `roll_super_token`）用 `println!`，**不**
 ## 5. 配置热重载
 
 - 两侧都监听 `RELOAD_NOTIFY`（`Notify`，`ng-config`）。
-- **server**：重新读 config 文件 → reload 所有 `DbBackedCache` → 重启 loop（**不**重新注入 trait——trait 实现是启动期一次性）。
+- **server**：收到 reload 信号后退出当前 `serve::run()` 生命周期，外层主循环重新读 config、重建 router、重新初始化各缓存；trait provider 仍是启动期一次性注入，不在每次热重载里重复注册。
 - **agent**：收到 `EditConfig` 任务 → 成功后 `RELOAD_NOTIFY.notify_one()` → abort 所有 handle → 重新 loop。
 - **agent NTP 不重取**：NTP offset 仅进程启动时获取一次（`NTP_INIT_DONE` guard，`main.rs:51`）。热重载**故意**不重取 NTP，避免 offset 跳变。新增重取路径需谨慎 gating。
 

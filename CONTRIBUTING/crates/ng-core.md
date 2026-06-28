@@ -7,14 +7,14 @@
 | 文件 | 角色 |
 |------|------|
 | `src/lib.rs` | Crate 根，声明全部子模块（始终编译：`error`、`js_result`、`monitoring`、`permission`、`self_update`、`utils`），定义 `NameValidator` trait |
-| `src/error.rs` | `NodegetError` 枚举（12 变体）、`error_code()` 数字映射、`JsonError` 转换、`From<serde_json::Error>`/`From<io::Error>`、`Result<T>` 别名、anyhow 还原助手 |
+| `src/error.rs` | `NodegetError` 枚举（11 变体）、`error_code()` 数字映射、`JsonError` 转换、`From<serde_json::Error>`/`From<io::Error>`、`Result<T>` 别名、anyhow 还原助手 |
 | `src/utils/mod.rs` | 工具根：`version`/`uuid` 子模块（常驻），`error_message`/`server_json` 子模块（for-server only）；定义 `JsonError`、全局 NTP offset、时间戳助手、随机串生成 |
 | `src/utils/version.rs` | 编译期注入的 `NodeGetVersion`（13 字段），缓存于 `OnceLock` |
 | `src/utils/uuid.rs` | UUID v4 生成封装 |
 | `src/utils/error_message.rs` | for-server：构建 RPC 错误响应为 `Value` 或 `Box<RawValue>`（`rpc_exec!` 消费） |
 | `src/utils/server_json.rs` | for-server：零拷贝 RawValue 构造、字符串化 JSON 列原地解析、键重命名 |
 | `src/permission/mod.rs` | RBAC 模块根：`create`、`data_structure`、`permission_checker`（gated）、`token_auth` |
-| `src/permission/data_structure.rs` | 核心 RBAC 数据结构：`Token`、`Limit`、`Scope`、`Permission` 及 13 个子操作枚举 |
+| `src/permission/data_structure.rs` | 核心 RBAC 数据结构：`Token`、`Limit`、`Scope`、`Permission` 及 15 个子操作枚举（`NodeGet`、`MonitoringUuid`、`StaticMonitoring`、`DynamicMonitoring`、`DynamicMonitoringSummary`、`Task`、`Crontab`、`CrontabResult`、`Kv`、`Terminal`、`JsWorker`、`JsResult`、`StaticBucket`、`StaticBucketFile`、`Db`） |
 | `src/permission/create.rs` | Token 创建 RPC 的请求体 `TokenCreationRequest` |
 | `src/permission/permission_checker.rs` | for-server：对象安全 async trait 与 `OnceLock` 全局注入（替代原先 6 个分散的 auth trait） |
 | `src/permission/token_auth.rs` | 双模认证凭据 `TokenOrAuth`（key:secret 或 username|password） |
@@ -31,11 +31,11 @@
 
 | 名称 | 签名 | 行为 |
 |------|------|------|
-| `NodegetError` | `pub enum`（12 变体，各携 `String`） | thiserror::Error + Debug + Clone；Display 形如 `"Permission denied: {0}"` |
+| `NodegetError` | `pub enum`（11 变体，各携 `String`） | thiserror::Error + Debug + Clone；Display 形如 `"Permission denied: {0}"` |
 | `NodegetError::error_code` | `pub const fn error_code(&self) -> i128` (`error.rs:66`) | 数值映射：InvalidInput=108，PermissionDenied=102，DatabaseError=103，AgentConnectionError=104，NotFound=105，UuidNotFound=106，ConfigNotFound=107，Other=999，ParseError/SerializationError/IoError=101（**共享**） |
 | `NodegetError::to_json_error` | `pub fn to_json_error(&self) -> crate::utils::JsonError` (`error.rs:84`) | `JsonError{error_id: error_code(), error_message: to_string()}` |
 | `anyhow_to_nodeget_error` | `#[must_use] pub fn anyhow_to_nodeget_error(err: &anyhow::Error) -> NodegetError` (`error.rs:114`) | downcast 成功则 clone，否则 `Other(err.to_string())` |
-| `Result<T>` | `pub type Result<T> = anyhow::Result<T>` (`error.rs:107`) | **注意：是 anyhow，不是 `Result<_, NodegetError>`** |
+| `Result<T>` | `pub type Result<T> = anyhow::Result<T>` (`error.rs:107`) | **注意：这是 crate::error 的单参数别名；部分 API 会显式返回 `std::result::Result<_, NodegetError/String>`** |
 | `JsonError` | `pub struct { pub error_id: i128, pub error_message: String }` (`utils/mod.rs:25`) | RPC 错误负载标准形状，Serialize+Deserialize |
 
 ### 工具与时间戳（`utils`）
@@ -43,9 +43,9 @@
 | 名称 | 签名 | 行为 |
 |------|------|------|
 | `set_ntp_offset_ms` | `pub fn set_ntp_offset_ms(offset_ms: i64)` (`utils/mod.rs:38`) | 存储本地与服务器时钟偏移（`Ordering::Relaxed`），由 agent 调用 |
-| `get_local_timestamp_ms` | `pub fn get_local_timestamp_ms() -> Result<u64>` (`utils/mod.rs:47`) | `now()` 毫秒 + NTP 偏移，`saturating_add`；负值返回 `Other("Timestamp underflow")` |
-| `get_local_timestamp_ms_i64` | `pub fn get_local_timestamp_ms_i64() -> Result<i64>` (`utils/mod.rs:65`) | 同上但 i64；u64→i64 溢出（约 2262 年）报错 |
-| `generate_random_string` | `#[must_use] pub fn generate_random_string(len: usize) -> String` (`utils/mod.rs:77`) | rand 0.9 `rng()` + Alphanumeric 采样，输出 `[A-Za-z0-9]` |
+| `get_local_timestamp_ms` | `pub fn get_local_timestamp_ms() -> Result<u64>` (`utils/mod.rs:47`) | `now()` 毫秒 + NTP 偏移，`saturating_add`；负值返回 `Other("Timestamp underflow after NTP offset")` |
+| `get_local_timestamp_ms_i64` | `pub fn get_local_timestamp_ms_i64() -> Result<i64>` (`utils/mod.rs:65`) | 同上但 i64；仅在极远未来的毫秒时间戳超出 i64 时才会报转换错误 |
+| `generate_random_string` | `#[must_use] pub fn generate_random_string(len: usize) -> String` (`utils/mod.rs:77`) | rand 0.10 `rng()` + Alphanumeric 采样，输出 `[A-Za-z0-9]` |
 | `generate_random_uuid` | `pub fn generate_random_uuid() -> Result<Uuid>` (`utils/uuid.rs:9`) | 恒为 `Ok(Uuid::new_v4())`，Result 仅为 API 稳定性 |
 | `NodeGetVersion::get` | `#[must_use] pub fn get() -> &'static Self` (`utils/version.rs:50`) | 从 `env!` 宏构建 13 字段结构体，缓存于 `OnceLock`；`binary_type` 由 `for-server`/`for-agent` feature 决定（"Server"/"Agent"/"Unknown"） |
 
@@ -113,7 +113,7 @@
 
 ## 关键类型与常量
 
-- **`NodegetError`**（`error.rs:11`）：12 变体均携 `String`；thiserror + Debug + **Clone**（错误枚举中少见，因 String 载荷）；**未派生 PartialEq**。
+- **`NodegetError`**（`error.rs:11`）：11 变体均携 `String`；thiserror + Debug + **Clone**（错误枚举中少见，因 String 载荷）；**未派生 PartialEq**。
 - **`JsonError`**（`utils/mod.rs:25`）：`error_id: i128` 与 `error_code()` 返回类型一致；RPC 错误负载标准形状。
 - **`NTP_OFFSET_MS`**（`utils/mod.rs:33`）：`static NTP_OFFSET_MS: AtomicI64 = AtomicI64::new(0)`，使用 `portable_atomic` 以支持 32 位平台，Relaxed 读写。
 - **`NodeGetVersion`**（`utils/version.rs:10`）：13 个 String 字段；Debug/Clone/PartialEq/Eq/Serialize/Deserialize；`VERSION_CACHE: OnceLock<NodeGetVersion>`（`version.rs:43`）缓存以避免每次调用 13 次 String 分配；`Display`（`version.rs:78`）多行人类可读格式。
@@ -121,7 +121,7 @@
 - **`Scope` / `Permission`**：均 `#[serde(rename_all = "snake_case")]`；Scope 派生 Hash 可入 HashSet；Permission 为 tagged union。
 - **`NodeGet` 枚举**（`data_structure.rs:96`）：`ListAllAgentUuid`/`GetRtPool`/`DeleteAgentUuid`/`ExecSql`；其中 `ListAllAgentUuid`、`DeleteAgentUuid` 自 0.2.13 起 `#[deprecated]`，迁移至 `MonitoringUuid::List`/`Delete`。
 - **错误码魔术常量**（`error.rs:66`）：仅存在于 `error_code()` 的 match 中，无命名 const 表；101 为 Parse/Serialization/IO 共享。
-- **`ARCH_NAME` / `SERVER_ARCH_NAME`**（`self_update.rs:12`/`92`）：for-server 的常量数组，分别为 agent 24 对、server 10 对 `(target_triple, release_filename)`。
+- **`ARCH_NAME` / `SERVER_ARCH_NAME`**（`self_update.rs:12`/`92`）：分别由 `for-agent` / `for-server` gate 控制的常量数组，分别包含 agent 24 对、server 10 对 `(target_triple, release_filename)`；对应公开入口为 `get_url` 与 `get_server_url`。
 - **build.rs 常量 `UNKNOWN: &str = "UNKNOWN"`**（`build.rs:4`）：git/rustc 命令失败的回退值。
 
 ## 内部机制
@@ -157,12 +157,12 @@ Unix 上 `restart_process_with_exec_v`（`self_update.rs:315`）调用 `libc::ex
 
 - **非标准 feature 方案**：ng-core 使用 `for-server` / `for-agent`（均映射到 `dep:libc`），而非其他业务 Crate 的 `default=[]` vs `server` 模式（见 CLAUDE.md "Exception"）。
 - **for-server only 模块**：`utils::error_message`、`utils::server_json`、`permission::permission_checker`（均 `#[cfg(feature = "for-server")]`）；agent 构建不含这些。
-- **统一 snake_case serde**：所有可序列化枚举/结构体用 `#[serde(rename_all = "snake_case")]`（`TokenOrAuth` 变体 `"token"`/`"auth"`，`Scope` 变体 `"global"`/`"agent_uuid"`/`"kv_namespace"`/`"js_worker"`/`"static_bucket"`/`"db"`）。
+- **serde 命名约定以 snake_case 为主，但并非所有类型都显式写 `rename_all`**：RBAC 枚举、查询条件枚举与 `TokenCreationRequest` 等请求体显式标注 `#[serde(rename_all = "snake_case")]`；`JsonError`、`NodeGetVersion`、`JsResultDataQuery` 等结构体则直接依赖已是 snake_case 的字段名。
 - **`Token.token_limit: Arc<Vec<Limit>>`**：serde `rc` feature 开启，Arc 按值序列化；Eq 为字段级（`PartialEq` deref），非指针身份。
 - **中文注释**：Crate 内注释、文档注释、内联说明均为中文，保持一致。
 - **`#[must_use]`**：施加于纯 const 访问器（`column_name`、`json_key`、`token_key`、`is_token`、`NodeGetVersion::get`）与纯构造器。
 - **错误码无命名表**：仅存在于 `error_code()` 的 match；101 由 Parse/Serialization/IO 共享。
-- **`Result<T> = anyhow::Result<T>`**：Crate 内返回 Result 的函数均用 anyhow，非自定义错误。
+- **`crate::error::Result<T>` 别名是 anyhow**：单参数别名统一为 `anyhow::Result<T>`，但也有少数 API 故意显式返回 `std::result::Result<_, NodegetError>`（如 `NameValidator::validate`）或 `std::result::Result<_, String>`（如 `TokenOrAuth::from_full_token`）。
 - **`TokenOrAuth` 分隔符语义是承重的**：同时含 `:` 与 `|` 时 `:`（Token）优先；空半边被接受。
 - **VERGEN_* 经 `env!` 编译期消费**：因 `build.rs` 总会发射（默认 "UNKNOWN"），`env!` 必然成功。
 
@@ -170,7 +170,7 @@ Unix 上 `restart_process_with_exec_v`（`self_update.rs:315`）调用 `libc::ex
 
 - **`should_update` 含降级**（`crates/ng-core/src/self_update.rs:150`）：返回 `target != current` 而非 `target > current`。降级（current v0.5.2 → target v0.5.1）会返回 true 并触发替换。维护者若要禁止降级，必须自行加 `>` 判断。
 - **`from_full_token` 冒号优先且接受空半边**（`crates/ng-core/src/permission/token_auth.rs:23`）：`"key:secret|extra"` 解析为 `Token("key","secret|extra")`；含 `:` 的用户名会被强制 Token 模式；`":secret"` → `Token("","secret")`。调用者必须自行校验 key/username 非空。返回 `Result<Self,String>`，**非 NodegetError**。
-- **`Result<T>` 是 anyhow**（`crates/ng-core/src/error.rs:107`）：函数签名 `-> Result<X>` 接受任意 anyhow 错误，会丢失结构化变体，除非用 `anyhow_to_nodeget_error` 还原。
+- **`Result<T>` 是 anyhow 别名，但不是全部 Result API 的统一返回形状**（`crates/ng-core/src/error.rs:107`）：`crate::error::Result<T>` 接受任意 anyhow 错误；同时存在显式的 `std::result::Result<_, NodegetError>`（如 `NameValidator::validate`）与 `std::result::Result<_, String>`（如 `TokenOrAuth::from_full_token`），调用方不能仅凭函数名假定返回别名。
 - **error_id 为 i128**（`crates/ng-core/src/error.rs:66`）：消费方（含 JS）须处理 128 位整数；RPC 线格式会序列化为 JSON 数字。
 - **`replace_binary` 不保留文件模式**（`crates/ng-core/src/self_update.rs:248`）：`std::fs::write` 不复制原文件权限，新文件按 umask 默认值。若 umask 屏蔽 0111，Unix 上新二进制可能缺少可执行位，导致随后的 execv/restart 失败。运维应验证替换后权限。
 - **`.old` 备份永不清理**（`crates/ng-core/src/self_update.rs:248`）：成功后 `<exe>.old` 永久留存（`canonical_exe_path` 会剥离，故只保留一个），但旧备份从不删除。
@@ -178,7 +178,7 @@ Unix 上 `restart_process_with_exec_v`（`self_update.rs:315`）调用 `libc::ex
 - **`require_permission_checker` 未注入时返回 ConfigNotFound**（`crates/ng-core/src/permission/permission_checker.rs:75`）：在 server boot 完成前调用的业务 RPC 会得到误导性的 "Config not found"，而非认证错误。
 - **`NodeGet::ListAllAgentUuid` / `DeleteAgentUuid` 已 deprecated**（`crates/ng-core/src/permission/data_structure.rs:96`）：新代码必须用 `MonitoringUuid::List`/`Delete`。旧变体仅与自身比较相等——携带旧变体的 token **不会**满足对新 `MonitoringUuid` 变体的检查，可能需要迁移已存储的 token。
 - **两个不同的 ExecSql 权限**（`crates/ng-core/src/permission/data_structure.rs:60`）：`Permission::NodeGet(NodeGet::ExecSql)` 是对主库的全信任任意 SQL（文档化的安全风险，SQLite 上 `ATTACH DATABASE` 提权）；`Permission::Db(Db::ExecSql)` 是 `db_registry` 作用域的 SQL exec。授权/检查代码必须选对变体，二者不可互换。
-- **`get_local_timestamp_ms` 下溢报错**（`crates/ng-core/src/utils/mod.rs:47`）：NTP 校正后毫秒为负则返回 `Other("Timestamp underflow")`。Relaxed 读写对 i64 无 torn read，但跨线程偏移可见性不同步于其他内存——可作时钟偏移提示，**切勿当同步原语使用**。
+- **`get_local_timestamp_ms` 下溢报错**（`crates/ng-core/src/utils/mod.rs:47`）：NTP 校正后毫秒为负则返回 `Other("Timestamp underflow after NTP offset")`。Relaxed 读写对 i64 无 torn read，但跨线程偏移可见性不同步于其他内存——可作时钟偏移提示，**切勿当同步原语使用**。
 - **`VERGEN_CARGO_TARGET_TRIPLE` 来自 `$TARGET` 环境变量**（`crates/ng-core/build.rs:34`）：非 cfg!/target_ 检测。若 `$TARGET` 未设置（如 rust-analyzer），变为 "UNKNOWN"，`build_release_url`（`self_update.rs:205`）返回 None——自更新对该构建静默无 URL。git 缺失时所有 git 字段同样回退 UNKNOWN。
 - **`NodeGetVersion::get` 用 `env!` 非 `option_env!`**（`crates/ng-core/src/utils/version.rs:50`）：因 `build.rs` 总会发射，当前可编译；若有人禁用 build.rs，`env!` 会在编译期失败。`build.rs` 与 `version.rs` 的名字必须保持同步。
 - **`restart_process_with_exec_v` 丢弃含 NUL 的 argv**（`crates/ng-core/src/self_update.rs:335`）：含嵌入 NUL 的参数被过滤（仅 warn）。重启后进程的 argv 会与原进程不同——自更新后的行为变化。
@@ -186,4 +186,4 @@ Unix 上 `restart_process_with_exec_v`（`self_update.rs:315`）调用 `libc::ex
 
 ## 依赖关系
 
-ng-core 是工作区最底层共享 Crate，被 server 与 agent 二进制以及几乎全部业务 Crate（ng-db、ng-infra、ng-config、ng-monitoring、ng-token、ng-kv、ng-task、ng-crontab、ng-js-runtime、ng-js-worker、ng-static、ng-terminal）直接或间接依赖。主要外部依赖：`serde`/`serde_json`（含 `rc` feature）、`anyhow`、`thiserror`、`rand`（0.9）、`uuid`、`portable_atomic`、`tracing`、以及 `libc`（经 `for-server`/`for-agent` feature）。Agent 仅启用 `for-agent`（不引入 `error_message`/`server_json`/`permission_checker` 等 server-only 模块），server 启用 `for-server`。
+ng-core 是工作区最底层共享 Crate，被 server 与 agent 二进制以及几乎全部业务 Crate（ng-db、ng-infra、ng-config、ng-monitoring、ng-token、ng-kv、ng-task、ng-crontab、ng-js-runtime、ng-js-worker、ng-static、ng-terminal）直接或间接依赖。主要外部依赖：`serde`/`serde_json`（含 `rc` feature）、`anyhow`、`thiserror`、`rand`（0.10.1，来自 workspace）、`uuid`、`portable_atomic`、`tracing`、以及 `libc`（经 `for-server`/`for-agent` feature）。Agent 仅启用 `for-agent`（不引入 `error_message`/`server_json`/`permission_checker` 等 server-only 模块），server 启用 `for-server`。

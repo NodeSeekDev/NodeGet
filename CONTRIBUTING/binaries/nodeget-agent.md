@@ -1,6 +1,6 @@
 # nodeget-agent — 监控与自动化代理二进制
 
-> 概览：`nodeget-agent` 是监控/自动化代理进程，以 WebSocket 客户端身份连接到一个或多个 NodeGet server，周期性采集静态/动态监控数据（CPU、RAM、磁盘、网络、GPU、进程）并通过 JSON-RPC 上报；同时接收并执行 server 下发的任务（ICMP/TCP/HTTP ping、HTTP 请求、DNS 查询、公网 IP 探测、命令执行、WebShell PTY、配置读/写、SelfUpdate），再把任务结果回传。支持配置热重载（由 EditConfig 任务或 SelfUpdate 成功后触发）、多 server 连接（指数退避重连）、启动时 NTP 校时，以及只采集不上报的 `--dry-run` 模式。
+> 概览：`nodeget-agent` 是监控/自动化代理进程，以 WebSocket 客户端身份连接到一个或多个 NodeGet server，周期性采集静态/动态监控数据（CPU、RAM、磁盘、网络、GPU、进程）并通过 JSON-RPC 上报；同时接收并执行 server 下发的任务（ICMP/TCP/HTTP ping、HTTP 请求、DNS 查询、公网 IP 探测、命令执行、WebShell PTY、配置读/写、SelfUpdate），再把任务结果回传。支持配置热重载（由 EditConfig 任务成功后触发）与 SelfUpdate 成功后的进程重启、多 server 连接（指数退避重连）、启动时 NTP 校时，以及只采集不上报并在首轮采集后退出的 `--dry-run` 模式；当前普通启动/重载路径也会先执行同一轮本地监控采集与日志输出，然后才继续建连。
 
 ## 模块结构
 
@@ -53,7 +53,7 @@ agent/
    - logger 初始化：若已初始化则只 `set_max_level`，否则 `simple_logger::init_with_level`。
    - NTP 校时：仅在 `NTP_INIT_DONE` 为 `None` 时调用一次 `fetch_ntp_offset`，随后置 `true` —— reload 永不重新获取 NTP，避免时间跳变（`main.rs:148`）。
    - `update_global_config`：若 `AGENT_CONFIG` 已初始化则写替换内部 `Arc`，否则 `OnceLock::set`；RwLock 中毒 -> `NodegetError::Other`（`main.rs:74`）。
-   - `dry_run()`：总是调用；非 `--dry-run` 为 no-op，`--dry-run` 则打日志后 `exit(0)`。
+   - `dry_run()`：先执行一轮本地静态+动态监控采集并打日志；若 `--dry-run` 为真则随后 `exit(0)`，否则继续正常启动。
    - `init_connections`：为每个 server 创建 per-server 广播通道并 spawn `connection_manager`。
    - `init_process_count_ticker`：通过 `std::sync::OnceLock` 保证全进程仅启动一次。
    - spawn 4 个服务循环到 `handles: Vec<JoinHandle>`：`handle_static_monitoring_data_report`、`handle_dynamic_monitoring_data_report`、`handle_error_message`、`handle_task`。
@@ -70,22 +70,22 @@ reload 触发点：`tasks/mod.rs` 中 EditConfig 成功后 `sleep 300ms` 再 `RE
 | `config_access::get_agent_config` (`config_access.rs:26`) | `pub fn get_agent_config() -> Result<Arc<AgentConfig>, NodegetError>` | Arc::clone 返回配置快照，O(1)；未初始化/RwLock 中毒 -> `NodegetError` |
 | `config_access::current_agent_uuid` (`config_access.rs:41`) | `pub fn current_agent_uuid() -> uuid::Uuid` | 直接读 `agent_uuid`；未初始化/中毒 **panic**（不可恢复不变式） |
 | `config_access::current_agent_uuid_string` (`config_access.rs:57`) | `pub fn current_agent_uuid_string() -> String` | 同上，返回 `.to_string()` |
-| `dry_run::dry_run` (`dry_run.rs:18`) | `pub async fn dry_run()` | 采集一轮静态+动态数据并打日志；不做任何网络 I/O |
-| `ntp::fetch_ntp_offset` (`ntp.rs:46`) | `pub async fn fetch_ntp_offset(ntp_server: &str) -> i64` | 解析 `server:123`、UDP `0.0.0.0:0` 发一次 NTP 请求（10s 超时）；偏移由 `(us/1000.0).round() as i64` 转 ms；任何失败返回 0 |
+| `dry_run::dry_run` (`dry_run.rs:18`) | `pub async fn dry_run()` | 采集一轮静态+动态数据并打日志；普通启动/重载路径也会执行这一轮，本身不做 flag 判断，`main` 在调用后根据 `--dry-run` 决定是否立即退出 |
+| `ntp::fetch_ntp_offset` (`ntp.rs:46`) | `pub async fn fetch_ntp_offset(ntp_server: &str) -> i64` | 解析主机名对应的全部 `SocketAddr`，按地址族分别 bind `0.0.0.0:0` / `[::]:0` 并并发发起 NTP 探测，哪个地址先成功就采用哪个结果；偏移由 `(us/1000.0).round() as i64` 转 ms；全部失败返回 0 |
 | `monitoring::init_process_count_ticker` (`monitoring/mod.rs:27`) | `pub fn init_process_count_ticker()` | 幂等；通过 std `OnceLock` 仅启动一次 5s 进程计数 ticker |
 | `rpc::wrap_json_into_rpc_with_id_1` (`rpc/mod.rs:56`) | `pub fn wrap_json_into_rpc_with_id_1(method: &str, params: Vec<serde_json::Value>) -> String` | 构造 id=1 的 JSON-RPC 字符串；序列化失败时返回 `-32603` 错误字符串而非 panic |
 | `rpc::monitoring_data_report::build_rpc_with_raw_data` (`rpc/monitoring_data_report.rs:64`) | `pub fn build_rpc_with_raw_data(method: &str, token: &str, data_json: &str) -> String` | 手工拼装 id=1 请求：token 走 serde 转义，`data_json` 原样嵌入（必须已是合法 JSON） |
 | `rpc::monitoring_data_report::handle_static_monitoring_data_report` (`rpc/monitoring_data_report.rs:77`) | `pub async fn handle_static_monitoring_data_report()` | 每 `static_report_interval_ms`（默认 5min）上报静态数据 |
 | `rpc::monitoring_data_report::handle_dynamic_monitoring_data_report` (`rpc/monitoring_data_report.rs:136`) | `pub async fn handle_dynamic_monitoring_data_report()` | 每 `summary_interval_ms`（默认 1s）上报 summary；每 `ticks_per_dynamic` tick 额外上报全量动态 |
-| `rpc::handle_error_message` (`rpc/mod.rs:104`) | `pub async fn handle_error_message()` | 订阅各 server downlink，warning 形如 `result.error_id` ∈ 101..=999 的错误通知 |
+| `rpc::handle_error_message` (`rpc/mod.rs:104`) | `pub async fn handle_error_message()` | 订阅各 server downlink，记录 `result.error_id` 可解析为整数的错误通知（协议上通常期望为 nodeget error code） |
 | `rpc::multi_server::init_connections` (`rpc/multi_server.rs:68`) | `pub async fn init_connections(servers: Vec<Server>, connect_timeout: Duration) -> Vec<JoinHandle<()>>` | 为每个 server 建 broadcast(cap 32) + spawn manager；整体替换全局池 map |
 | `rpc::multi_server::send_to` / `subscribe_to` (`rpc/multi_server.rs:556`) | `pub async fn send_to(server_name, Message) -> Result<()>; pub async fn subscribe_to(server_name) -> Result<broadcast::Receiver<Arc<Value>>>` | 上行发送 / 下行订阅；池未初始化/缺失/通道关闭 -> 错误 |
 | `rpc::multi_server::build_connector` (`rpc/multi_server.rs:537`) | `pub fn build_connector(ignore_cert: bool) -> Option<Connector>` | `ignore_cert=false` 返回 `None`（webpki 默认根）；否则返回带 `NoCertificateVerification` 的 Rustls Connector |
 | `tasks::handle_task` (`tasks/mod.rs:335`) | `pub async fn handle_task()` | 两级 JoinSet；过滤 `task_register_task`，`is_task_allowed` 门控，按池/信号量/`time::timeout(TASK_MAX_TIMEOUT)` 执行；结果经 `task_upload_task_result` 回传 |
 | `tasks::execute::execute_command` (`tasks/execute.rs:37`) | `pub async fn execute_command(task: ExecuteTask) -> Result<String>` | 结构化 cmd+args，kill_on_drop + Unix process_group(0)，超时 SIGTERM→SIGKILL，head/tail 截断 |
 | `tasks::dns::query_dns` (`tasks/dns.rs:39`) | `pub async fn query_dns(task: &DnsTask) -> Result<Vec<DnsRecordResult>, NodegetError>` | 支持 A/AAAA/TXT/PTR/MX/NS/SRV/SOA/CNAME/CAA |
-| `tasks::http_request::execute_http_request` (`tasks/http_request.rs:74`) | `pub async fn execute_http_request(task: HttpRequestTask) -> Result<HttpRequestTaskResult>` | 30s 超时，body 流式读取硬上限 64MiB；非 ASCII header/body Base64 编码 |
-| `tasks::ip::ip` (`tasks/ip.rs:50`) | `pub async fn ip() -> IPInfo` | 按 `ip_provider_or_default` 选 Cloudflare 或 IpInfo |
+| `tasks::http_request::execute_http_request` (`tasks/http_request.rs:74`) | `pub async fn execute_http_request(task: HttpRequestTask) -> Result<HttpRequestTaskResult>` | 30s 超时，body 流式读取硬上限 64MiB；无法转成字符串的 header value 与非 UTF-8 body 才会 Base64 编码 |
+| `tasks::ip::ip` (`tasks/ip.rs:50`) | `pub async fn ip() -> IPInfo` | 当前直接读取 `AGENT_CONFIG` 选择 `ip_provider_or_default`，按配置使用 Cloudflare 或 IpInfo |
 | `tasks::pty::handle_pty_url` (`tasks/pty.rs:105`) | `pub async fn handle_pty_url(url, terminal_id, ignore_cert) -> Result<()>` | 10s 连接超时；reserve terminal_id 后运行 PTY 会话 |
 | `tasks::self_update::self_update` (`tasks/self_update.rs:20`) | `pub async fn self_update(tag: &str) -> bool` | 失败一律返回 `false`（任务级错误），成功返回 `true` 由调用方触发重启 |
 
@@ -146,7 +146,7 @@ reload 触发点：`tasks/mod.rs` 中 EditConfig 成功后 `sleep 300ms` 再 `RE
 
 ### HTTP / IP / Ping 常量
 
-- `HTTP_REQUEST_TIMEOUT=30s`、`HTTP_RESPONSE_MAX_BYTES=64MiB`（`http_request.rs:33`）；`IP_BOUND_CLIENTS` (>32 清空，`http_request.rs:26`)。
+- `HTTP_REQUEST_TIMEOUT=30s`、`HTTP_RESPONSE_MAX_BYTES=64MiB`（`http_request.rs:33`）；`IP_BOUND_CLIENTS`（达到 `>=32` 条目前先清空，`http_request.rs:26`）。
 - `CLIENT_V4 / CLIENT_V6` (`ip.rs:32`)：每族一个 `tokio OnceCell<Client>`，绑定 UNSPECIFIED，5s 超时；`IPInfo{ipv4,ipv6}` (`ip.rs:39`)。
 - `ping/http.rs:12`：`GLOBAL_CLIENT`（OnceCell）、`PING_TIMEOUT=10s`。
 - `ping/icmp.rs:17`：`ICMP_PAYLOAD`（8 字节 0）、`PING_TIMEOUT=2s`（含目标 DNS 解析）；`GLOBAL_ICMP_V4_CLIENT / GLOBAL_ICMP_V6_CLIENT` (`:23`)。
@@ -163,6 +163,7 @@ reload 触发点：`tasks/mod.rs` 中 EditConfig 成功后 `sleep 300ms` 再 `RE
 
 - `DEFAULT_NTP_PORT=123`、`NTP_TIMEOUT=10s` (`ntp.rs:14`)。
 - `StdTimestampGen` (`ntp.rs:20`)：基于 `SystemTime`，`init()` 捕获距 UNIX_EPOCH 的 duration（错误 -> 0）。
+- 启动时会对 DNS 解析出的全部 NTP 地址并发发起探测（按地址族分别 bind `0.0.0.0:0` / `[::]:0`），哪个地址先成功就采用哪个偏移；单个地址失败不会阻塞其他地址继续完成。
 - 偏移转换 `(us/1000.0).round() as i64`（**非** 整除，见陷阱）。
 
 ### 构建（`agent/build.rs`）
@@ -173,11 +174,11 @@ reload 触发点：`tasks/mod.rs` 中 EditConfig 成功后 `sleep 300ms` 再 `RE
 
 ### 启动/重载生命周期
 
-`main.rs:130-194` 的单个 `loop` 每轮重新读取配置：`parse_log_level` → logger（已初始化则只调 `set_max_level`）→ 仅当 `NTP_INIT_DONE is None` 时获取 NTP（置 true）→ `update_global_config` → `dry_run()`（非 dry-run 为 no-op）→ `init_connections` → `init_process_count_ticker` → spawn 4 个服务循环 → `tokio::select!{biased; ctrl_c, RELOAD_NOTIFY.notified()}`。reload 由 `tasks/mod.rs:563-569` 的 EditConfig-success 或 SelfUpdate-success 路径触发。
+`main.rs:130-194` 的单个 `loop` 每轮重新读取配置：`parse_log_level` → logger（已初始化则只调 `set_max_level`）→ 仅当 `NTP_INIT_DONE is None` 时获取 NTP（置 true）→ `update_global_config` → `dry_run()`（当前普通启动/重载路径也会执行一轮本地采集与日志输出；若 `--dry-run` 则随后退出）→ `init_connections` → `init_process_count_ticker` → spawn 4 个服务循环 → `tokio::select!{biased; ctrl_c, RELOAD_NOTIFY.notified()}`。reload 由 `tasks/mod.rs:563-569` 的 EditConfig-success 路径触发；SelfUpdate-success 则在短暂 sleep 后直接走平台重启路径。
 
 ### 全局配置单例
 
-`AGENT_CONFIG = OnceLock<RwLock<Arc<AgentConfig>>>` (`main.rs:47`)。`update_global_config` 写新 Arc 或 set OnceLock；所有读经 `config_access::get_agent_config()`（读锁 + Arc::clone，O(1)）；热路径 uuid 访问器 panic-on-missing（无可恢复不变式）。每个上报 tick 都重新读一次配置，立即拾取 server 列表/token/interval 变化。
+`AGENT_CONFIG = OnceLock<RwLock<Arc<AgentConfig>>>` (`main.rs:47`)。`update_global_config` 写新 Arc 或 set OnceLock；大多数读经 `config_access::get_agent_config()`（读锁 + Arc::clone，O(1)）；热路径 uuid 访问器 panic-on-missing（无可恢复不变式）。当前仍有少数直接读 `AGENT_CONFIG` 的站点（如 `tasks/ip.rs` 读取 `ip_provider_or_default()`，`tasks/pty.rs` 读取 `terminal_shell` 与 `agent_uuid`）。每个上报 tick 都重新读一次配置，立即拾取 server 列表/token/interval 变化。
 
 ### 监控采集速率分母
 
@@ -246,7 +247,7 @@ Agent 作为客户端调用/接收的 JSON-RPC（方法名由 server 定义，js
 - **rustls aws-lc-rs provider**：`main.rs` 安装一次并在 `http_request.rs`、`ping/http.rs`、`ip.rs` 经 `OnceLock` helper 惰性重装（吞错），因为 reqwest 用 `rustls-no-provider`。
 - 共享全局状态位于 crate 根（`main.rs`）：`AGENT_ARGS`、`AGENT_CONFIG`、`RELOAD_NOTIFY`、`NTP_INIT_DONE`；其他模块以 `crate::AGENT_CONFIG` 等访问。
 - 热路径配置读统一走 `crate::config_access::get_agent_config()`（返回 `Arc<AgentConfig>`，O(1) Arc clone），绝不深拷贝；仅取 uuid 的热路径用 `current_agent_uuid[_string]()` panic-on-missing 辅助器。
-- 所有后台循环（`handle_error_message`、`handle_task`、静态/动态上报）启动时 `sleep 1s`，再持有外层 JoinSet（生命周期=函数）；reload 时主循环 abort 顶层 handle，JoinSet drop 级联到所有子任务。
+- 所有后台循环都由主循环持有外层 JoinHandle；其中 `handle_error_message`、`handle_task` 启动时先 `sleep 1s`，静态/动态上报循环则先构造 ticker 并消费首次 immediate tick，因此首轮分别等待其配置间隔（默认静态 5min、动态 summary 1s）。reload 时主循环 abort 顶层 handle，JoinSet drop 级联到所有子任务。
 - 错误：内部以 `NodegetError`（ng-core）冒泡；`anyhow` 仅作顶层 main 返回与 `tasks::Result`；子模块各自 `pub type Result<T> = std::result::Result<T, NodegetError>` 或 `anyhow::Result<T>`。
 - 日志用 `log` crate + `simple_logger`；中英混排。Logging targets：`"monitoring"`（`netlink.rs`）、`"task"`（`http_request.rs`、`ping/http.rs`）。
 - JSON-RPC 字符串部分手工拼装（agent 侧无 jsonrpsee client）：`wrap_json_into_rpc_with_id_1(method, params)` 固定 id=1；`build_rpc_with_raw_data(method, token, data_json)` 在热上报路径绕开 `serde_json::Value` 物化。

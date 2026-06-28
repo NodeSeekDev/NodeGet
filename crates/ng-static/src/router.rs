@@ -268,6 +268,10 @@ async fn serve_static_file(
         .status(StatusCode::OK)
         .header(axum::http::header::CONTENT_TYPE, content_type)
         .header(axum::http::header::ETAG, etag.as_str())
+        // Content-Length 必须显式给出：HEAD 请求返回空 body，否则 hyper 会推断出
+        // `Content-Length: 0`，与 GET 的真实实体大小不一致，违反 RFC 9110（HEAD 应反映
+        // GET 的实体元信息）。GET 路径给出正确值同样无害。
+        .header(axum::http::header::CONTENT_LENGTH, data.len().to_string())
         // 防止浏览器对响应做 MIME 嗅探,强制按 Content-Type 解释(配合用户上传内容,
         // 避免 octet-stream 被嗅探成可执行类型)。
         .header("X-Content-Type-Options", "nosniff");

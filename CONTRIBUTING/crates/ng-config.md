@@ -58,7 +58,7 @@ crates/ng-config/src/
 
 | 类型 | 行为 |
 |------|------|
-| `ServerConfig` / `DatabaseConfig` / `LoggingConfig` / `MonitoringBufferConfig` / `AgentConfig` / `Server`(agent) / `IpProvider` | serde 配置 DTO，统一 `#[derive(Serialize, Deserialize, Debug, Clone)]`；例外：agent 的 `Server` 仅 `Clone` + 手写 `Debug`（隐藏 token）。`DatabaseConfig.database_url` 与 `ServerConfig.ws_listener` 为必填，其余皆 `Option<T>`。`IpProvider` 序列化为小写（`"ipinfo"` / `"cloudflare"`） |
+| `ServerConfig` / `DatabaseConfig` / `LoggingConfig` / `MonitoringBufferConfig` / `AgentConfig` / `Server`(agent) / `IpProvider` | serde 配置 DTO / enum，统一支持 `Serialize` / `Deserialize` / `Clone`；多数类型同时 `derive(Debug)`，例外：agent 的 `Server` 仅 `#[derive(Serialize, Deserialize, Clone)]` + 手写 `Debug`（隐藏 token）；`IpProvider` 额外 `derive(Copy)`。`DatabaseConfig.database_url` 与 `ServerConfig.ws_listener` 为必填，其余皆 `Option<T>`。`IpProvider` 序列化为小写（`"ipinfo"` / `"cloudflare"`） |
 
 ## 关键类型与常量
 
@@ -81,15 +81,15 @@ crates/ng-config/src/
 
 - 默认常量 (`crates/ng-config/src/config/agent.rs:16`-`:30`)：`DEFAULT_AGENT_CONFIG_PATH = "config.toml"` (`:16`)；`DEFAULT_DYNAMIC_REPORT_INTERVAL_MS = 1000` (`:18`)；`DEFAULT_DYNAMIC_SUMMARY_REPORT_INTERVAL_MS = 1000` (`:20`)；`DEFAULT_STATIC_REPORT_INTERVAL_MS = 300_000` (`:22`)；`DEFAULT_CONNECT_TIMEOUT_MS = 1000` (`:24`)；`DEFAULT_EXEC_MAX_CHARACTER = 10_000` (`:26`)；`DEFAULT_IP_PROVIDER = IpProvider::Cloudflare` (`:28`)；`DEFAULT_NTP_SERVER = "pool.ntp.org"` (`:30`)。
 - `AgentConfig` (`crates/ng-config/src/config/agent.rs:33`)：除 `agent_uuid: uuid::Uuid`（`#[serde(deserialize_with="deserialize_uuid_or_auto")]`）外全部 `Option<T>`。字段：`log_level`、`dynamic_report_interval_ms`、`dynamic_summary_report_interval_ms`、`static_report_interval_ms`、`agent_uuid`、`connect_timeout_ms`、`exec_max_character: Option<usize>`、`terminal_shell`、`ip_provider: Option<IpProvider>`、`ntp_server`、`dynamic_summary_select_disk: Option<Vec<String>>`、`dynamic_summary_select_network_interface: Option<Vec<String>>`、`server: Option<Vec<Server>>`。
-- `Server`（per-connection）(`crates/ng-config/src/config/agent.rs:77`)：`#[derive(Serialize, Deserialize, Clone)]`（手写 `Debug`）。必填 `name: String`、`server_uuid: String`、`token: String`、`ws_url: String`；其后是一组 `Option<bool>` 开关：`allow_task`/`allow_icmp_ping`/`allow_tcp_ping`/`allow_http_ping`/`allow_web_shell`/`allow_read_config`/`allow_edit_config`/`allow_execute`/`allow_http_request`/`allow_ip`/`allow_dns`/`allow_version`/`allow_self_update`/`ignore_cert`；以及 `allow_task_type: Option<Vec<String>>`（白名单，覆盖所有 `allow_*` 开关；取值为 `task_name()` 字符串，如 `"ping"`/`"tcp_ping"`/`"dns"`/`"execute"`）。
+- `Server`（per-connection）(`crates/ng-config/src/config/agent.rs:77`)：`#[derive(Serialize, Deserialize, Clone)]`（手写 `Debug`）。必填 `name: String`、`server_uuid: String`、`token: String`、`ws_url: String`；其后是一组 `Option<bool>` 开关：`allow_task`/`allow_icmp_ping`/`allow_tcp_ping`/`allow_http_ping`/`allow_web_shell`/`allow_read_config`/`allow_edit_config`/`allow_execute`/`allow_http_request`/`allow_ip`/`allow_dns`/`allow_version`/`allow_self_update`/`ignore_cert`；以及 `allow_task_type: Option<Vec<String>>`（白名单模式：在 `allow_task = true` 已启用任务订阅/处理后，优先覆盖各个具体任务的 `allow_*` 开关；取值为 `task_name()` 字符串，如 `"ping"`/`"tcp_ping"`/`"dns"`/`"execute"`）。
 - `impl std::fmt::Debug for Server` (`crates/ng-config/src/config/agent.rs:126`)：显式罗列除 `token` 外的全部字段，`token` 固定输出 `"***REDACTED***"`。
-- `IpProvider` (`crates/ng-config/src/config/agent.rs:154`)：`#[serde(rename_all = "lowercase")] pub enum IpProvider { IpInfo, Cloudflare }`，从 `"ipinfo"` 或 `"cloudflare"` 反序列化；手写 `Default` 返回 `DEFAULT_IP_PROVIDER`（Cloudflare）。手动实现 `Copy`。
+- `IpProvider` (`crates/ng-config/src/config/agent.rs:154`)：`#[serde(rename_all = "lowercase")] pub enum IpProvider { IpInfo, Cloudflare }`，从 `"ipinfo"` 或 `"cloudflare"` 反序列化；手写 `Default` 返回 `DEFAULT_IP_PROVIDER`（Cloudflare），并通过 derive 获得 `Copy`。
 - `*_or_default` 辅助 (`crates/ng-config/src/config/agent.rs:170`-`:215`)：`dynamic_report_interval_ms_or_default` (`:172`)、`dynamic_summary_report_interval_ms_or_default` (`:179`)、`static_report_interval_ms_or_default` (`:186`)、`connect_timeout_duration() -> Duration` (`:193`)、`exec_max_character_or_default` (`:202`)、`ip_provider_or_default` (`:209`)、`ntp_server_or_default() -> &str` (`:215`)，全部 `#[must_use]`。
 
 ### auto_gen UUID 工具（`config/mod.rs`）
 
 - `deserialize_uuid_or_auto` (`crates/ng-config/src/config/mod.rs:18`)：`pub fn deserialize_uuid_or_auto<'de, D>(deserializer: D) -> Result<Uuid, D::Error> where D: Deserializer<'de>`。先按 `String` 反序列化；若大小写不敏感（`eq_ignore_ascii_case`）等于 `"auto_gen"` 则返回 `Err(custom)`——`auto_gen` 不允许经 serde 往返，必须先被 `get_and_parse_config` 替换；否则 `Uuid::parse_str`。
-- `replace_auto_gen_uuid` (`crates/ng-config/src/config/mod.rs:42`)：`pub(crate) fn replace_auto_gen_uuid(content: &str, key: &str, uuid: &str) -> String`。逐行 TOML 文本改写器：跳过 `#` 注释与空行；对每行定位 key 边界（至 `=` 或空白前），要求 key 大小写匹配且 `key_end == key.len()`；在原始行中定位 `=`，要求值以 ASCII 引号（`'` 或 `"`）起始，检查后续 8 字符（`.get(..8)` 避免非 ASCII 边界 panic）大小写不敏感等于 `"auto_gen"`，然后重构 `before + quote + new_uuid + after_value`。其余内容原样保留；每行追加 `'\n'`。
+- `replace_auto_gen_uuid` (`crates/ng-config/src/config/mod.rs:42`)：`pub(crate) fn replace_auto_gen_uuid(content: &str, key: &str, uuid: &str) -> String`。逐行 TOML 文本改写器：跳过 `#` 注释与空行；对每行定位 key 边界（至 `=` 或空白前），要求 `key_end == key.len()` 且 key 比较大小写不敏感；在原始行中定位 `=`，要求值以 ASCII 引号（`'` 或 `"`）起始，检查后续 8 字符（`.get(..8)` 避免非 ASCII 边界 panic）大小写不敏感等于 `"auto_gen"`，然后重构 `before + quote + new_uuid + after_value`。其余内容原样保留；每行追加 `'\n'`。
 
 ## 内部机制
 
@@ -121,8 +121,8 @@ crates/ng-config/src/
 
 | 命名空间 | 方法 | 参数 | 所需权限 | 行为 |
 |----------|------|------|----------|------|
-| `nodeget-server` | `read_config` | `token: String`（Super Token `key:secret`） | Super Token（id=1）— `ensure_super_token` 对所有非 super token 返回 `PermissionDenied` | 经 `ensure_super_token` 鉴权 → 取 `SERVER_CONFIG_PATH`（未设返回 `Other`）→ `validate_config_path` → `tokio::fs::read_to_string`。返回**原始 TOML 文本**，非类型化配置。由 server 二进制注册到 `nodeget-server` 命名空间 |
-| `nodeget-server` | `edit_config` | `token: String`（Super Token）、`config_string: String`（新 TOML） | Super Token（id=1） | 鉴权 → `toml::from_str::<ServerConfig>` 预校验（落盘前拦截畸形配置，丢弃值）→ 校验路径 → 原子写 `{path}.tmp.{uuid}` 再 `rename`（失败删临时文件）→ 若 `RELOAD_NOTIFY` 已初始化则 `notify_one()`。**不**更新内存中的 `SERVER_CONFIG`——由 server 的重载监听任务重新读取并调 `set_server_config` |
+| `nodeget-server` | `read_config` | `token: String`（Super 凭证；`TokenOrAuth` 接受 `key:secret` 或 `username\|password`） | Super Token（id=1）— `ensure_super_token` 对所有非 super 凭证返回 `PermissionDenied` | 经 `ensure_super_token` 鉴权 → 取 `SERVER_CONFIG_PATH`（未设返回 `Other`）→ `validate_config_path` → `tokio::fs::read_to_string`。返回**原始 TOML 文本**，非类型化配置。由 server 二进制注册到 `nodeget-server` 命名空间 |
+| `nodeget-server` | `edit_config` | `token: String`（Super 凭证；`TokenOrAuth` 接受 `key:secret` 或 `username\|password`）、`config_string: String`（新 TOML） | Super Token（id=1） | 鉴权 → `toml::from_str::<ServerConfig>` 预校验（落盘前拦截畸形配置，丢弃值）→ 校验路径 → 原子写 `{path}.tmp.{uuid}` 再 `rename`（失败删临时文件）→ 若 `RELOAD_NOTIFY` 已初始化则 `notify_one()`。**不**更新内存中的 `SERVER_CONFIG`——由 server 的重载监听任务重新读取并调 `set_server_config` |
 
 鉴权流程（两方法共享）：`ensure_super_token` (`crates/ng-config/src/server_rpc.rs:21`) 按"RPC 鉴权委托"中描述的 pipeline 执行，依赖 `ng-core` 的 `PermissionChecker` 注入。
 
@@ -132,12 +132,12 @@ crates/ng-config/src/
 - **中文文档注释**：rustdoc 与行内注释统一中文，符合 NodeGet 全局约定。
 - **Default-None Option 模式**：所有配置旋钮为 `Option<T>`，使仅含必填字段的 TOML 即可解析；消费者调 `*_or_default()` 辅助物化有效值（`crates/ng-config/src/config/agent.rs:170-217`）。
 - **Feature 门控**：`default = []` 仅暴露类型/解析器（agent 安全依赖）；`server` feature 门控 `server_rpc`（RPC + 鉴权副作用）（`crates/ng-config/src/lib.rs:26-27`）。
-- **serde 派生**：所有配置结构体 `#[derive(Serialize, Deserialize, Debug, Clone)]` 以支持 TOML+JSON 双向；`IpProvider` 用 `#[serde(rename_all = "lowercase")]` + 手动 `Copy`（`crates/ng-config/src/config/agent.rs:154-161`）。
+- **serde 派生**：多数配置结构体 `#[derive(Serialize, Deserialize, Debug, Clone)]` 以支持 TOML+JSON 双向；例外是 agent 侧 `Server` 仅 `#[derive(Serialize, Deserialize, Clone)]` + 手写 `Debug`；`IpProvider` 用 `#[serde(rename_all = "lowercase")]` 并通过 derive 获得 `Copy`（`crates/ng-config/src/config/agent.rs:75-77`、`:125-160`）。
 - **自定义反序列化器**：`deserialize_uuid_or_auto` 用 `eq_ignore_ascii_case` 做大小写不敏感的 `"auto_gen"` 拒绝（`crates/ng-config/src/config/mod.rs:24`）。
 - **CLI 框架**：palc（`Parser` + `Subcommand`）；`ServerArgs` 用子命令枚举，`AgentArgs` 用扁平字段 + `default_value_t`（`crates/ng-config/src/args_parse/server.rs:3`、`crates/ng-config/src/args_parse/agent.rs:4`）。
 - **原子写惯用法**：`server_rpc::edit_config` 与两个 `get_and_parse_config` 一致采用"写临时文件再 rename"。**注意两者临时文件命名不同**：server RPC 加随机 UUID 后缀（`{path}.tmp.{uuid}`），加载器用 `with_extension("tmp")`。
-- **日志 target**：`"server"` 用于 `server_rpc.rs` 与 `server.rs` 的配置校验；`"config"` 用于 `agent.rs` 的校验告警（仅 `warn!`/`debug!`/`trace!`，本 crate 内不使用 `info!`/`error!`）。
-- **`#[must_use]`**：所有单例 getter/setter 标注（`crates/ng-config/src/lib.rs:44`、`:50`、`:56`）。
+- **日志 target**：`server_rpc.rs` 使用 `"server"`；`config/agent.rs` 在配置校验失败时用 `"config"` 发出 `warn!`。本 crate 内还会在 `args_parse/*.rs` 无 target 地输出帮助信息（`tracing::info!`）。
+- **`#[must_use]`**：三个单例 getter 标注（`crates/ng-config/src/lib.rs:44`、`:50`、`:56`）；setter / init 函数未标注。
 - **错误转换**：`server_rpc` 将 `anyhow::Error` → `NodegetError` → `jsonrpsee::ErrorObjectOwned`；配置解析返回 `Box<dyn Error + Send + Sync>` 以便跨 crate 异步使用。
 
 ## 注意事项与陷阱
@@ -147,7 +147,7 @@ crates/ng-config/src/
 - **`replace_auto_gen_uuid` 是文本级改写器**（`crates/ng-config/src/config/mod.rs:42`）：仅在值的首 8 字符大小写不敏感等于 `"auto_gen"` 时替换。若引号内有前导空白、key 缩进超过值、或 TOML 使用多行/数组形式，替换会被静默跳过，文件残留字面量 `auto_gen`，随后 `toml::from_str` 解析失败（被 `deserialize_uuid_or_auto` 拒绝）。此外每行追加 `'\n'`，原本不以换行结尾的文件会多出一行（轻微内容漂移）。
 - **临时文件命名不一致**（`crates/ng-config/src/config/server.rs:158`）：`get_and_parse_config` 用 `with_extension("tmp")`——这是替换而非追加扩展名：`config.toml` → `config.tmp`（正常）、`config`（无扩展名）→ `config.tmp`、`config.beta.toml` → `config.beta.tmp`。而 `server_rpc::edit_config` 用 `{path}.tmp.{uuid}`，两个写者若同时运行可能在 `.tmp` 名上碰撞，互不协调。
 - **多倍数校验仅在加载时强制**（`crates/ng-config/src/config/agent.rs:286-300`）：使用 `*_or_default()` 比较，故两者皆缺省时平凡通过（1000 是 1000 的倍数）。不变式：`dynamic_report_interval_ms` 必须是 `dynamic_summary_report_interval_ms` 的整数倍——代码仅在加载时校验，后续修改不重新校验。`summary==0` 守卫必须保留，否则 `is_multiple_of(0,0)==true` 会漏过。
-- **`par()` 控制流易误读**（`crates/ng-config/src/args_parse/server.rs:64-67`）：`ServerArgs::par` 与 `AgentArgs::par` 在无参数分支中即便 `try_parse_from` 返回 `Ok` 也 `exit(0)`（`if let Err` 分支记录日志并退出，`Ok` 因 `-h` 在解析期即退出而不可达，读起来像 `Ok` 会穿透到 `Self::parse()`——实际不会）。两函数均含 `// todo: add check`，表示解析后校验被有意推迟，**切勿假设参数已校验**。
+- **`par()` 控制流易误读**（`crates/ng-config/src/args_parse/server.rs:64-67`）：当前无参数时之所以退出，是因为构造的 `-h` 解析在 palc 中走 `Err` 分支，随后记录帮助并 `exit(0)`；代码本身并没有对 `try_parse_from(... )` 的 `Ok` 路径显式退出，若未来 help 行为变化，这段控制流会跟着变。两函数均含 `// todo: add check`，表示解析后校验被有意推迟，**切勿假设参数已校验**。
 - **`Server` 的 `Debug` redact 是显式白名单**（`crates/ng-config/src/config/agent.rs:126`）：手写 `Debug` 将 `token` 输出为 `"***REDACTED***"`，但逐字段罗列——新增敏感字段若不更新此 impl **不会**被 redact。且派生的 `Clone`/`Serialize` 仍泄露 token，仅 `Debug` 安全。
 - **两个 setter 语义不对称**（`crates/ng-config/src/lib.rs:70-83` 对比 `:90-94`）：`set_server_config` 返回 `anyhow::Result<()>` 且容忍重复调用（幂等）；`set_server_config_path` 返回 `Result<(), String>` 并在第二次调用报 `"SERVER_CONFIG_PATH already set"`。维护者切勿假设两者对称。
 - **`edit_config` 不保证热应用**（`crates/ng-config/src/server_rpc.rs:163`）：预解析 `ServerConfig` 校验 TOML 但丢弃结果，从不调 `set_server_config`。内存配置更新发生在 server 二进制的重载监听任务（由 `RELOAD_NOTIFY` 触发）。若重载监听缺失或故障，`edit_config` 返回 `Ok(true)` 但运行中的 server 仍用旧配置——RPC 成功不等于已生效。

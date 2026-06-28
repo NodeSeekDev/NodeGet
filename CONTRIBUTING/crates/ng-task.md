@@ -123,7 +123,7 @@ crates/ng-task/src/
 
 ### 阻塞等待者生命周期
 
-`create_task_blocking`（`create_task_blocking.rs:113`）在 `send_event` **之前**按 `task_id` 注册 oneshot 等待者，关闭“agent 比 注册 更快返回”的竞态。`upload_task_result`（`upload_task_result.rs:174`）调用 `notify_blocking_waiter(task_id, response)`，移除条目并在 oneshot 上发送。超时移除等待者（及 DB 行）以防泄漏。
+`create_task_blocking`（`create_task_blocking.rs:112-113`）在 `send_event` **之前**按 `task_id` 注册 oneshot 等待者，关闭“agent 比 注册 更快返回”的竞态。`upload_task_result`（`upload_task_result.rs:172-175`）调用 `notify_blocking_waiter(task_id, response)`，移除条目并在 oneshot 上发送。`send_event` 失败时会同时移除等待者并删除刚插入的 DB 行；**超时或 oneshot 通道关闭时只移除等待者，任务行保持 `success = NULL`，允许迟到结果稍后落库**。
 
 ### Forwarder 任务生命周期
 
@@ -143,7 +143,7 @@ crates/ng-task/src/
 
 ### MonitoringUuidProvider 注入
 
-`create_task`/`create_task_blocking` 调用 `monitoring_uuid_provider().map(|p| p.get_or_insert(target_uuid))` 并以 `let _ =` 丢弃结果（`rpc/mod.rs:108-110`）。若 provider 未设置或调用失败，任务仍照常派发——这是对权威 agent 表的尽力登记。
+`create_task`/`create_task_blocking` 分别在 `create_task.rs:107-110` 与 `create_task_blocking.rs:107-110` 中通过 `if let Some(uuid_provider) = monitoring_uuid_provider()` 调用 `get_or_insert(target_uuid)`，并以 `let _ =` 丢弃结果。若 provider 未设置或调用失败，任务仍照常派发——这是对权威 agent 表的尽力登记。
 
 ### 查询/删除条件编译
 
@@ -151,7 +151,7 @@ query 与 delete 均构建带相同过滤器的并行 select/delete 查询，并
 
 ### query 中的流式序列化
 
-`query.rs:207` 通过 `into_json().stream(db)` 流式拉取结果，预分配 `Vec<u8>`（容量 = effective_limit * 500，saturating），并通过 `serde_json::to_writer` 直接序列化每行。`ng_core::utils::server_json` 辅助函数将 `id` 重命名为 `task_id`，并将 JSON 字符串形式的 `task_event_type`/`task_event_result` 字段就地解析为对象。
+`query.rs:210-229` 通过 `into_json().stream(db)` 流式拉取结果，预分配 `Vec<u8>`（容量 = `limit_count.unwrap_or(DEFAULT_LIMIT) * 500`，saturating；即使 `Last` 也沿用 `DEFAULT_LIMIT` 的容量估算），并通过 `serde_json::to_writer` 直接序列化每行。`ng_core::utils::server_json` 辅助函数将 `id` 重命名为 `task_id`，并将 JSON 字符串形式的 `task_event_type`/`task_event_result` 字段就地解析为对象。
 
 ### `upload_task_result` 中的 TOCTOU 规避
 
@@ -163,15 +163,15 @@ query 与 delete 均构建带相同过滤器的并行 select/delete 查询，并
 
 ## RPC 方法
 
-命名空间 `task`（自定义 jsonrpsee fork，分隔符 `_`，故方法名为 `task_register_task`、`task_create_task`、`task_create_task_blocking`、`task_upload_task_result`、`task_query`、`task_delete`）。除 `register_task` 订阅外，所有方法返回 `RpcResult<Box<RawValue>>` 并包裹在 `rpc_exec!` 中以统一日志。每个 handler 通过 `token_identity(&token)` 开启 `tracing::info_span!(target: "task", ...)` 并对 body 进行 instrument；订阅的转发任务使用克隆的 span，spawn 前丢弃以避免继承。
+命名空间 `task`（自定义 jsonrpsee fork，分隔符 `_`，故方法名为 `task_register_task`、`task_create_task`、`task_create_task_blocking`、`task_upload_task_result`、`task_query`、`task_delete`）。除 `register_task` 订阅外，所有方法返回 `RpcResult<Box<RawValue>>` 并包裹在 `rpc_exec!` 中；handler 自身与内部日志使用 `target: "task"` 的 span/事件，而 `rpc_exec!` 的统一成功/失败日志记录在 `target: "rpc"`。每个 handler 通过 `token_identity(&token)` 开启 `tracing::info_span!(target: "task", ...)` 并对 body 进行 instrument；订阅的转发任务使用克隆的 span，spawn 前丢弃以避免继承。
 
 | 方法 | 参数 | 所需权限 | 行为 |
 |---|---|---|---|
 | `register_task`（订阅） | `token: String, uuid: Uuid`（item=`TaskEvent`，unsubscribe=`unregister_task`） | `Task::Listen`，作用于订阅的 `AgentUuid` | agent 订阅其任务流。校验 token（失败拒 code 101），检查 `Task::Listen`（拒绝 102，错误映射），接受 sink，按 uuid 以新 `reg_id` 注册 `mpsc(32)` 会话，spawn 转发协程将 `TaskEvent` 序列化到 WebSocket |
 | `create_task` | `token, target_uuid, task_type` | `Task::Create(task_name)` for `Scope::AgentUuid(target_uuid)` | 校验任务类型（`Execute` cmd 非空），授权，插入带随机 10 字符 `task_token` 的任务行，确保目标 UUID 在 monitoring_uuid 中，经 `send_event` 派发；发送失败则回滚行并返回 `AgentConnectionError`。返回 `{"id":task_id}` |
-| `create_task_blocking` | `token, target_uuid, task_type, timeout_ms` | `Task::Create(task_name)` **且** `Task::Read(task_name)` for `Scope::AgentUuid(target_uuid)` | 同 `create_task` 但派发前注册阻塞等待者，超时钳制到 300s，在 oneshot 上等待 agent 上传的 `TaskEventResponse`，返回完整序列化响应。发送失败/超时/通道关闭：移除等待者并删除 DB 行 |
+| `create_task_blocking` | `token, target_uuid, task_type, timeout_ms` | `Task::Create(task_name)` **且** `Task::Read(task_name)` for `Scope::AgentUuid(target_uuid)` | 同 `create_task` 但派发前注册阻塞等待者，超时钳制到 300s，在 oneshot 上等待 agent 上传的 `TaskEventResponse`，返回完整序列化响应。发送失败时移除等待者并删除 DB 行；超时或通道关闭时仅移除等待者，任务行保持挂起，迟到结果仍可由 `upload_task_result` 落库 |
 | `upload_task_result` | `token, task_response: TaskEventResponse` | `Task::Write(task_name)` for `Scope::AgentUuid(agent_uuid)`；super-token 旁路 | 两阶段权限（super-token 旁路，否则先做通用 any-`Task::Write` 预检规避时序攻击，再做精确 `Task::Write(task_name)`）。校验三元组；拒绝重复上传（success 已设）；以 `success IS NULL` 守卫更新 timestamp/success/error_message/task_event_result；唤醒阻塞等待者。返回 `{"id":task_id}` |
-| `query` | `token, task_data_query: TaskDataQuery` | 每个 Uuid 条件 -> `Task::Read(task_name)` for `Scope::AgentUuid(uuid)`；无 Uuid 条件则 `Scope::Global`；无 Type 条件则全部 11 种类型，否则仅命名类型 | 流式输出匹配行为 JSON 数组。默认上限 1000（asc）；`Last` -> 1 行 desc；`Limit(n)` 钳到 10000 desc。重命名 `id->task_id` 并解析 JSON 字符串字段。返回 `RawValue` JSON 数组 |
+| `query` | `token, task_data_query: TaskDataQuery` | 每个 Uuid 条件 -> `Task::Read(task_name)` for `Scope::AgentUuid(uuid)`；无 Uuid 条件则 `Scope::Global`；无 Type 条件则全部 12 种当前任务类型（含 `self_update`），否则仅命名类型 | 流式输出匹配行为 JSON 数组。默认上限 1000（asc）；`Last` -> 1 行 desc；`Limit(n)` 钳到 10000 desc。重命名 `id->task_id` 并解析 JSON 字符串字段。返回 `RawValue` JSON 数组 |
 | `delete` | `token, conditions: Vec<TaskQueryCondition>` | 同 query 但 `Task::Delete` | 删除匹配行。`Last`/`Limit`：先选 ID（Timestamp/Id desc）再 `delete_by_id.is_in(ids)`；否则带过滤 `delete_many`。Limit 钳到 10000。返回 `{"success":true,"deleted":N,"condition_count":N}` |
 
 错误处理：每个 handler 将逻辑包裹在返回 `anyhow::Result` 的内部 async 块中，再经 `anyhow_to_nodeget_error` 映射为 jsonrpsee `ErrorObject::owned`；query/delete 还通过 `anyhow_error_to_raw` 附带额外 JSON 数据载荷。
@@ -182,16 +182,16 @@ ng-task **不拥有** `task` 实体（定义于 `crates/ng-db/src/entity/task.rs
 
 | 表名 | 列 | 约束 / 索引 / 关系 | 备注 |
 |---|---|---|---|
-| `task` | `id`（i64，primary_key）、`uuid`（Uuid）、`token`（String）、`cron_source`（Option<String>）、`timestamp`（Option<i64> ms）、`success`（Option<bool>）、`error_message`（Option<String>）、`task_event_type`（Json——序列化的 `TaskEventType`）、`task_event_result`（Option<Json>——序列化的 `TaskEventResult`） | Relation 枚举为空——task **无** FK 关系 | `delete.rs` 明确指出删除任务不影响 monitoring_uuid，也无需 cache reload。`success=NULL` 表示任务仍在运行/挂起 |
+| `task` | `id`（i64，primary_key）、`uuid`（Uuid）、`token`（String）、`cron_source`（Option<String>）、`timestamp`（Option<i64> ms）、`success`（Option<bool>）、`error_message`（Option<String>）、`task_event_type`（Json——序列化的 `TaskEventType`）、`task_event_result`（Option<Json>——序列化的 `TaskEventResult`） | 无 FK 关系；索引：`idx-task-uuid-timestamp`（`uuid,timestamp`）、`idx-task-cron-source`（`cron_source`）、`idx-task-task_event_type`（Postgres 为 GIN，SQLite 为普通索引） | `delete.rs` 明确指出删除任务不影响 monitoring_uuid，也无需 cache reload。迁移把 `success` 定义为 nullable 且默认值 `false`，但 ng-task 在“运行中/待结果”阶段仍写入 `NULL`；`success=NULL` 表示任务仍在运行/挂起 |
 
-无迁移步骤归 ng-task 所有（迁移位于 ng-db）。`task_event_type` 与 `task_event_result` 以 JSON 列存储；Postgres 用 `JSONB ?` 查类型键，SQLite 将列转文本后 `LIKE`。
+无迁移步骤归 ng-task 所有（迁移位于 ng-db）。`task_event_type` 与 `task_event_result` 以 JSON 列存储；Postgres 用 `JSONB ?` 查类型键，且 `task_event_type` 上有 GIN 索引；SQLite 将列转文本后 `LIKE`，并在该列上建普通索引。
 
 ## Crate 内部约定
 
 - **Feature gate**：`default = []` 仅暴露 types（`TaskEventType`、`TaskEvent`、`TaskEventResult`、`TaskEventResponse`、各参数/结果结构体、`query` 模块）；`server` feature 门控 rpc 模块、`TaskManager`、`MonitoringUuidProvider`、注入 setter。
 - **自定义 jsonrpsee fork**：命名空间分隔符为 `_` 非 `.`，方法名 `task_*`，经 `#[rpc(server, namespace = "task")]` + `#[method/subscription(name = ...)]` 定义。
-- **统一日志**：所有 RPC 方法返回 `RpcResult<Box<RawValue>>` 并包裹在 `rpc_exec!` 中（`register_task` 订阅除外）。
-- **tracing 目标**：`target: "task"`；订阅的转发任务用克隆 span，spawn 前丢弃以避免继承 entry guard。
+- **统一日志**：除 `register_task` 订阅外，RPC 方法都返回 `RpcResult<Box<RawValue>>` 并包裹在 `rpc_exec!` 中；handler 自身事件记到 `target: "task"`，`rpc_exec!` 的统一完成/失败日志记到 `target: "rpc"`。
+- **tracing 目标**：`task` handler/span 使用 `target: "task"`；订阅的转发任务用克隆 span，spawn 前丢弃以避免继承 entry guard。
 - **Serde**：枚举 `TaskEventType`、`TaskEventResult`、`DnsRecordType`、`TaskQueryCondition` 均用 `rename_all="snake_case"`。
 - **错误映射**：handler 内部用 `anyhow::Result`，再经 `anyhow_to_nodeget_error` 映射；query/delete 额外经 `anyhow_error_to_raw` 附带 JSON 数据载荷。
 - **注释**：doc 与行内注释为中文；枚举变体 doc 为中文。
@@ -200,17 +200,17 @@ ng-task **不拥有** `task` 实体（定义于 `crates/ng-db/src/entity/task.rs
 
 ## 注意事项与陷阱
 
-- **切勿**在新增任务变体时只改一处：`TaskEventType::task_name`（`crates/ng-task/src/types/mod.rs:153`）与 `TaskEventResult::task_name`（`crates/ng-task/src/types/mod.rs:261`）是两个独立 const fn，必须手动同步；此外还要更新 `permission_field`、`validate_task_type` 的 match、以及 `query.rs`/`delete.rs` 中各 11 项的 `all_task_types` 数组。
-- **`all_task_types` 数组必须与 `TaskEventType` 同步**：`crates/ng-task/src/rpc/query.rs:40`（及 delete.rs）的硬编码数组当前列 11 种（`ping/tcp_ping/http_ping/http_request/web_shell/execute/read_config/edit_config/ip/version/dns`），**不含 `SelfUpdate`**。新增任务类型时若不同步此数组，无 Type 条件的 query/delete 会静默缺失对该类型的权限覆盖。
+- **切勿**在新增任务变体时只改一处：`TaskEventType::task_name`（`crates/ng-task/src/types/mod.rs:153`）与 `TaskEventResult::task_name`（`crates/ng-task/src/types/mod.rs:261`）是两个独立 const fn，必须手动同步；此外还要更新 `permission_field`、`validate_task_type` 的 match、以及 `query.rs`/`delete.rs` 中各 12 项的 `all_task_types` 数组。
+- **`all_task_types` 数组必须与 `TaskEventType` 同步**：`crates/ng-task/src/rpc/query.rs:42-55`（及 delete.rs:44-57）的硬编码数组当前列出 12 种任务类型，已包含 `self_update`。新增任务类型时若不同步此数组，无 Type 条件的 query/delete 会静默缺失对该类型的权限覆盖。
 - **`TaskResponseItem` 未被使用**：`crates/ng-task/src/types/query.rs:48` 定义但 query RPC 并不序列化进它（手工塑形 JSON）。`task_id` 在此为 `i64` 而 `TaskEvent` 为 `u64`——若将 query.rs 切换为使用此结构体，必须协调类型。
 - **`send_event` 用 `try_send`**：`crates/ng-task/src/rpc/mod.rs:467`——满 32 容量队列或未知 UUID 均 `Err(104)`，使 `create_task` 返回 `AgentConnectionError`（104）并回滚刚插入的行。调用方必须重试；这是有意的（防 RPC handler 挂起），但负载下可能导致任务抖动。两个错误仅能从 message 字符串区分。
 - **`set_monitoring_uuid_provider` 静默忽略二次调用**：`crates/ng-task/src/rpc/mod.rs:67` 以 `let _ = .set()` 设置，第一个 provider 永久获胜；进程内重启或二次注册会丢弃新 provider 且无错误。
-- **monitoring_uuid 登记失败被忽略**：`crates/ng-task/src/rpc/mod.rs:108` 以 `let _ =` 丢弃 `get_or_insert` 错误，任务照常派发——目标 agent 可能不在权威 agent 表中，影响依赖该表的其他子系统。
-- **`create_task_blocking` 超时的竞态**：`crates/ng-task/src/rpc/create_task_blocking.rs:156` 超时时移除等待者并删除 DB 行，但已在途（超时前 agent 已收到事件）的迟到结果随后在 `upload_task_result` 的三元组查找中失败（NotFound），agent 的工作被静默丢弃——可接受但需知晓。
+- **monitoring_uuid 登记失败被忽略**：`crates/ng-task/src/rpc/create_task.rs:107-110` 与 `create_task_blocking.rs:107-110` 以 `let _ =` 丢弃 `get_or_insert` 错误，任务照常派发——目标 agent 可能不在权威 agent 表中，影响依赖该表的其他子系统。
+- **`create_task_blocking` 超时后的迟到结果**：`crates/ng-task/src/rpc/create_task_blocking.rs:155-160` 超时只移除等待者，不删除 DB 行；若 agent 之后仍上传结果，`upload_task_result` 仍可匹配三元组并把结果落库，只是原阻塞调用已返回超时。
 - **`create_task_blocking` 回滚错误被吞**：`crates/ng-task/src/rpc/create_task_blocking.rs:124` 的 send_event 错误路径中 DB 行删除错误以 `let _ = ...exec(db).await` 静默丢弃（不同于 `create_task` 会记录日志）；失败的回滚会留下 `success=NULL` 的孤儿挂起行。
 - **Type 条件可能误判**：`crates/ng-task/src/rpc/query.rs:151`——JSONB 键存在性检查非值匹配。Postgres `?` 测顶层键；SQLite 的 LIKE 模式 `%"<type_key>":%` 在同子串出现在嵌套值/字符串内时**会假阳性**。镜像 `crontab_result` 行为。
 - **`task_id` 无符号转换**：`crates/ng-task/src/rpc/create_task.rs:113` 用 `cast_unsigned()` 构造 `TaskEvent.task_id`（u64），但 DB 列是 `i64`；正常自增无碍，但手工插入的负 id 在线路上会回绕成巨大 u64。
 
 ## 依赖关系
 
-ng-task 是业务 crate，依赖 `ng-core`（错误类型、`NodegetError`、`Scope`/`Permission`/`Task`、`utils::server_json`、token 身份）、`ng-db`（`task` 实体、`RpcHelper`、`try_set_json`、DB 连接全局）、`ng-infra`（`rpc_exec!` 宏、`token_identity`）以及 `ng-token`（`PermissionChecker`、`TokenOrAuth`、token 校验、`generate_random_string`）。其 `default = []` 配置使其可被 agent 安全依赖（agent 仅用 types）；`server` feature 由 server binary 启用。server binary 在 `serve.rs` 注册 `TaskMonitoringUuidProvider`（实现 `MonitoringUuidProvider`），并将 `rpc_module()` 合并入 `build_modules()`。agent 端消费 `TaskEvent`/`TaskEventResponse` 类型与 `permission_field` 来本地授权执行。
+ng-task 是业务 crate。默认配置直接依赖 `ng-core`（错误类型、RBAC 数据结构、`TokenOrAuth`、`PermissionChecker` 访问入口、`generate_random_string`、JSON 辅助）以及 serde/url/uuid 等 types-only 依赖；开启 `server` feature 后再引入 `ng-db`（`task` 实体、`RpcHelper`、`rpc_exec!`、`token_identity`、主库访问）和 `jsonrpsee`、`tokio`、`sea-orm`、`tracing`、`futures-util`、`anyhow`。其 `default = []` 配置使其可被 agent 安全依赖（agent 仅用 types）；`server` feature 由 server binary 启用。server binary 在 `serve.rs` 注册 `TaskMonitoringUuidProvider`（实现 `MonitoringUuidProvider`），并在 `rpc_nodeget.rs::build_modules()` 中合并 `ng_task::rpc_module()`。agent 端消费 `TaskEvent`/`TaskEventResponse` 类型与 `permission_field` 来本地授权执行。

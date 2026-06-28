@@ -133,6 +133,12 @@ impl DbBackedCache for TokenCache {
         // 导致旧超级令牌凭据通过 by_key 认证成功但 is_super=false（权限降级）。
         // 先写 inner 后写 SUPER_TOKEN_GLOBAL 时，窗口期内 SUPER_TOKEN_GLOBAL 仍是旧凭据，
         // 旧凭据匹配超级令牌检查返回 is_super=true（正确），而 by_key 已更新不会产生误匹配。
+        //
+        // 对"新超级令牌凭据"（roll_super_token 后刚下发的新 key）的窗口期影响：
+        // inner 已更新、SUPER_TOKEN_GLOBAL 尚为旧凭据的极短窗口内，新 key 不会命中
+        // 超级令牌检查（与旧 key 不等），转而走 by_key 命中、is_super=false，再走 limit 检查。
+        // 而超级令牌的 limit 为空 `[]`，空 limit = 无任何权限 = 请求被拒绝（fail-closed），
+        // 即新凭据在该毫秒级窗口内请求失败、需客户端重试。这是可用性影响，而非权限降级越权。
         let mut guard = recover_write(&self.inner);
         let old_by_key = std::mem::replace(&mut guard.by_key, by_key);
         let old_by_username = std::mem::replace(&mut guard.by_username, by_username);

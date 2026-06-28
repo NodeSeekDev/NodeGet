@@ -36,7 +36,7 @@
 | `RuntimeLimits::from_model` | `pub fn from_model(max_run_time_ms: Option<i64>, max_stack_size_bytes: Option<i64>, max_heap_size_bytes: Option<i64>) -> Self` | 映射 DB 字段：`Some(n>0)` -> `n`（`try_from`，溢出回退默认），其余（NULL / 非正 / 越界）一律回退 `DEFAULT_*`。 |
 | `RuntimeLimits::effective_timeout` | `pub fn effective_timeout(self, caller_soft_timeout: Option<Duration>) -> Duration` | hard = `max_run_time_ms`；给出 soft 时返回 `hard.min(soft)`，否则 hard。 |
 | `compile_js_module_to_bytecode` | `pub fn compile_js_module_to_bytecode(js_code: impl AsRef<str>) -> Result<Vec<u8>, Error>` | 启 current_thread runtime + QuickJS，初始化 globals（与执行路径一致），`Module::declare` 后 `module.write(WriteOptions::default())` 序列化 bytecode；拒绝 NUL 字节。 |
-| `js_runner` | `pub fn js_runner(js_code: JsCodeInput, run_type, input_params, env_value, current_script_name: Option<String>, inline_caller: Option<String>, inline_depth: u32, caller_soft_timeout: Option<Duration>, limits: RuntimeLimits) -> Result<Value, Error>` | 一次式执行器：加载 source 或 bytecode、eval、设置 `__nodeget_entry`、运行 `INVOKE_SCRIPT_JS`、返回序列化 `Value`。watchdog + interrupt handler 强超时；按 `__nodeget_fetch_used` 条件触发 `DRAIN_IO_MS` 排空。 |
+| `js_runner` | `pub fn js_runner(js_code: JsCodeInput, run_type, input_params, env_value, current_script_name: Option<String>, inline_caller: Option<String>, inline_depth: u32, caller_soft_timeout: Option<Duration>, limits: RuntimeLimits) -> Result<Value, Error>` | 一次式执行器：加载 source 或 bytecode、eval、设置 `__nodeget_entry`、运行 `INVOKE_SCRIPT_JS`、返回序列化 `Value`。watchdog + interrupt handler 强超时；成功路径按 `__nodeget_fetch_used` 条件触发 `DRAIN_IO_MS` 排空，JS 执行错误或外层 timeout 时会保守地同样执行一次 drain。 |
 | `js_runner_source_mode` | `pub fn js_runner_source_mode(source_code: &str, script_name: &str, run_type, input_params, env_value, caller_soft_timeout, limits) -> Result<Value, Error>` | 形态同 `js_runner`，但始终 source 模式、模块名 `{script_name}.js`（更好的栈追踪）、`inline_caller=None`、`inline_depth=0`。 |
 | `js_error` | `pub fn js_error(stage: &'static str, message: impl Into<String>) -> Error` | 构造带 stage 标签的 `Error::new_from_js_message`（from = stage，type tag = `String`）。 |
 | `format_js_error` | `pub fn format_js_error(&Error) -> String` | 对带非空 message 的 `Error::FromJs` 返回 `[from] msg`，否则 Display。 |
@@ -69,8 +69,8 @@
 | `DEFAULT_MAX_STACK_SIZE_BYTES` | 同上 | `1 MiB`。 |
 | `DEFAULT_MAX_HEAP_SIZE_BYTES` | 同上 | `8 MiB`。 |
 | `MAX_INLINE_DEPTH` | （`GLOBALS_JS` 内） | `10`，JS 侧 `__nodeget_inline_call` 强制，Rust 侧 `inline_depth` 透传，二者必须同步。 |
-| `RPC_BUF_SIZE` | `crates/ng-js-runtime/src/nodeget.rs:16` | `const ... : usize = 4096`，`raw_json_request` 的响应缓冲。 |
-| `DRAIN_IO_MS` | `crates/ng-js-runtime/src/runtime_pool.rs:34` 等处引用 | `100ms`；I/O 排空时长，仅在 `__nodeget_fetch_used` 为真或硬超时后触发。 |
+| `RPC_BUF_SIZE` | `crates/ng-js-runtime/src/nodeget.rs:16` | `const ... : usize = 4096`，传给 `raw_json_request` 作为 jsonrpsee `raw_json_request` 内部通知/订阅流 channel 容量；不是 RPC 响应体大小上限。 |
+| `DRAIN_IO_MS` | `crates/ng-js-runtime/src/runtime_pool.rs:34` 等处引用 | `100ms`；pool 正常路径仅在 `__nodeget_fetch_used` 为真时触发，硬超时 / idle-cleanup timeout 会额外 sleep 一次；一次式执行器成功时按 fetch 标志决定，JS 执行错误或外层 timeout 时则保守地同样执行一次 drain。 |
 | Cleanup ticker 间隔 | `crates/ng-js-runtime/src/runtime_pool.rs:442` | `5_000ms`，`MissedTickBehavior::Delay`。 |
 | `SyncSender` 容量 | `crates/ng-js-runtime/src/runtime_pool.rs`（`RuntimeWorkerHandle`） | `std::sync::mpsc::sync_channel(256)`。 |
 | `RUNTIME_CLEAN_TIME_NONE` | `crates/ng-js-runtime/src/runtime_pool.rs:95` | `-1`，负值 load 视为 `None`。 |
@@ -92,7 +92,7 @@
 | `JsRuntimePool` | `crates/ng-js-runtime/src/runtime_pool.rs:197` | `struct { workers: RwLock<HashMap<String, Arc<RuntimeWorkerHandle>>> }`；`#[derive(Default)]`。 |
 | `recover_read` / `recover_write` | `crates/ng-js-runtime/src/runtime_pool.rs:204` | `unwrap_or_else` 将 poison 映射为 `into_inner` 并 warn，使池在锁中毒时仍存活而不 panic。 |
 | `GLOBALS_JS` | `crates/ng-js-runtime/src/server_runtime.rs:334` | 约 100 行 JS：将 `__nodeget_rpc_raw` 包装为 `nodeget()`；定义 `__nodeget_inline_call`（强制 `MAX_INLINE_DEPTH=10`）；`execSql`/`getDatabaseType`（调用 nodeget RPC）；包装 `setTimeout`/`setInterval`（钳到 `>=4ms`）/`setImmediate` 跟踪 timer ID；`__nodeget_clear_all_timers`（上限 100）；`db.{create,read,update,remove,list,execSql}`；包装 `fetch` 设置 `__nodeget_fetch_used`；`nodegetLog`/`__nodeget_log` 桥接。 |
-| `INVOKE_SCRIPT_JS` | `crates/ng-js-runtime/src/server_runtime.rs:640` | IIFE 模板：重置 timer ID；构造 `inlineCall`（校验 worker 名非空、timeout 正有限、`JSON.stringify` 参数、调用 `__nodeget_inline_call`）；设置 `globalThis.inlineCall`；校验入口是 object 且 handler 存在；`onRoute`：从输入构造 `Request`（url、method、headers、`body_base64` 经 `atob`），要求返回 `Response` 并序列化 status/headers/body_base64；其余 handler：`await handler(input, env, runtimeCtx)`，返回 undefined 报错。 |
+| `INVOKE_SCRIPT_JS` | `crates/ng-js-runtime/src/server_runtime.rs:640` | IIFE 模板：每次执行开始时仅重置 timer ID 数组；构造 `inlineCall`（校验 worker 名非空、timeout 正有限、`JSON.stringify` 参数、调用 `__nodeget_inline_call`）；设置 `globalThis.inlineCall`；校验入口是 object 且 handler 存在；`onRoute`：从输入构造 `Request`（url、method、headers、`body_base64` 经 `atob`），要求返回 `Response` 并序列化 status/headers/body_base64；其余 handler：`await handler(input, env, runtimeCtx)`，返回 undefined 报错。 |
 | `ActiveWatch` / `WatchdogRegister` / `WatchdogManager` | `crates/ng-js-runtime/src/server_runtime.rs:147` | `ActiveWatch { deadline_ms: u64, kill_flag: Arc<AtomicBool>, cancel_rx: mpsc::Receiver<()> }`；`WatchdogRegister` 同字段并被线程消费；`WatchdogManager { sender }`，`register` 返回 `cancel_tx`，drop 或 `send(())` 取消。 |
 
 ## 内部机制
@@ -111,7 +111,7 @@
 
 ### CLOSE_WAIT 缓解：条件式 I/O 排空
 
-worker 线程运行 current_thread Tokio runtime；`block_on` 返回后不再被 poll。`fetch()` 可能留下未消费的 hyper `Incoming` body；`rt.idle()` 的 GC 可能丢弃 `Response`，其异步 close 信号需要被 poll。为避免 TCP `CLOSE_WAIT`，两个执行器仅在 `__nodeget_fetch_used` 被设置时才条件式睡眠 `DRAIN_IO_MS`（100ms）；该标志每次运行后重置。硬超时杀掉时，整个 `RuntimeState` 被丢弃并执行一次 `DRAIN_IO_MS` 睡眠后返回，下次调用重建全新 runtime（`crates/ng-js-runtime/src/runtime_pool.rs:34-36`、`718-763`；`crates/ng-js-runtime/src/server_runtime.rs:36-38`、`1010-1017`）。
+worker 线程运行 current_thread Tokio runtime；`block_on` 返回后不再被 poll。`fetch()` 可能留下未消费的 hyper `Incoming` body；`rt.idle()` 的 GC 可能丢弃 `Response`，其异步 close 信号需要被 poll。为避免 TCP `CLOSE_WAIT`，pool 路径在正常完成后仅在 `__nodeget_fetch_used` 被设置时才条件式睡眠 `DRAIN_IO_MS`（100ms）；若硬超时或 idle-cleanup timeout 导致丢弃 `RuntimeState`，也会在返回前额外 sleep 一次。一次式执行器成功时根据 `__nodeget_fetch_used` 决定是否 drain，但在 JS 执行报错或外层 timeout 时会因无法可靠确认 fetch 使用情况而保守地同样 sleep 一次。
 
 ### JS 回调的 server-runtime 桥接
 
@@ -131,12 +131,12 @@ JS 全局 `__nodeget_rpc_raw`（Async `js_nodeget`）与 `__nodeget_inline_call_
 
 ### 定时器跟踪与 setInterval 钳制
 
-`GLOBALS_JS` 包装 `setTimeout`/`setInterval`/`setImmediate` 把 ID 记入 `__nodeget_timer_ids`；`execute_on_worker` 与 `INVOKE_SCRIPT_JS` 在执行后调用 `__nodeget_clear_all_timers`（上限 100 次迭代）。`setInterval` 钳到 `>=4ms` 以防 CPU 烧毁。这防止 `rt.idle()` 因未清理的定时器而挂起。
+`GLOBALS_JS` 包装 `setTimeout`/`setInterval`/`setImmediate` 把 ID 记入 `__nodeget_timer_ids`；pool 路径在执行后会显式调用 `__nodeget_clear_all_timers`（上限 100 次迭代），而 `INVOKE_SCRIPT_JS` 仅在每次执行开始时把 timer ID 数组长度重置为 0。一次式执行器依赖 `cleanup_invoke_globals`、有界 `rt.idle()` 与 runtime drop 做收尾，而不是显式调用 `__nodeget_clear_all_timers`。`setInterval` 钳到 `>=4ms` 以防 CPU 烧毁。
 
 ## Crate 内部约定
 
 - **Lint 门控**：crate 根 `#![warn(clippy::all, clippy::pedantic, clippy::nursery)]`，全局允许 `cast_sign_loss`、`cast_precision_loss`、`cast_possible_truncation`、`similar_names`（`crates/ng-js-runtime/src/lib.rs:1-7`）。
-- **Feature 门控**：`default = []` 仅暴露类型（`types.rs` 经 `pub use types::*`）；`server` feature 门控所有执行模块、runtime 池、注入 trait 与公共执行器（`crates/ng-js-runtime/src/lib.rs:31-54`）。Agent 在不带 `server` 的情况下依赖本 crate。
+- **Feature 门控**：`default = []` 仅暴露类型（`types.rs` 经 `pub use types::*`）；`server` feature 门控所有执行模块、runtime 池、注入 trait 与公共执行器（`crates/ng-js-runtime/src/lib.rs:31-54`）。默认 feature 因而可供非 server 侧 crate 仅复用类型，不要求像 agent 这样具体消费者一定直接依赖本 crate。
 - **日志 target**：`js_runtime` 用于内部 Rust/QuickJS 生命周期；`js_worker` 用于经 `nodegetLog`/`__nodeget_log` 桥接的 JS 日志输出（`crates/ng-js-runtime/src/server_runtime.rs:302-327`）。
 - **Serde**：enum 使用 `#[serde(rename_all = "snake_case")]`；inline-call 面向 worker 的参数以原始 JSON 字符串（不解析）传递，避免冗余 parse/serialize 往返（`inline_call.rs`、`nodeget.rs`）。
 - **QuickJS 全局命名空间**：私有前缀 `__nodeget_*`；用户可见别名 `nodeget`、`inlineCall`、`execSql`、`getDatabaseType`、`db.*`、`fetch`、`randomUUID`、`nodegetLog`、`setTimeout`/`setInterval`/`setImmediate`。
@@ -156,8 +156,8 @@ JS 全局 `__nodeget_rpc_raw`（Async `js_nodeget`）与 `__nodeget_inline_call_
 - **`Module::load(bytecode)` 是 `unsafe` 且 bytecode 受信任**：`crates/ng-js-runtime/src/runtime_pool.rs:619`。`compile_js_module_to_bytecode` 总是在编译前初始化 globals，使 bytecode 引用同一套 globals；但加载任意 / 不可信 bytecode 会导致内存不安全。缓存哈希是非密码学 `DefaultHasher`，不防御对抗性碰撞。
 - **inlineCall 递归上限 JS 与 Rust 必须同步**：`crates/ng-js-runtime/src/server_runtime.rs:351`。`MAX_INLINE_DEPTH=10` 在 JS（`GLOBALS_JS` 的 `__nodeget_inline_call`）强制，`inline_depth` 又经 `prepare_invoke_globals`/`run_inline_call_and_record_result`（Rust 侧）透传。两侧必须保持同步——只放宽 JS 常量而不动 Rust 管线（或反之）会形成绕过。每层子调用 `+1`。
 - **`onRoute` 必须返回 `Response`，其余 handler 必须返回可 JSON 序列化值**：`crates/ng-js-runtime/src/server_runtime.rs:725`。`onRoute` handler 必须返回 `Response`（`instanceof Response`），否则 IIFE 抛错；`onCall`/`onCron`/`onInlineCall` 必须返回可 JSON 序列化值（undefined 抛 `JS handler must return a JSON-serializable value`）；function/symbol 作为返回值经 `resolve_invoke_result` 报错。
-- **硬超时杀掉会丢弃 worker 全局状态**：`crates/ng-js-runtime/src/runtime_pool.rs:722`。pool 路径硬超时后整个 `RuntimeState` 被丢弃（drop），下次调用重建全新 QuickJS runtime——脚本设置的任何全局状态都会丢失。一次式执行器本就销毁 runtime。被杀的 worker 还会睡眠 `DRAIN_IO_MS` 两次（返回前一次，加上下次创建路径一次）。
-- **`RPC_BUF_SIZE=4096` 固定**：`crates/ng-js-runtime/src/nodeget.rs:16`。`raw_json_request` 的响应缓冲固定 4096 字节。JS 内 `nodeget()`/`execSql` 的过大 RPC 响应会失败 / 截断——worker 内经 `execSql` 或 `db.execSql` 拉取大 DB 结果会撞此上限。
+- **硬超时杀掉会丢弃 worker 全局状态**：`crates/ng-js-runtime/src/runtime_pool.rs:722`。pool 路径硬超时后整个 `RuntimeState` 被丢弃（drop），下次调用重建全新 QuickJS runtime——脚本设置的任何全局状态都会丢失。一次式执行器本就销毁 runtime。硬超时返回前会 sleep 一次 `DRAIN_IO_MS`，但下次创建新 runtime 时不会再补一次同类 drain。
+- **`RPC_BUF_SIZE=4096` 是传给 jsonrpsee `raw_json_request` 的 channel 容量，不是响应体上限**：`crates/ng-js-runtime/src/nodeget.rs:16`。当前 server 适配层把它原样传给 `RpcModule::raw_json_request(..., buf_size)`；在所用 jsonrpsee 实现中，这个值用于内部 `mpsc::channel(buf_size)`，而 `max_response_size` 仍是 `usize::MAX`。因此不要把它理解成 `nodeget()` / `execSql` RPC 响应固定 4096 字节上限。
 - **两条路径的 `__nodeget_*` 全局清理范围不同**：`crates/ng-js-runtime/src/runtime_pool.rs:671`。pool 路径有意**不**清理 `__nodeget_entry`（以便缓存 module 复用），但**会**清理 `__nodeget_run_params`/`env`/`inlineCall`/`inline_caller`；一次式路径（`cleanup_invoke_globals`）额外清理 `__nodeget_entry`。在两条路径间混用这些全局，或在一次式模式下依赖 `__nodeget_entry` 持久化，都是 bug。
 - **空闲驱逐 `Arc::strong_count` 是竞态启发式**：`crates/ng-js-runtime/src/runtime_pool.rs:325`。检查 `strong_count > 1` 以跳过有在途调用方的 worker，但 `strong_count` 有竞态、仅为启发式——一个正要抓取 Arc 的调用方可能被漏掉，但随后的 `execute` 会发现 worker 已被移除并重建它（正确性保留，只是浪费一次驱逐）。
 

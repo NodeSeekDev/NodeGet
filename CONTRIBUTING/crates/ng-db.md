@@ -1,6 +1,6 @@
 # ng-db — 数据库层（实体、主库连接、用户库注册表、DB 相关 RPC）
 
-> 概览：ng-db 是 NodeGet 的数据库层。它持有全部 13 张表的 SeaORM 实体定义、全局主库连接单例（`get_db`/`set_db`）、主库连接初始化（含迁移与 SQLite PRAGMA），以及管理用户自建 SQLite 连接池的 `DbRegistryManager`（对应 `db` 命名空间的 create/read/update/delete/list/exec_sql RPC 与生命周期/清理）。同时暴露 `nodeget-server` 命名空间下针对主库的存储核算、SQL 执行与后端类型查询 RPC。Agent 以默认 feature 依赖本 crate（仅实体类型）；Server 开启 `server` feature 后追加连接初始化、注册表管理器与全部 RPC handler。
+> 概览：ng-db 是 NodeGet 的数据库层。它持有全部 13 张表的 SeaORM 实体定义、全局主库连接单例（`get_db`/`set_db`/`take_and_close_db`）、主库连接初始化（含迁移与 SQLite PRAGMA），以及管理用户自建 SQLite 连接池的 `DbRegistryManager`（对应 `db` 命名空间的 create/read/update/delete/list/exec_sql RPC 与生命周期/清理）。同时暴露 `nodeget-server` 命名空间下针对主库的存储核算、SQL 执行与后端类型查询 RPC。当前源码里主库全局函数并未做 `server` feature 门控；`server` feature 追加连接初始化、注册表管理器与全部 RPC handler。Agent 二进制当前不直接依赖本 crate。
 
 ## 模块结构
 
@@ -9,7 +9,7 @@ crates/ng-db/src/
 ├── lib.rs                       # Crate 根：主库 OnceLock 单例、entity 再导出、server 模块条件编译
 ├── entity/                      # 13 个 SeaORM 实体（始终编译，无 feature 门控）
 │   ├── mod.rs                   # 声明 13 个子模块并再导出 prelude
-│   ├── prelude.rs               # 为每张表再导出 Entity 别名（如 prelude::Crontab）
+│   ├── prelude.rs               # 当前仅保留 codegen 生成的文件头注释，未提供每张表的 Entity 别名再导出
 │   ├── crontab.rs               # cron 任务定义
 │   ├── crontab_result.rs        # cron 执行历史
 │   ├── db_registry.rs           # 用户库元数据
@@ -52,8 +52,8 @@ crates/ng-db/migration/src/
 | 名称 | 签名 | 行为 |
 |---|---|---|
 | `get_db` | `pub fn get_db() -> Option<&'static sea_orm::DatabaseConnection>` (`lib.rs:43`) | 仅在 `set_db` 被 `init_db_connection` 调用后返回 `Some(&'static ...)`；此前为 `None`。Server 模块共享该唯一连接。 |
-| `set_db` | `pub fn set_db(conn: sea_orm::DatabaseConnection)` (`lib.rs:52`, server) | 用 `ManuallyDrop` 包裹后存入 `OnceLock`。重复调用会记录 `warn`（target `db`）并丢弃新连接。 |
-| `take_and_close_db` | `pub unsafe fn take_and_close_db()` (`lib.rs:66`, `#[allow(dead_code)]`) | 通过 `(&raw const DB).cast_mut()` + `(*ptr).take()` 回收 `ManuallyDrop` 并正确析构；调用后 `get_db()` 返回 `None`。当前无任何调用方，serve.rs 默认不调用。 |
+| `set_db` | `pub fn set_db(conn: sea_orm::DatabaseConnection)` (`lib.rs:52`) | 用 `ManuallyDrop` 包裹后存入 `OnceLock`。重复调用会记录 `warn`（target `db`）并丢弃新连接。当前源码未对其做 `server` feature 门控。 |
+| `take_and_close_db` | `pub unsafe fn take_and_close_db()` (`lib.rs:66`, `#[allow(dead_code)]`) | 通过 `(&raw const DB).cast_mut()` + `(*ptr).take()` 回收 `ManuallyDrop` 并正确析构；调用后 `get_db()` 返回 `None`。当前无任何调用方，serve.rs 默认不调用；源码也未对其做 `server` feature 门控。 |
 | `entity::*` | `pub mod entity` (`lib.rs:27`) | 13 个实体模块始终可用（无 feature 门控），每个导出 `Model`/`Entity`/`ActiveModel`/`Column`/`PrimaryKey`/`Relation`/`ActiveModelBehavior`。 |
 | `init_db_connection` | `pub async fn init_db_connection(config: DbConnectionConfig) -> anyhow::Result<()>` (`db_connection.rs:60`, server) | 配置 `ConnectOptions`（`sqlx_logging_level = Trace`），建连后**先**置 PRAGMA `auto_vacuum=INCREMENTAL` **再** `Migrator::up`，随后对 SQLite 设置 WAL/synchronous=NORMAL/busy_timeout=5000/foreign_keys=ON/cache_size=-64000，回读 auto_vacuum 用于诊断，最后 `set_db`。 |
 | `DbConnectionConfig` | `pub struct { database_url, connect_timeout_ms, acquire_timeout_ms, idle_timeout_ms, max_lifetime_ms, max_connections }` (`db_connection.rs:17`, server) | 所有超时以毫秒计；`Default`：`""/3000/3000/60000/1_800_000`，`max_connections=10`。 |
@@ -62,7 +62,7 @@ crates/ng-db/migration/src/
 | `DbRegistryManager::get_conn` | `pub fn get_conn(&self, name: &str) -> Option<DatabaseConnection>` (`db_registry.rs:277`) | 读锁，刷新 `last_used_ms = now_ms`（Relaxed），克隆连接。 |
 | `DbRegistryManager::get_db_path` | `pub fn get_db_path(&self, name: &str) -> String` (`db_registry.rs:257`) | `format!("{}/{}.db", db_path.trim_end_matches('/'), name)`。 |
 | `DbRegistryManager::create_conn` | `pub async fn create_conn(&self, name: &str, max_lifetime_ms: Option<i64>) -> anyhow::Result<DatabaseConnection>` (`db_registry.rs:306`) | 连接 `sqlite://...` URL、设 PRAGMA，再 upsert `db_registry`（存在则 `db_connections +=1`，否则插入新行带 `created_at=now_ms`），最后插入 `pools`。**不校验 name**。 |
-| `DbRegistryManager::remove_conn` | `pub async fn remove_conn(&self, name: &str) -> anyhow::Result<()>` (`db_registry.rs:385`) | 移除 `pools` 条目、按 id 删 `db_registry` 行（失败仅 log）、删除 `{name}.db` 及 `-wal`/`-shm` 文件（失败仅 log）；始终返回 `Ok(())`。 |
+| `DbRegistryManager::remove_conn` | `pub async fn remove_conn(&self, name: &str) -> anyhow::Result<()>` (`db_registry.rs:385`) | 先移除 `pools` 条目，再尝试查主库并删除 `db_registry` 行，随后删除 `{name}.db` 及 `-wal`/`-shm` 文件。`get_main_db()` 或注册表查询失败会直接返回 `Err`；`delete_by_id` 与文件删除失败仅记录日志。 |
 | `DbRegistryManager::list_all` | `pub async fn list_all(&self) -> anyhow::Result<Vec<DbInfo>>` (`db_registry.rs:429`) | `db_registry::find` 按 name 升序，映射为 `DbInfo`（`is_active` 取自 `pools.contains_key`）。 |
 | `DbRegistryManager::shutdown` | `pub async fn shutdown(&self)` (`db_registry.rs:461`) | 置 `cancelled`、`notify_one()`，`cleanup_handle.lock().unwrap().take()` 后以 5 秒超时 await，记录结果（clean exit / panic / timeout）。 |
 | `row_to_json` | `pub fn row_to_json(r: &sea_orm::QueryResult) -> serde_json::Value` (`db_registry.rs:523`, server) | 按 `column_names()` 迭代，每列调 `try_column_as_json`，返回 Object。 |
@@ -89,7 +89,7 @@ crates/ng-db/migration/src/
 - `pub struct DbRegistryManager { db_path: String, pools: RwLock<HashMap<String,Arc<TrackedConnection>>>, cancelled: AtomicBool, cancel_notify: Notify, cleanup_handle: Mutex<Option<JoinHandle<()>>> }` (`db_registry.rs:46`)。
 - `fn now_ms_u64() -> u64` (`db_registry.rs:60`) — `SystemTime::now().duration_since(UNIX_EPOCH).expect(...).as_millis() as u64`；**系统时钟早于 1970 会 panic**。
 - `pub struct DbInfo { id, name, file_path, db_connections: Option<i32>, max_lifetime_ms: Option<i64>, created_at, is_active }` (`db_registry.rs:481`)。
-- `pub struct DbExecResult { success: bool, data: Vec<serde_json::Value>, row_count: u64 }` (`db_registry.rs:500`) — `exec_sql` RPC 响应。
+- `pub struct DbExecResult { success: bool, data: Vec<serde_json::Value>, row_count: u64 }` (`db_registry.rs:500`) — 当前导出但未被 `db.exec_sql` / `nodeget::exec_sql` RPC 实际使用；这两个 RPC 直接内联构造带 `truncated` 字段的响应。
 - `fn get_main_db() -> anyhow::Result<&'static DatabaseConnection>` (`db_registry.rs:510`) — `get_db().context("Main DB not initialized")`。
 - `fn try_column_as_json(r, col) -> Value` (`db_registry.rs:536`) — 探测顺序：String→i64→u32→f64→bool→`Vec<u8>`（先按 JSON 解析，失败回退 `hex::encode`）→`serde_json::Value`→Null。
 
@@ -179,17 +179,17 @@ serve.rs 调用 `init_db_connection(DbConnectionConfig)`：建连 → 在 `Migra
 | 表名 | 列 | 约束 / 索引 / 关系 | 备注 |
 |---|---|---|---|
 | `crontab` | `id` PK/UNIQUE i64, `name` UNIQUE String, `enable` bool, `cron_expression` String, `cron_type` JsonBinary NOT NULL, `last_run_time` Option<i64> | `cron_type` 不可空 | `entity/crontab.rs:8` |
-| `crontab_result` | `id` PK/UNIQUE i64, `cron_id` i64, `cron_name` String, `relative_id` Option<i64>, `run_time` Option<i64>, `success` Option<bool>, `message` Option<String> | 无 FK，`cron_id` 仅逻辑关联 | `entity/crontab_result.rs:8` |
+| `crontab_result` | `id` PK/UNIQUE i64, `cron_id` i64, `cron_name` String, `relative_id` Option<i64>, `run_time` Option<i64>, `success` Option<bool>, `message` Option<String> | 无 FK，`cron_id` 仅逻辑关联；迁移额外建有 `cron_id`、`cron_name` 与 `run_time DESC` 索引 | `entity/crontab_result.rs:8` |
 | `db_registry` | `id` PK i64, `name` UNIQUE String, `db_connections` Option<i32>, `max_lifetime_ms` Option<i64>, `created_at` i64 | 另 `#[derive(Default)]`；追踪用户自建 SQLite 库 | `entity/db_registry.rs:6` |
-| `dynamic_monitoring` | `id` PK i64, `uuid_id` i16, `timestamp` i64, `storage_time` Option<i64>, `cpu_data`/`ram_data`/`load_data`/`system_data`/`disk_data`/`network_data`/`gpu_data` JsonBinary NOT NULL | data 列均 NOT-NULL Json；`storage_time` 由 m20260516 加入；`#[allow(clippy::missing_fields_in_debug)]` | 高频（默认 1s）动态监控；`entity/dynamic_monitoring.rs:9` |
-| `dynamic_monitoring_summary` | `id` PK i64, `uuid_id` i16, `timestamp` i64, `storage_time` Option<i64>, `cpu_usage`/`gpu_usage` Option<i16>, `used_swap`/`total_swap`/`used_memory`/`total_memory`/`available_memory` Option<i64>, `load_one`/`load_five`/`load_fifteen` Option<i16>, `uptime` Option<i32>, `boot_time` Option<i64>, `process_count` Option<i32>, `total_space`/`available_space`/`read_speed`/`write_speed`/`transmit_speed`/`receive_speed`/`total_received`/`total_transmitted` Option<i64>, `tcp_connections`/`udp_connections` Option<i32> | 所有指标列可空；无 Relation | m20260415 加入的预聚合行；`entity/dynamic_monitoring_summary.rs:6` |
-| `js_result` | `id` PK i64, `js_worker_id` i64, `js_worker_name` String, `run_type` String, `start_time`/`finish_time` Option<i64>, `param` Option<JsonBinary>, `result` Option<JsonBinary>, `error_message` Option<String> | `param`/`result` 可空 JSON | `entity/js_result.rs:8` |
-| `js_worker` | `id` PK i64, `name` UNIQUE String, `description` Option<String>, `js_script` String, `js_byte_code` Option<Vec<u8>>, `route_name` Option<String>, `env` Option<Json>, `runtime_clean_time` Option<i64>, `max_run_time` Option<i64>（NULL→`DEFAULT_MAX_RUN_TIME_MS=30_000`）, `max_stack_size` Option<i64>（默认 1 MiB）, `max_heap_size` Option<i64>（默认 8 MiB）, `create_at` i64, `update_at` i64 | 限制列由 m20260509_000000 加入；常量定义在 ng-js-runtime | `entity/js_worker.rs:8` |
-| `kv` | `id` PK i64, `namespace` String, `key` String, `value` JsonBinary NOT NULL | 实体层无复合唯一约束 | `entity/kv.rs:8` |
+| `dynamic_monitoring` | `id` PK i64, `uuid_id` i16, `timestamp` i64, `storage_time` Option<i64>, `cpu_data`/`ram_data`/`load_data`/`system_data`/`disk_data`/`network_data`/`gpu_data` JsonBinary NOT NULL | data 列均 NOT-NULL Json；`storage_time` 由 m20260516 加入；`#[allow(clippy::missing_fields_in_debug)]`；m20260608 额外为 `storage_time` 建索引 | 高频（默认 1s）动态监控；`entity/dynamic_monitoring.rs:9` |
+| `dynamic_monitoring_summary` | `id` PK i64, `uuid_id` i16, `timestamp` i64, `storage_time` Option<i64>, `cpu_usage`/`gpu_usage` Option<i16>, `used_swap`/`total_swap`/`used_memory`/`total_memory`/`available_memory` Option<i64>, `load_one`/`load_five`/`load_fifteen` Option<i16>, `uptime` Option<i32>, `boot_time` Option<i64>, `process_count` Option<i32>, `total_space`/`available_space`/`read_speed`/`write_speed`/`transmit_speed`/`receive_speed`/`total_received`/`total_transmitted` Option<i64>, `tcp_connections`/`udp_connections` Option<i32> | 所有指标列可空；无 Relation；m20260608 额外为 `storage_time` 建索引 | m20260415 加入的预聚合行；`entity/dynamic_monitoring_summary.rs:6` |
+| `js_result` | `id` PK i64, `js_worker_id` i64, `js_worker_name` String, `run_type` String, `start_time`/`finish_time` Option<i64>, `param` Option<JsonBinary>, `result` Option<JsonBinary>, `error_message` Option<String> | `param`/`result` 可空 JSON；迁移额外建有 `js_worker_id` 索引与 `(js_worker_name, start_time DESC)` 组合索引 | `entity/js_result.rs:8` |
+| `js_worker` | `id` PK i64, `name` UNIQUE String, `description` Option<String>, `js_script` String, `js_byte_code` Option<Vec<u8>>, `route_name` Option<String>, `env` Option<Json>, `runtime_clean_time` Option<i64>, `max_run_time` Option<i64>（NULL→`DEFAULT_MAX_RUN_TIME_MS=30_000`）, `max_stack_size` Option<i64>（默认 1 MiB）, `max_heap_size` Option<i64>（默认 8 MiB）, `create_at` i64, `update_at` i64 | 限制列由 m20260509_000000 加入；常量定义在 ng-js-runtime；迁移另建有 `route_name` 唯一索引（以及一个与主键重复的 `id` 唯一索引） | `entity/js_worker.rs:8` |
+| `kv` | `id` PK i64, `namespace` String, `key` String, `value` JsonBinary NOT NULL | 实体层未声明复合唯一约束；迁移额外建有 `(namespace, key)` 唯一索引与 `namespace` 索引 | `entity/kv.rs:8` |
 | `monitoring_uuid` | `id` PK **i32**（非 i64）, `uuid` Uuid, `soft_delete` bool | `soft_delete` 由 m20260517_000000 加入（取代硬删）；UUID cache 自动复活软删行 | 全表最小 PK 宽度；`entity/monitoring_uuid.rs:6` |
-| `static_file` | `id` PK i64, `name` String, `path` String, `is_http_root` bool, `cors` bool, `enable` Option<bool> | 由 m20260531_000000_rename_static_to_static_file 从 `static` 改名；`enable` 由 m20260517_000001 加入 | `entity/static_file.rs:8` |
-| `static_monitoring` | `id` PK i64, `uuid_id` i16, `timestamp` i64, `storage_time` Option<i64>, `cpu_data`/`system_data`/`gpu_data` JsonBinary NOT NULL, `data_hash` Vec<u8> | `data_hash` 为 BLOB，供 `StaticHashCache` 对 5 分钟静态样本去重 | `entity/static_monitoring.rs:9` |
-| `task` | `id` PK i64, `uuid` Uuid, `token` String, `cron_source` Option<String>, `timestamp` Option<i64>, `success` Option<bool>, `error_message` Option<String>, `task_event_type` JsonBinary NOT NULL, `task_event_result` Option<JsonBinary> | `task_event_result` 可空；查询默认上限 `DEFAULT_LIMIT=1000`（在 ng-task 的 `task.query` RPC 施加） | `entity/task.rs:8` |
+| `static_file` | `id` PK i64, `name` String, `path` String, `is_http_root` bool, `cors` bool, `enable` Option<bool> | 由 m20260531_000000_rename_static_to_static_file 从 `static` 改名；`enable` 由 m20260517_000001 加入；迁移层有 `name` 唯一索引与 `is_http_root=true` 的 partial unique 索引 | `entity/static_file.rs:8` |
+| `static_monitoring` | `id` PK i64, `uuid_id` i16, `timestamp` i64, `storage_time` Option<i64>, `cpu_data`/`system_data`/`gpu_data` JsonBinary NOT NULL, `data_hash` Vec<u8> | `data_hash` 为 BLOB，供 `StaticHashCache` 对 5 分钟静态样本去重；m20260608 额外为 `storage_time` 建索引 | `entity/static_monitoring.rs:9` |
+| `task` | `id` PK i64, `uuid` Uuid, `token` String, `cron_source` Option<String>, `timestamp` Option<i64>, `success` Option<bool>, `error_message` Option<String>, `task_event_type` JsonBinary NOT NULL, `task_event_result` Option<JsonBinary> | `task_event_result` 可空；查询默认上限 `DEFAULT_LIMIT=1000`（在 ng-task 的 `task.query` RPC 施加）；m20260608 额外为 `task_event_type` 建索引（SQLite 普通索引 / PostgreSQL GIN） | `entity/task.rs:8` |
 | `token` | `id` PK i64, `version` i32, `token_key` UNIQUE String, `token_hash` String, `time_stamp_from`/`time_stamp_to` Option<i64>, `token_limit` JsonBinary NOT NULL, `username` UNIQUE Option<String>, `password_hash` Option<String> | `token_key` 与 `username` 均 UNIQUE（username 可空唯一）；`token_limit` 为 Json `Vec<Limit>`；Token 鉴权用 SHA256 + `"NODEGET"` salt（在 ng-token，非此处） | `entity/token.rs:8` |
 
 ### 迁移序列
@@ -198,11 +198,11 @@ serve.rs 调用 `init_db_connection(DbConnectionConfig)`：建连 → 在 `Migra
 
 ## Crate 内部约定
 
-- **Feature 门控**：`default = []` 仅导出 `entity` 模块（纯类型，agent 安全）。`server` feature 拉入 jsonrpsee/tokio/hex/tracing、sea-orm `with-json`/`with-uuid`、`ng_db_migration` 与 `ng-core/for-server`，并门控 `db_connection`、`db_registry`、`rpc` 模块及其再导出。
+- **Feature 门控**：当前 `default = []` 始终导出 `entity` 与主库全局函数 `get_db`/`set_db`/`take_and_close_db`；`server` feature 额外拉入 jsonrpsee/tokio/hex/tracing、sea-orm `with-json`/`with-uuid`、`ng_db_migration` 与 `ng-core/for-server`，并门控 `db_connection`、`db_registry`、`rpc` 模块及其再导出。需要注意：源码现状下 `cargo check --package ng-db --no-default-features` 会因 `set_db` 使用可选依赖 `tracing` 而失败，文档不再把默认构建描述为已可用的"纯实体"构建。
 - **Edition 2024**，crate 级 `#![warn(clippy::all,pedantic,nursery)]`，全局 allow `cast_sign_loss`/`cast_precision_loss`/`cast_possible_truncation`/`similar_names`（cast 类 lint 工作区级抑制）。
 - **实体派生**：统一 `#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]`；`Relation` 为空 enum，`ActiveModelBehavior` 取默认；由 `sea-orm-codegen 2.0` 经 `sea-orm-cli` 生成（生成命令见 CLAUDE.md）。
 - **大字段**：一律 `#[sea_orm(column_type = "JsonBinary")]`（存 `Json`）。部分可空（`js_result` 的 `param`/`result`、`task` 的 `task_event_result`），部分 NOT-NULL（`dynamic_monitoring` 各 data 列、`kv.value`、`crontab.cron_type`、`static_monitoring` 的 `cpu_data`/`system_data`/`gpu_data`）。
-- **日志 target**：连接/注册表/权限代码用 `"db"`；`rpc_exec!` 成功/失败用 `"rpc"`；storage 查询用 `"server"`；nodeget 命名空间 RPC 用 `"nodeget"`；解析错误用 `"ng_core"`。
+- **日志 target**：连接/注册表/权限代码用 `"db"`；`rpc_exec!` 成功/失败用 `"rpc"`；storage 查询用 `"server"`；nodeget 命名空间 RPC 用 `"nodeget"`。解析失败通常作为 `NodegetError::ParseError` 直接返回；token-limit 兼容解析的告警日志用 `"auth"`。
 - **RPC 写法**：一律 `#[rpc(server, namespace=...)]` + `#[method(name=...)]`，**禁止**手写 `register_method`。所有方法返回 `RpcResult<Box<RawValue>>`。方法体包裹 `async { rpc_exec!(...) }.instrument(info_span!(...))`，span 字段含 `token_key`/`username`/`name`（exec 另含 `sql_len`）。宏内部**不含** `await`。
 - **鉴权集中化**：经 `ng_core::permission::permission_checker::get_permission_checker()`；db 命名空间构造 `Scope::Db(name)` + `Permission::Db(perm)`，`list`/`storage`/`exec_sql` 用 `Scope::Global`。错误统一 `NodegetError` → `anyhow` → `to_rpc_error` → jsonrpsee `ErrorObject`（带 nodeget error code）。
 - **响应形状一致**：create/read/update/list 为 `{"success": true, "data": ...}`；exec_sql 为 `{"success": true, "data":[], "row_count": n, "truncated": bool}`。截断阈值硬编码 **10_000 行**。
@@ -219,7 +219,7 @@ serve.rs 调用 `init_db_connection(DbConnectionConfig)`：建连 → 在 `Migra
 - **切勿**遗忘 `remove_conn` 会**永久删除** `.db`/`-wal`/`-shm` 文件：`cleanup_expired` 对闲置连接调用它（`db_registry.rs:404`），无软删除——被驱逐的用户库数据永久丢失。
 - **维护者必须**仅将 `NodeGet::ExecSql` 授予完全受信的操作员，并在最小权限 uid 下运行 server：`nodeget::exec_sql` 是文档化的全信任权限，SQLite 下 `ATTACH DATABASE 'any/path'` 可在 server uid 下读写任意文件（创建/覆盖文件、读取其它 `.db`），绕过 `db_registry` 路径约束（`rpc/nodeget/exec_sql.rs:1`）。此为 by-design，无法禁用。
 - **切勿**调整 `create`/`update`/`delete` 中"先校验 name 再鉴权"的顺序：该顺序是刻意的（`rpc/db/create.rs:32`）——使未授权调用方带非法 name 时得到 `InvalidInput`（108）而非 `PermissionDenied`（102），且避免用未校验的 name 构造 `Scope`。`read.rs` 不校验 name（仅鉴权 + 查找）；任何新增的、从 name 构造路径或 `Scope` 的 db 命名空间方法**必须**先校验。
-- **维护者必须**告知客户端：`db.update` 第三阶段池刷新失败时**不回滚**（`rpc/db/update.rs:121`）。若 `remove_conn(old)` 成功而 `create_conn(new)` 失败，DB 与文件已一致（已重命名）但新连接不在池中——RPC 仍返回 success（仅 warn），客户端需手动 `create_conn`，否则会撞 "Database not found"。
+- **维护者必须**告知调用方：`db.update` 第三阶段池刷新失败时**不回滚**（`rpc/db/update.rs:121`）。若 `remove_conn(old)` 成功而 `create_conn(new)` 失败，DB 与文件已一致（已重命名）但新连接不在池中——RPC 仍返回 success（仅 warn）。这里提示的 `create_conn` 是 `DbRegistryManager` 的内部 Rust API，不是公开 RPC；普通 RPC 客户端当前没有重新打开既有注册表项的接口，通常需要服务端内部补建连接或重启后重新 seed。
 - **切勿**修改 `NameParam`/`RenameParam`/`ExecSqlParam` 期望改变 wire 格式：它们是 `#[allow(dead_code)]` 占位（`rpc/db/mod.rs:23`），实际反序列化由 jsonrpsee `#[method]` 的原始类型签名决定；要改格式须改 `Rpc` trait 的方法签名。
 - **维护者必须**仅通过 server 启动时的 `Migrator::up` 应用迁移：`ng-migration` 二进制的 `main()` 已注释（`migration/src/main.rs:2`），`cargo run -p ng-migration` 为 no-op；手动跑 CLI 须先取消注释。
 - **切勿**在存在 `get_db()` 活引用时调用 `take_and_close_db`：它是 `unsafe`，经 `(&raw const DB).cast_mut()` + `(*ptr).take()` 回收（`lib.rs:66`），且 `#[allow(dead_code)]` 无任何调用方。应将全局 DB 视作与进程同寿。
@@ -228,4 +228,4 @@ serve.rs 调用 `init_db_connection(DbConnectionConfig)`：建连 → 在 `Migra
 
 ## 依赖关系
 
-ng-db 在工作区内被几乎所有业务 crate 依赖（通过 `entity` 模块共享表定义），其中 agent 仅以默认 feature 依赖（纯类型），server 二进制与 ng-infra、ng-token、ng-kv、ng-task、ng-crontab、ng-js-worker、ng-static、ng-monitoring 等启用 `server` feature 的 crate 使用其连接初始化、`DbRegistryManager` 与 RPC handler。ng-db 自身依赖 ng-core（鉴权类型与 `NodegetError`/`permission_checker`）、sea-orm、jsonrpsee（server feature）、以及同包内的 `ng_db_migration`（即 `ng-migration`，提供 `Migrator`）。
+ng-db 在工作区内被多个服务端业务 crate 依赖（通过 `entity` 模块共享表定义）；server 二进制与 ng-infra、ng-token、ng-kv、ng-task、ng-crontab、ng-js-worker、ng-static、ng-monitoring 等启用 `server` feature 的 crate 使用其连接初始化、`DbRegistryManager` 与 RPC handler。当前 agent 二进制并不直接依赖 ng-db；其直接依赖为 ng-core、ng-config、ng-task、ng-monitoring，后两者也仅在各自 `server` feature 下才可选依赖 ng-db。ng-db 自身依赖 ng-core（鉴权类型与 `NodegetError`/`permission_checker`）、sea-orm、jsonrpsee（server feature）、以及同包内的 `ng_db_migration`（即 `ng-migration`，提供 `Migrator`）。

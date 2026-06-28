@@ -12,7 +12,7 @@ NodeGet 是一个 **WebSocket + JSON-RPC 2.0** 的监控与自动化系统，由
 │  (N 个 server 并发) │        agent = WS client；server = WS srv │  (HTTP + WS at /)   │
 └─────────────────────┘                                          └─────────┬───────────┘
        │                                                                  │
-       │ 采集静态/动态监控数据                                              │ 组装 14 个 RPC 命名空间
+       │ 采集静态/动态监控数据                                              │ 组装多个 RPC 命名空间
        │ 执行下发任务（ping/dns/http/exec/pty/...）                        │ 注入 trait 实现
        │                                                                   │
        └─── RPC 上行：agent_* / task_upload_task_result                   └─── PostgreSQL / SQLite (SeaORM)
@@ -25,19 +25,19 @@ NodeGet 是一个 **WebSocket + JSON-RPC 2.0** 的监控与自动化系统，由
 
 ## 2. Workspace 组合
 
-server binary 是**组合根（composition root）**，在 `server/src/rpc_nodeget.rs::build_modules()` 合并来自 8 个 crate 的 `RpcModule`，在 `server/src/subcommands/serve.rs` 注册所有 trait 实现。详见 [`binaries/nodeget-server.md`](../binaries/nodeget-server.md)。
+Server binary 是**组合根（composition root）**，在 `server/src/rpc_nodeget.rs::build_modules()` 直接合并多个 crate 暴露的 `RpcModule`，在 `server/src/subcommands/serve.rs` 注册 4 个当前实际使用的 trait provider。详见 [`binaries/nodeget-server.md`](../binaries/nodeget-server.md)。
 
-### RPC 命名空间来源
+### RPC 命名空间来源（当前代码）
 
 | 命名空间 | 提供方 crate | 方法数 | 详见 |
 |----------|--------------|--------|------|
-| `nodeget-server` | server + ng-monitoring + ng-db + ng-config | 12 | [server](../binaries/nodeget-server.md) |
-| `agent` | ng-monitoring | 11 | [ng-monitoring](../crates/ng-monitoring.md) |
+| `nodeget-server` | server + ng-monitoring + ng-db + ng-config | 12（含 `list_all_agent_uuid`） | [server](../binaries/nodeget-server.md) |
+| `agent` | ng-monitoring | 多个查询/删除/上报方法 | [ng-monitoring](../crates/ng-monitoring.md) |
 | `agent-uuid` | ng-monitoring | 3 | [ng-monitoring](../crates/ng-monitoring.md) |
 | `task` | ng-task | 6 | [ng-task](../crates/ng-task.md) |
 | `token` | ng-token | 7 | [ng-token](../crates/ng-token.md) |
 | `kv` | ng-kv | 8 | [ng-kv](../crates/ng-kv.md) |
-| `db` | ng-db | 9 | [ng-db](../crates/ng-db.md) |
+| `db` | ng-db | 6 | [ng-db](../crates/ng-db.md) |
 | `js-worker` | ng-js-worker | 7 | [ng-js-worker](../crates/ng-js-worker.md) |
 | `js-result` | ng-js-worker | 2 | [ng-js-worker](../crates/ng-js-worker.md) |
 | `crontab` | ng-crontab | 6 | [ng-crontab](../crates/ng-crontab.md) |
@@ -45,7 +45,7 @@ server binary 是**组合根（composition root）**，在 `server/src/rpc_nodeg
 | `static-bucket` | ng-static | 6 | [ng-static](../crates/ng-static.md) |
 | `static-bucket-file` | ng-static | 5 | [ng-static](../crates/ng-static.md) |
 
-所有 RPC 方法统一返回 `RpcResult<Box<RawValue>>`，通过 `ng_infra::rpc_exec!` 宏实现统一日志与错误桥接。Terminal 走独立 WebSocket（非 JSON-RPC）。
+多数业务 crate 的 RPC handler 返回 `RpcResult<Box<RawValue>>`，并广泛复用 `rpc_exec!` 做结果日志与错误桥接；但这不是“所有 RPC 无例外”的硬规则——订阅、少量 server 自身方法与部分辅助路径存在例外。Terminal 走独立 WebSocket（非 JSON-RPC）。
 
 ### Crate 依赖图
 
@@ -86,7 +86,7 @@ agent 采集 (静态 5min / 动态+summary 1s 默认)
   → DB (static_monitoring / dynamic_monitoring / dynamic_monitoring_summary)
 ```
 
-查询走内存缓存避免打 DB：`MonitoringUuidCache`（全量 DB 加载）、`MonitoringLastCache`（派生最近值，手写 OnceLock）、`StaticHashCache`（data_hash → 模型）。详见 [`crates/ng-monitoring.md`](../crates/ng-monitoring.md)。
+查询走多层缓存以减少打 DB：`MonitoringUuidCache`（全量 DB 加载）、`MonitoringLastCache`（派生最近值，手写 OnceLock）、`StaticHashCache`（`data_hash -> static_monitoring::Model` 的哈希去重缓存）。详见 [`crates/ng-monitoring.md`](../crates/ng-monitoring.md)。
 
 ### 3.2 任务下行
 
@@ -131,7 +131,7 @@ main() → async_main()
   → serve::run():
       init_db_connection()（SeaORM，SQLite 自动开 WAL）
       init_or_skip_super_token()（幂等生成 super-token id=1）
-      ★ 注册所有 trait 实现（PermissionChecker / JsWorkerService / JsWorkerScheduler / MonitoringUuidProvider / 各 auth checker）
+      ★ 注册 4 个当前 trait provider（PermissionChecker / JsWorkerService / JsWorkerScheduler / MonitoringUuidProvider）
       ★ 初始化所有 DbBackedCache（Token / Crontab / Static / MonitoringUuid）
       build_modules() 合并 14 个 RPC 命名空间
       build Router（RPC + 静态 + WebDAV + terminal + worker-route）
@@ -148,7 +148,7 @@ main()
   → 读 AgentConfig
   → init_logger
   → 一次性获取 NTP offset（set_ntp_offset_ms，热重载不再重取）
-  → dry_run()（仅 --dry-run，打印一轮采集数据后 exit 0）
+  → dry_run()（当前普通启动/重载路径也会先执行一轮本地采集与日志输出；若 `--dry-run` 则随后 exit 0）
   → init_connections（每 server 独立 connection_manager 协程，broadcast cap 32）
   → spawn 4 个服务循环：静态上报 / 动态上报 / 错误消息处理 / 任务处理
   → select! ctrl_c / RELOAD_NOTIFY

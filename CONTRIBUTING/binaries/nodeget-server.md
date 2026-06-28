@@ -50,7 +50,7 @@ server/
 | `GetUuid`    | 不初始化 DB，直接打印                                                                                                                                                       |
 | `Version`    | 打印版本（重复 arm，实际由前面短路处理，不可达）                                                                                                                             |
 
-### 热重载外层循环 — `server/src/main.rs:100`
+### 热重载外层循环 — `server/src/main.rs:101`
 
 ```
 loop {
@@ -130,7 +130,7 @@ loop {
 
 #### TLS / ALPN — `build_http1_only_tls_config` `server/src/subcommands/serve.rs:517`
 
-- 读取 cert/key PEM，用 rustls `pki_types` 解析，构建无客户端认证的 `ServerConfig` + `single_cert`。
+- 读取 cert/key PEM，用 rustls `pki_types` 解析，构建无客户端认证的 `rustls::ServerConfig` + `single_cert`，再包装为 `axum_server::tls_rustls::RustlsConfig` 返回。
 - **强制** `alpn_protocols = [b"http/1.1"]`，避免 HTTP/2 协商开销（文档注释中提到 samply 下 HTTP/2 协商消耗 14–33% 的 tokio worker time）。
 
 ## 关键类型与常量
@@ -143,7 +143,7 @@ loop {
 | `ALLOC`                                       | 26   | `#[cfg(feature="dhat-heap")] #[global_allocator]`，切换到 `dhat::Alloc` 用于堆 profile。                                                                                          |
 | `main`                                        | 34   | 见上。                                                                                                                                                                              |
 | `async_main`                                  | 59   | 见上。                                                                                                                                                                              |
-| `(hot-reload loop)`                           | 100  | 见上。                                                                                                                                                                              |
+| `(hot-reload loop)`                           | 101  | 见上。                                                                                                                                                                              |
 | `init_db_connection`                          | 157  | 见上；从 poisoned lock 通过 `.expect` 恢复。                                                                                                                                       |
 
 ### logging/mod.rs
@@ -176,7 +176,7 @@ loop {
 
 | 项                                                | 行号 | 说明                                                                                                                                                              |
 |---------------------------------------------------|------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `Rpc` trait                                       | 34   | `#[rpc(server, namespace = "nodeget-server")]`（`_` 分隔符）。方法：`hello`、`version`、`uuid`、`read_config`、`edit_config`、`database_storage`、`log`(super)、`exec_sql`、`get_database_type`、`self_update`(super)；subscription：`stream_log`、`unsubscribe_stream_log`。 |
+| `Rpc` trait                                       | 34   | `#[rpc(server, namespace = "nodeget-server")]`（`_` 分隔符）。此 trait 定义 server crate 自身提供的方法：`hello`、`version`、`uuid`、`read_config`(super，经 `ng_config` 下游校验)、`edit_config`(super，经 `ng_config` 下游校验)、`database_storage`(super，经 `ng_db` 下游校验)、`log`(super)、`exec_sql`(`NodeGet::ExecSql`)、`get_database_type`(`NodeGet::ExecSql`)、`self_update`(super)；subscription：`stream_log`、`unsubscribe_stream_log`。合并后的 `nodeget-server` 命名空间还会额外包含 ng-monitoring 贡献的 `list_all_agent_uuid`。 |
 | `NodegetServerRpcImpl`                            | 109  | 空 marker struct（`Clone`），blanket 实现 `RpcHelper` 与 `RpcServer`。每个 handler 用 `info_span!(target:"server", "nodeget-server::<method>", token_key, username)` 包装。`token_identity(&token)` 在 token 被 move 之前抽出 `(token_key, username)` 用于 span 字段。 |
 | `RpcServer::{hello, version, uuid}`               | 117  | `hello` 返回 `'NodeGet Server Is Running!'`；`version` 返回 `serde_json::to_value(NodeGetVersion::get()).unwrap()`；`uuid` 从全局配置读 `server_uuid`，配置缺失或锁中毒返回空 `String`。                  |
 | `RpcServer::{read_config, edit_config, database_storage, exec_sql, get_database_type}` | 155  | `read_config`/`edit_config` 委托 `ng_config::server_rpc`（Ok/Err 在 debug/error 记录）；`database_storage`/`exec_sql`/`get_database_type` 经 `rpc_exec!` 宏委托 `ng_db::rpc::nodeget` 子模块。   |
@@ -184,7 +184,7 @@ loop {
 | `RpcServer::stream_log`                           | 256  | Super-token 守卫；解析失败以 ErrorObject code **101/102** `reject()` 后返回 `Ok(())`；成功后 accept sink，创建 `mpsc` channel(**512**)，分配随机 `Uuid sub_id`，向 `StreamLogManager.add_subscriber` 注册；drop span guard 后 spawn 转发任务（`rx.recv()` → `RawValue::from_string` → `SubscriptionMessage` → `sink.send`，send 出错 break），退出时 `remove_subscriber`。**不变量**：绝不在持有 manager 写锁时调用 tracing（ArcSwap 下已安全，但纪律保留）。 |
 | `RpcServer::self_update`                          | 356  | 见下「self_update 流程」。                                                                                                                                          |
 | `get_modules`                                     | 517  | `OnceLock<RpcModule<()>>` 缓存合并模块；首次调用 `build_modules`，后续 clone。                                                                                          |
-| `build_modules`                                   | 524  | 创建空 `RpcModule::new(())`，按序 merge（失败 `expect`）：`NodegetServerRpcImpl.into_rpc()` → `ng_monitoring` → `ng_task` → `ng_token` → `ng_kv` → `ng_static::rpc` → `ng_db::rpc::db` → `ng_js_worker` → `ng_crontab`。 |
+| `build_modules`                                   | 524  | 创建空 `RpcModule::new(())`，按序 merge（失败 `expect`）：`NodegetServerRpcImpl.into_rpc()` → `ng_monitoring`（其内部已合并 `agent`、`agent-uuid` 与 `nodeget-server::list_all_agent_uuid`）→ `ng_task` → `ng_token` → `ng_kv` → `ng_static::rpc` → `ng_db::rpc::db` → `ng_js_worker` → `ng_crontab`。 |
 
 ### rpc_timing.rs
 
@@ -234,7 +234,7 @@ loop {
 
 ### RPC 模块组装与缓存
 
-`build_modules` 在首次 `get_modules()` 调用时把 **9** 个 `RpcModule` merge 进一个空 `RpcModule<()>`，然后缓存在进程级 `static OnceLock<RpcModule<()>>`。之后每次调用 clone（廉价）。此路径被 `JsWorkerServiceImpl::get_rpc_module` 在**每次** inline JS RPC 分发时重入。
+`build_modules` 在首次 `get_modules()` 调用时把 **9** 个 `RpcModule` merge 进一个空 `RpcModule<()>`，然后缓存在进程级 `static OnceLock<RpcModule<()>>`。其中 `ng_monitoring::rpc_module()` 自身已先合并 `agent`、`agent-uuid` 与 `nodeget-server::list_all_agent_uuid` 三部分。之后每次调用 clone（廉价）。此路径被 `JsWorkerServiceImpl::get_rpc_module` 在**每次** inline JS RPC 分发时重入。
 
 ### Stream log 广播路径
 
@@ -273,18 +273,19 @@ loop {
 | `hello`              | none                                            | 无（开放）                                                                                           | 返回字面量 `'NodeGet Server Is Running!'`。                                                                                                         |
 | `version`            | none                                            | 无（开放）                                                                                           | 返回 `NodeGetVersion::get()` 序列化的 JSON `Value`（语义版本 + 构建信息）。                                                                          |
 | `uuid`               | none                                            | 无（开放）                                                                                           | 返回全局配置的 `server_uuid`；配置缺失/锁中毒返回空字符串。                                                                                          |
-| `read_config`        | `token: String`                                 | `TokenOrAuth`（由 ng_config 下游校验）                                                               | 委托 `ng_config::server_rpc::read_config`，读取 server 配置文件内容为 TOML 字符串。                                                                  |
-| `edit_config`        | `token: String, config_string: String`          | `TokenOrAuth`（由 ng_config 下游校验）                                                               | 委托 `ng_config::server_rpc::edit_config`，写入 TOML 并触发热重载（发送 `RELOAD_NOTIFY`）；返回 `bool`。                                              |
-| `database_storage`   | `token: String`                                 | `TokenOrAuth`（由 ng_db 校验）                                                                       | 经 `rpc_exec!` 委托 `ng_db::rpc::nodeget::database_storage`，报告 DB 各表的尺寸/行数。                                                               |
+| `read_config`        | `token: String`                                 | **Super Token**（由 `ng_config::server_rpc` 下游校验）                                               | 委托 `ng_config::server_rpc::read_config`，读取 server 配置文件内容为 TOML 字符串。                                                                  |
+| `edit_config`        | `token: String, config_string: String`          | **Super Token**（由 `ng_config::server_rpc` 下游校验）                                               | 委托 `ng_config::server_rpc::edit_config`，写入 TOML 并触发热重载（发送 `RELOAD_NOTIFY`）；返回 `bool`。                                              |
+| `database_storage`   | `token: String`                                 | **Super Token**（由 `ng_db::rpc::nodeget::database_storage` 下游校验）                               | 经 `rpc_exec!` 委托 `ng_db::rpc::nodeget::database_storage`，报告 DB 各表的尺寸/行数。                                                               |
 | `log`                | `token: String`                                 | **Super Token**（解析 `TokenOrAuth` + `check_super_token`，否则 `PermissionDenied`）                  | 返回内存环快照（`logging::get_memory_logs()`）为 JSON `RawValue`。                                                                                  |
 | `stream_log`         | `token: String, log_filter: String`（subscription；unsubscribe：`unsubscribe_stream_log`） | **Super Token**                                                                                      | 解析 token，失败以 ErrorObject code **101/102** `reject()` 后返回 `Ok(())`；成功后 accept sink，注册 `Uuid` 订阅者与 per-subscriber `StreamFilter`（EnvFilter 兼容，如 `info,server=debug`），将每条匹配事件以 JSON `Value` 转发直到客户端断开。 |
+| `list_all_agent_uuid`| `token: String`                                 | Super Token；或具备 `NodeGet::ListAllAgentUuid` / `MonitoringUuid::List` 且满足 scope 过滤的 Token    | 由合并进来的 `ng_monitoring` `nodeget-server` 子模块提供，返回 `{"uuids": [...]}`；全局权限可见全部 UUID，`AgentUuid` 作用域时返回按权限过滤后的子集。 |
 | `self_update`        | `token: String, tag: String`                    | **Super Token**                                                                                      | 下载 `tag` 对应 release（已在目标版本则跳过），替换运行中二进制（Unix `chmod 0o755`），spawn 3s 延迟重启任务（见「self_update 流程」）。                |
-| `exec_sql`           | `token: String, sql: String, params: Option<Value>` | `TokenOrAuth`（由 ng_db 校验）；**文档化为完全信任**                                                  | 经 `rpc_exec!` 委托 `ng_db::rpc::nodeget::exec_sql`，在主 DB 上执行原始 SQL。**完全信任**（任意 SQL；SQLite 下 `ATTACH` 升级为 FS 读写）。 |
-| `get_database_type`  | `token: String`                                 | `TokenOrAuth`（由 ng_db 校验）                                                                       | 经 `rpc_exec!` 委托 `ng_db::rpc::nodeget::get_database_type`，返回 `'PostgreSQL'` 或 `'SQLite'`。                                                   |
+| `exec_sql`           | `token: String, sql: String, params: Option<Value>` | `NodeGet::ExecSql`（`Scope::Global`；**文档化为完全信任**）                                           | 经 `rpc_exec!` 委托 `ng_db::rpc::nodeget::exec_sql`，在主 DB 上执行原始 SQL。**完全信任**（任意 SQL；SQLite 下 `ATTACH` 升级为 FS 读写）。 |
+| `get_database_type`  | `token: String`                                 | `NodeGet::ExecSql`（`Scope::Global`）                                                                 | 经 `rpc_exec!` 委托 `ng_db::rpc::nodeget::get_database_type`，返回 `sqlite` / `postgres` / `mysql` / `unknown`。                                    |
 
 ### 鉴权流程（命名空间级）
 
-`log`、`stream_log`、`self_update` 在 handler 内自行解析 `TokenOrAuth::from_full_token` 并调用 `check_super_token`，非 super 返回 `PermissionDenied('Super token required')`（`stream_log` 以 ErrorObject code 101/102 `reject()` 到 `PendingSubscriptionSink`）。`read_config`/`edit_config`/`database_storage`/`exec_sql`/`get_database_type` 的鉴权委托给下游 crate（`ng_config` / `ng_db`）。`hello`/`version`/`uuid` 完全开放。
+`log`、`stream_log`、`self_update` 在 handler 内自行解析 `TokenOrAuth::from_full_token` 并调用 `check_super_token`，非 super 返回 `PermissionDenied('Super token required')`（`stream_log` 以 ErrorObject code 101/102 `reject()` 到 `PendingSubscriptionSink`）。`read_config`/`edit_config` 委托 `ng_config` 下游做 super-token 校验；`database_storage` 委托 `ng_db` 下游做 super-token 校验；`exec_sql` / `get_database_type` 委托 `ng_db` 下游检查 `Scope::Global + Permission::NodeGet(NodeGet::ExecSql)`；`list_all_agent_uuid` 委托 `ng_monitoring` 下游根据 super token / 列表权限与 scope 过滤可见 UUID。`hello`/`version`/`uuid` 完全开放。
 
 ## Crate 内部约定
 
@@ -292,7 +293,7 @@ loop {
 - **Feature gates**：依赖所有 `ng-*` crate 并启用其 `server` feature；`dhat-heap` 可选 feature 切换全局分配器为 `dhat::Alloc` 做堆 profile。
 - **RPC 宏纪律**：仅使用 `#[rpc(server, namespace=...)]` + `#[method(name=...)]` + `#[subscription(...)]`，**绝不**手动 `register_method`。命名空间分隔符为 `_`（自定义 jsonrpsee fork）。
 - **统一返回类型**：所有 RPC handler 返回 `RpcResult<Box<RawValue>>`（简单的 `String`/`Value`/`()` 会自动转换）；委托经 `rpc_exec!` 宏统一日志与错误转换。
-- **日志 target**：`"server"`（server 内部 span）、`"rpc"`（timing 中间件）、`"js_worker"`（JS 路由处理）、`"db"`（DB 层事件，虚拟别名，实际展开为 `sea_orm*`/`sqlx*`）。
+- **日志 target**：server binary 侧的核心 target 有 `"server"`（server 内部 span）、`"rpc"`（timing 中间件）、`"js_worker"`（JS 路由处理）、`"db"`（DB 层事件，虚拟别名，实际展开为 `sea_orm*`/`sqlx*`）；合并进来的业务 crate 还会使用各自的 target（如 `crontab`、`terminal`、`monitoring`、`static` 等）。
 - **凭据绝不走 tracing**：Super Token、Root Password 一律 `println!` 到 stdout，因为 tracing 会进入内存日志缓冲与 JSON 日志文件（可经 RPC 查询）。
 - **内联默认值**：超时 3000ms / `max_lifetime` 30000ms / `max_connections` 10（`init_db_connection`）；`max_conns` 100 / `resp` 100MiB / `req` 10MiB（jsonrpc server）；monitoring `db_path` 默认 `./db/`；Unix socket 默认 `/var/lib/nodeget.sock`。
 - **`OnceLock` 全局单例**：`MEMORY_LOG_BUFFER`、`MEMORY_LOG_CAPACITY`、`STREAM_LOG_MANAGER`、`GLOBAL_RPC_MODULE`，以及各 crate 的 setter 设置的 trait 提供者。
@@ -308,14 +309,14 @@ loop {
 - **`server/src/subcommands/serve.rs:422`（TLS 分支）与 `:474`（明文分支）的 `select` 两侧都对 `serve_future` 结果 `unwrap()`**：若 `axum::serve` 中途返回 Err（如监听器失败），server 进程在 shutdown 期间 `panic`，外层 `main` 循环随后重启。属刻意 fail-fast，但确是硬 panic。
 - **`server/src/subcommands/serve.rs:121`：`RpcTimingMiddleware` 硬编码为 `tracing::Level::TRACE`**。RPC 计时日志在 TRACE 级别发出，运维若要看到须把 `rpc` target 设为 `trace`（或全局 `trace`），日志量很大，预期容易错位。
 - **`server/src/subcommands/serve.rs:402`：`config.ws_listener` 用 `parse().unwrap_or_else(panic)` 解析**。`config.toml` 中监听地址格式错误会在启动时直接 panic，无回退。
-- **`server/src/logging/mod.rs:134`：`memory_log_capacity = 0` 会禁用内存日志层**（`MemoryLogLayer` 不安装），但 `MEMORY_LOG_CAPACITY` 仍被设为 0，`get_memory_logs()` 返回空。`nodeget-server.log` RPC 会静默返回 `[]`，**不**报错。
+- **`server/src/logging/mod.rs:134`：`memory_log_capacity = 0` 会禁用内存日志层**（`MemoryLogLayer` 不安装），但 `MEMORY_LOG_CAPACITY` 仍被设为 0，`get_memory_logs()` 返回空。`nodeget-server_log` RPC 会静默返回 `[]`，**不**报错。
 - **`server/src/logging/mod.rs:768`：`StreamLogFilter` 必须作为 per-layer filter（`.with_filter`）使用，绝不可作为全局 subscriber filter**。在 Layered AND 逻辑下，全局 filter 在无订阅者时返回 false 会阻塞**所有**其他层（console、memory、json）。任何重构 subscriber init 的人都必须保留这一点。
 - **`server/src/subcommands/serve.rs:657`：JS Worker HTTP 路由请求 body 上限 `ROUTE_BODY_LIMIT_BYTES = 8 MiB`（超出 400），但响应 body 无上限**——返回超大 base64 body 的 JS worker 会完整缓冲进内存后才响应，可经此 OOM server。
 - **`server/src/subcommands/serve.rs:857`：`handle_js_worker_route` 只转发 `ALLOWED_RESPONSE_HEADERS` 白名单**。JS worker 设置的任何白名单外头部（自定义 `X-`、或被刻意阻断的 `Set-Cookie`/`Location`）会被静默丢弃，依赖这些头部的 worker 不会有清晰错误，看起来像是「坏掉」。
 - **`server/src/subcommands/serve.rs:1114`：`ServerPermissionChecker::check_token_limit` 返回的 future 借用调用方的 `TokenOrAuth`/scopes/permissions（lifetime `'a`）**。调用方必须把它们存活到 awaited future 完成（提前 drop 是编译期借用错误）。设计如此（避免 Vec clone），但约束了 `ng-db`/`ng-kv`/`ng-static` 等的调用模式。
 - **`server/src/rpc_nodeget.rs:517`：`get_modules()` 在进程级 `OnceLock` 缓存单个合并 `RpcModule` 并 clone**。该模块被共享（含 `JsWorkerServiceImpl` 的 JS→RPC 分发），**切勿**在 module context（类型为 `()`）里存每请求状态。缓存**永不**在热重载间失效——合并的命名空间只反映构建期链接的 crate。
 - **`server/src/main.rs:62`：`Version` 是特殊的提前返回子命令**，在 `async_main` 中于配置解析与日志初始化**之前**短路（`:65`）。新增到 Version 分支的代码不得依赖配置/日志就绪；`:145` 还有一个重复 arm（为完整性），但因提前返回而不可达。
-- **`server/src/subcommands/mod.rs:33`：`init_or_skip_super_token` 与 `roll_super_token` 把 Super Token + Root Password 打印到 stdout，正是为了避开 tracing**。任何对这些值做结构化 tracing 的人都会把凭据泄漏进可经 `nodeget-server.log` RPC 查询的内存日志缓冲与 JSON 日志文件。**绝不可** trace 凭据。
+- **`server/src/subcommands/mod.rs:33`：`init_or_skip_super_token` 与 `roll_super_token` 把 Super Token + Root Password 打印到 stdout，正是为了避开 tracing**。任何对这些值做结构化 tracing 的人都会把凭据泄漏进可经 `nodeget-server_log` RPC 查询的内存日志缓冲与 JSON 日志文件。**绝不可** trace 凭据。
 - **`server/src/subcommands/serve.rs:407`：TLS 当且仅当 `tls_cert` 与 `tls_key` 同时为 `Some` 时启用**。只设置其一会**静默回退到明文 TCP**——一个会泄漏未加密流量的可能误配；仅设置一个时没有 warn。
 - **`server/build.rs:8`：`build.rs` 仅在 `CARGO_CFG_TARGET_ARCH == "arm"` 时 emit `-latomic`**。其他同样缺 64-bit 原子的 32-bit 非 ARM 目标（如部分 RISC-V 或嵌入式）**不会**得到 `-latomic`，可能链接失败。该检查刻意狭窄，但交叉编译时值得知晓。
 - **`server/src/logging/mod.rs:873`：`StreamLogLayer.on_event` 用 `try_send`，订阅者 512-capacity `mpsc` 满时静默丢弃日志条目（`let _ = tx.try_send(...)`）**。慢的 `stream_log` 订阅者会无任何迹象地丢日志行；容量 **512** 在 `rpc_nodeget.rs::stream_log` 中设置。

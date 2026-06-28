@@ -37,6 +37,8 @@ pub async fn query(token: String, task_data_query: TaskDataQuery) -> RpcResult<B
         let token_or_auth = TokenOrAuth::from_full_token(&token)
             .map_err(|e| NodegetError::ParseError(format!("Failed to parse token: {e}")))?;
 
+        // 任务类型白名单：必须与 `TaskEventType::task_name()`（types/mod.rs）逐项对齐，
+        // 否则未指定 Type 条件时枚举鉴权会漏掉某个类型。
         let all_task_types = [
             "ping",
             "tcp_ping",
@@ -49,6 +51,7 @@ pub async fn query(token: String, task_data_query: TaskDataQuery) -> RpcResult<B
             "ip",
             "version",
             "dns",
+            "self_update",
         ];
 
         let mut scopes = Vec::new();

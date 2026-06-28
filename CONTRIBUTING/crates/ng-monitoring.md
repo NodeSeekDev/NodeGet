@@ -49,12 +49,13 @@ crates/ng-monitoring/src/
 | `data_structure` 类型 | `StaticMonitoringData`、`DynamicMonitoringData`、`DynamicMonitoringSummaryData`（含子结构）、`DiskKind` | 全部 `derive(Serialize, Deserialize)`；`StaticMonitoringData::compute_data_hash`、`DynamicMonitoringSummaryData::from_with_filter`、`impl From<&DynamicMonitoringData>`。 |
 | `StaticMonitoringData::compute_data_hash` | `pub fn compute_data_hash(cpu:&StaticCPUData, system:&StaticSystemData, gpu:&[StaticGpuData]) -> Result<Vec<u8>, NodegetError>`（`data_structure.rs:56`） | 对三个字段的 canonical JSON 做 SHA-256，返回前 16 字节；仅在 serde 失败时出错。 |
 | `DynamicMonitoringSummaryData::from_with_filter` | `pub fn from_with_filter(data, select_disk:Option<&[String]>, select_network_interface:Option<&[String]>) -> Self`（`data_structure.rs:387`） | `None`/空 → 默认排除；`Some`（非空）→ 仅汇总匹配项；做缩放与聚合。 |
-| `is_virtual_interface` / `is_excluded_mount` / `is_excluded_file_system` / `is_excluded_summary_disk` | `pub fn(&str) -> bool` | 用于 agent 汇总逻辑，可复用。 |
+| `is_virtual_interface` / `is_excluded_mount` / `is_excluded_file_system` | `pub fn(&str) -> bool` | 用于 agent 汇总逻辑，可复用。 |
+| `is_excluded_summary_disk` | `pub fn(&DynamicPerDiskData) -> bool` | 仅用于 summary 默认磁盘排除口径；内部按 `mount_point` / `file_system` 判断。 |
 | `query` 类型 | `QueryCondition`、`StaticDataQuery`、`DynamicDataQuery`、`DynamicSummaryQuery`、`DynamicSummaryQueryField`、`StaticResponseItem`、`DynamicResponseItem`、`DynamicSummaryResponseItem`（其中 `StaticDataQueryField`/`DynamicDataQueryField` 从 ng-core 再导出） | 查询 DSL；见「关键类型与常量」。 |
 | `apply_descaling_to_json_object` | `pub fn apply_descaling_to_json_object(obj:&mut serde_json::Map<String,Value>)`（`query.rs:308`） | 对 scaled 字段做 `/10.0`，每行必须调用**恰好一次**。 |
 | `SCALED_SUMMARY_COLUMNS` | `pub const &[&str] = &["cpu_usage","load_one","load_five","load_fifteen"]`（`query.rs:295`） | ×10 缩放字段的单一事实源。 |
 | `monitoring_buffer::init` / `get` / `flush_and_shutdown` | `pub fn init(config:Option<&MonitoringBufferConfig>)`；`pub fn get()->Option<&'static MonitoringBuffers>`；`pub async fn flush_and_shutdown()` | 初始化全局单例、获取之、或关闭发送端并在 5s 内 join flush 循环。 |
-| `MonitoringBuffers` 字段 + `BufferSender::send` / `dropped_count` | `pub fn send(&self, item:T)`；`pub fn dropped_count(&self)->u64` | 非阻塞 `try_send`；满/关闭时累加丢弃计数并 warn。 |
+| `MonitoringBuffers` 字段 + `BufferSender::send` / `dropped_count` | `pub fn send(&self, item:T)`；`pub fn dropped_count(&self)->u64` | `send()` 用 `try_send`（非阻塞）；`dropped_count()` 统计 `try_send` 失败导致的丢弃数（典型为 channel 满）。显式 `close()` 之后的 fast-path send 会静默忽略，不计入 dropped。 |
 | `MonitoringLastCache::init` / `global` / `update_*` / `get_*` | 见签名；`update_static_prebuilt` / `update_dynamic_prebuilt` / `update_dynamic_summary_prebuilt` 接受预构建 JSON `Value`；`get_*_last` 返回过滤后 `Value`，`get_*_last_raw` 返回预序列化 `Arc<str>`（summary 已反缩放） | hand-rolled `OnceLock` 单例（`monitoring_last_cache.rs`）。 |
 | `MonitoringUuidCache`（DbBackedCache）方法 | `init/global/reload`（宏生成）；`get_id(&Uuid)->Option<i16>`；`get_uuid(i16)->Option<Uuid>`；`is_active(&Uuid)->bool`；`exists(&Uuid)->bool`；`list_all()->Vec<Uuid>`；`list_all_with_agent_mode()->Vec<(Uuid,bool)>`；`async get_or_insert(Uuid)->Result<i16,NodegetError>`；`async soft_delete(Uuid)->Result<bool,NodegetError>` | `make_global_cache!` 提供 init/global/reload；`get_or_insert` 复活软删行并处理 UNIQUE 冲突。 |
 | `StaticHashCache::init` / `global` / `is_duplicate` / `update` | `pub fn init()`；`pub fn global()->Option<&'static Self>`；`pub fn is_duplicate(&self,i16,&[u8])->bool`；`pub fn update(&self,i16,&[u8])` | hand-rolled OnceLock；存每 `uuid_id` 的前 16 字节 hash。 |
@@ -72,7 +73,7 @@ crates/ng-monitoring/src/
 | `write_canonical_json` | `data_structure.rs:110` | 对 `Object` 键 `sort_unstable`，`Array` 保持原序，标量走 `serde_json::to_writer`；确定性输出。 |
 | `u64_to_i64_saturating` / `u64_to_i32_saturating` | `data_structure.rs:30` | u64→i64/i64→i32 饱和转换，溢出返回 `i64::MAX` 而非回绕；用于所有字节类字段。 |
 | `DynamicMonitoringData` | `data_structure.rs:148` | `{ uuid, time:u64, cpu, ram, load, system, disk:Arc<Vec<DynamicPerDiskData>>, network, gpu:Arc<Vec<DynamicGpuData>> }`；disk/gpu 用 `Arc` 包裹以 O(1) clone。 |
-| `DynamicMonitoringSummaryData` | `data_structure.rs:175` | 24 个 `Option` 字段；`cpu_usage`/`load_one`/`load_five`/`load_fifteen` 为 `i16`（实际值 = stored/10.0），`gpu_usage` 为普通 `i16`（0–100），字节字段为 `i64`。 |
+| `DynamicMonitoringSummaryData` | `data_structure.rs:175` | `uuid/time` 外加 23 个 `Option` 字段；`cpu_usage`/`load_one`/`load_five`/`load_fifteen` 为 `i16`（实际值 = stored/10.0），`gpu_usage` 为普通 `i16`（0–100），字节字段为 `i64`。 |
 | `VIRTUAL_INTERFACE_PREFIXES` | `data_structure.rs:230` | `const &[&str] = ["br","cni","docker","podman","flannel","lo","veth","virbr","vmbr","tap","fwbr","fwpr"]`；供 `is_virtual_interface()` 使用。 |
 | `EXCLUDED_MOUNT_PREFIXES` | `data_structure.rs:236` | 包含 `/tmp`、`/dev`、`/run`、`/var/lib/containerd`、`/var/lib/containers`、`/var/lib/docker`、`/var/lib/kubelet/*`、`/var/lib/rancher/k3s/agent/...`、`/proc`、`/sys`、`/sys/fs/cgroup`、`/etc/hosts` 等。 |
 | `EXCLUDED_FILE_SYSTEMS` | `data_structure.rs:262` | `autofs,bpf,cgroup,cgroup2,debugfs,devtmpfs,fusectl,nsfs,overlay,proc,pstore,securityfs,squashfs,sysfs,tmpfs,tracefs`。 |
@@ -96,7 +97,7 @@ crates/ng-monitoring/src/
 | `StaticDataQuery` | `query.rs:41` | `{ fields:Vec<StaticDataQueryField>, condition:Vec<QueryCondition> }`（从 ng-core 再导出）。 |
 | `StaticResponseItem` | `query.rs:59` | `{ uuid:Uuid, timestamp:i64, cpu/system/gpu:Option<Value> with skip_serializing_if=Option::is_none }`；仅 Serialize。 |
 | `DynamicSummaryQueryField` | `query.rs:108` | `enum (Copy)`，23 个 summary 字段；`column_name()` / `json_key()`（== column_name）/ `is_scaled()`。 |
-| `DynamicSummaryQueryField::is_scaled` | `query.rs:198` | `pub const fn -> bool`；成员判定 `SCALED_SUMMARY_COLUMNS`；测试断言其与 const 对每个 variant 一致（单一事实源不变量）。 |
+| `DynamicSummaryQueryField::is_scaled` | `query.rs:198` | `pub fn -> bool`；成员判定 `SCALED_SUMMARY_COLUMNS`；测试断言其与 const 对每个 variant 一致（单一事实源不变量）。 |
 | `SCALED_SUMMARY_COLUMNS` | `query.rs:295` | `pub const &[&str] = ["cpu_usage","load_one","load_five","load_fifteen"]`；新增缩放列只需改此。 |
 | `apply_descaling_to_json_object` | `query.rs:308` | 对每个 `SCALED_SUMMARY_COLUMNS` 键：若为 Number，解析为 f64 并 `/10.0`；若结果可有限表示则替换，否则不变；Null/非 Number 不动；**必须每行恰好调用一次**。 |
 
@@ -110,7 +111,7 @@ crates/ng-monitoring/src/
 | `MonitoringBuffers` | `monitoring_buffer.rs:40` | `{ static_mon, dynamic_mon, dynamic_summary }` 全为 `BufferSender<…ActiveModel>`。 |
 | `init` | `monitoring_buffer.rs:65` | 读取可选 `flush_interval_ms`/`max_batch_size`/`channel_capacity`（回退默认），建三条 mpsc，存入 `BUFFERS`（已 init 则 warn+sink），spawn 三个 `flush_loop`（硬编码 `num_columns` 8/11/27），存 handle。 |
 | `flush_and_shutdown` | `monitoring_buffer.rs:147` | 对三个 sender `close()`（触发 rx 收尾 flush），随后 `tokio::time::timeout(5s, join_all(handles))`；逐任务记录 panic 或超时；`BUFFERS` 未初始化时 no-op。 |
-| `BufferSender<T>` | `monitoring_buffer.rs:182` | `{ tx:Mutex<Option<Sender<T>>>, cap:usize, dropped:AtomicU64, closed:AtomicBool }`；`send()` 用 `try_send`（非阻塞），满/关闭时累加 `dropped` 并 warn；`close()` 幂等。 |
+| `BufferSender<T>` | `monitoring_buffer.rs:182` | `{ tx:Mutex<Option<Sender<T>>>, cap:usize, dropped:AtomicU64, closed:AtomicBool }`；`send()` 用 `try_send`（非阻塞），仅在 `try_send` 失败时累加 `dropped` 并 warn；显式 `close()` 后的 fast-path send 直接返回；`close()` 本身幂等。 |
 | `BufferSender::send` | `monitoring_buffer.rs:207` | 快速路径：`closed.load(Acquire)` 为真直接返回；否则锁 `tx` 并 `try_send`。 |
 | `BufferSender::dropped_count` | `monitoring_buffer.rs:233` | 累计丢弃数，`Relaxed` load。 |
 | `flush_loop` | `monitoring_buffer.rs:266` | `tokio::select! {biased; rx.recv() | ticker.tick()}`；`recv` Some 时 push 并排空至 `max_batch_size`；`recv` None 时 flush 余量并返回。 |
@@ -195,7 +196,7 @@ crates/ng-monitoring/src/
 所有 RPC 方法把方法体包进内部 `async {}` 块，`.await`，Err 时从 `anyhow_to_nodeget_error` 构建 jsonrpsee `ErrorObject::owned`；外层 `rpc_exec!`（在 mod.rs）追加日志。查询路径还经 `anyhow_error_to_raw` 附带结构化 `RawValue` 载荷。
 
 ### Limit 钳制
-`delete_common::extract_limit_and_last` 把 `Limit` 钳到 `10_000`，避免选出巨大的 `Vec<i64>` id 列表导致 OOM；multi-last/query RPC 钳到 `MAX_LIMIT=10_000`，默认 `capacity_hint` 为 100（static）/ 5000（dynamic、summary）。
+`delete_common::extract_limit_and_last` 把 `Limit` 钳到 `10_000`，避免选出巨大的 `Vec<i64>` id 列表导致 OOM；常规 query RPC（`query_dynamic` / `query_static` / `query_dynamic_summary`）也把 `Limit` 钳到 `MAX_LIMIT=10_000`，默认 `capacity_hint` 为 100（static）/ 5000（dynamic、summary）。multi-last RPC 参数是 `Vec<Uuid>` + `fields`，当前没有 `Limit` 参数，也没有单独的 UUID 数量钳制。
 
 ## RPC 方法
 
@@ -243,9 +244,9 @@ crates/ng-monitoring/src/
 | 表 | 列 | 约束 / 索引 / 关系 | 备注 |
 |---|---|---|---|
 | `monitoring_uuid` | `id`（auto pk，内存转 i16）、`uuid`（`Uuid`，UNIQUE）、`soft_delete`（bool） | UNIQUE(uuid) | 权威 Agent 注册表；`get_or_insert` 复活软删行；`soft_delete` 仅置标志。 |
-| `static_monitoring` | `id`、`uuid_id`（i16 FK→`monitoring_uuid.id`）、`timestamp`（i64 ms）、`storage_time`（Option<i64> ms）、`cpu_data`/`system_data`/`gpu_data`（JSON Value）、`data_hash`（`Vec<u8>`，16 字节） | 8 列（SQLite 子批 999/8=124） | `report_static` 两级去重：内存 `StaticHashCache` 再 DB hash 查询。 |
-| `dynamic_monitoring` | `id`、`uuid_id`、`timestamp`、`storage_time`、`cpu_data`/`ram_data`/`load_data`/`system_data`/`disk_data`/`network_data`/`gpu_data`（JSON Value） | 11 列（SQLite 子批 999/11=90） | 经 `MonitoringBuffer` 的 `dynamic_mon` 发送端插入。 |
-| `dynamic_monitoring_summary` | `id`、`uuid_id`、`timestamp`、`storage_time`、`cpu_usage`/`gpu_usage`（Option<i16>）、`used_swap`/`total_swap`/`used_memory`/`total_memory`/`available_memory`/`total_space`/`available_space`/`read_speed`/`write_speed`/`total_received`/`total_transmitted`/`transmit_speed`/`receive_speed`（Option<i64>）、`load_one`/`load_five`/`load_fifteen`（Option<i16> scaled）、`uptime`/`process_count`（Option<i32>）、`tcp_connections`/`udp_connections`（Option<i32>）、`boot_time`（Option<i64>） | 27 列（SQLite 子批 999/27=37） | `SCALED_SUMMARY_COLUMNS = cpu_usage/load_one/load_five/load_fifteen` 存为 ×10 的 i16；所有读路径经 `apply_descaling_to_json_object` `/10.0`。 |
+| `static_monitoring` | `id`、`uuid_id`（i16，语义上指向 `monitoring_uuid.id`，无 DB 级 FK）、`timestamp`（i64 ms）、`storage_time`（Option<i64> ms）、`cpu_data`/`system_data`/`gpu_data`（JSON Value）、`data_hash`（`Vec<u8>`，16 字节） | 索引：`idx-static-uuid-timestamp`(`uuid_id`,`timestamp`)、唯一索引 `idx-static-uuid-data-hash`(`uuid_id`,`data_hash`)、`idx-static_monitoring-storage_time`(`storage_time`)；无实体 Relation | 8 列（SQLite 子批 999/8=124）；`report_static` 两级去重依赖唯一 `(uuid_id, data_hash)` 索引。 |
+| `dynamic_monitoring` | `id`、`uuid_id`（i16，语义上指向 `monitoring_uuid.id`，无 DB 级 FK）、`timestamp`、`storage_time`、`cpu_data`/`ram_data`/`load_data`/`system_data`/`disk_data`/`network_data`/`gpu_data`（JSON Value） | 索引：`idx-dynamic-uuid-timestamp`(`uuid_id`,`timestamp`)、`idx-dynamic_monitoring-storage_time`(`storage_time`)；无实体 Relation | 11 列（SQLite 子批 999/11=90）；经 `MonitoringBuffer` 的 `dynamic_mon` 发送端插入。 |
+| `dynamic_monitoring_summary` | `id`、`uuid_id`（i16，语义上指向 `monitoring_uuid.id`，无 DB 级 FK）、`timestamp`、`storage_time`、`cpu_usage`/`gpu_usage`（Option<i16>）、`used_swap`/`total_swap`/`used_memory`/`total_memory`/`available_memory`/`total_space`/`available_space`/`read_speed`/`write_speed`/`total_received`/`total_transmitted`/`transmit_speed`/`receive_speed`（Option<i64>）、`load_one`/`load_five`/`load_fifteen`（Option<i16> scaled）、`uptime`/`process_count`（Option<i32>）、`tcp_connections`/`udp_connections`（Option<i32>）、`boot_time`（Option<i64>） | 索引：`idx_dynamic_monitoring_summary_uuid_timestamp`(`uuid_id`,`timestamp`)、`idx-dynamic_monitoring_summary-storage_time`(`storage_time`)；无实体 Relation | 27 列（SQLite 子批 999/27=37）；`SCALED_SUMMARY_COLUMNS = cpu_usage/load_one/load_five/load_fifteen` 存为 ×10 的 i16；所有读路径经 `apply_descaling_to_json_object` `/10.0`。 |
 
 迁移由 `ng-db` 维护（本 crate 不直接持有迁移）。
 

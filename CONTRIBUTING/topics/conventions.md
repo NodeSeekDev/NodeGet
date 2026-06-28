@@ -6,9 +6,9 @@
 
 | 层级 | 类型 | 使用场景 |
 |------|------|----------|
-| 领域错误 | `NodegetError` 枚举（12 变体，数字 code 101/102/103/104/105/106/107/108/999，其中 Parse/Serialization/IO 共享 101） | 构造可克隆、有 code 的业务错误，**始终**经 `.into()` 转 `anyhow::Error` |
-| 内部传递 | `anyhow::Result<T>`（ng-core 导出为 `Result<T>`，**注意是 anyhow 不是 `Result<_, NodegetError>`**） | 所有内部函数返回类型 |
-| RPC 边界 | `RpcResult<Box<RawValue>>` | 仅用于 RPC handler 函数签名 |
+| 领域错误 | `NodegetError` 枚举（当前为 11 变体，数字 code 101/102/103/104/105/106/107/108/999，其中 Parse/Serialization/IO 共享 101） | 构造可克隆、有 code 的业务错误，通常经 `.into()` 转 `anyhow::Error` |
+| 内部传递 | `anyhow::Result<T>`（ng-core 导出为 `Result<T>`，**注意是 anyhow 不是 `Result<_, NodegetError>`**） | 大多数内部函数返回类型；少量只做纯数据转换/常量 accessor 的函数会直接返回具体类型 |
+| RPC 边界 | `RpcResult<Box<RawValue>>` | 多数业务 RPC handler 的返回签名；订阅与少量特殊方法存在例外 |
 
 ### RPC handler 标准错误桥接（强制）
 
@@ -41,7 +41,7 @@ pub async fn some_method(token: String, /* ... */) -> RpcResult<Box<RawValue>> {
 - 错误码由 `NodegetError::error_code()` 决定（const fn，见 [`crates/ng-core.md`](../crates/ng-core.md)）。
 - 切勿在 handler 里手写 `ErrorObject::owned` 的 code 常量——用 `error_code()`。
 
-## 2. RPC 方法四层结构（强制）
+### RPC 方法四层结构（主流模式）
 
 每个 RPC 方法必须拆为四层：
 
@@ -85,12 +85,13 @@ pub fn rpc_module() -> jsonrpsee::RpcModule<KvRpcImpl> {
 }
 ```
 
-### 硬性规则
+### 当前仓库的通用规则（以业务 RPC 为主）
 
-- **只用 `#[rpc]` proc 宏**，**绝不**手写 `register_method` / `register_async_method`。
-- **首个参数恒为 `token: String`**（凭据），handler 内部认证。框架不保护命名空间——**每个方法必须调用鉴权**，遗漏即公开未鉴权（见各 crate 的「注意事项与陷阱」）。
-- **返回类型恒为 `RpcResult<Box<RawValue>>`**。
-- **子命名空间用子目录**：`rpc/static_bucket/{mod,auth,create,...}.rs`、`rpc/static_bucket_file/{mod,auth,...}.rs`。
+- **优先使用 `#[rpc]` proc 宏**，**不要**手写 `register_method` / `register_async_method`。
+- **多数业务 RPC**把凭据放在首个参数，并在 handler 内部认证；但当前仓库并非每个 RPC 都严格满足 `token: String` 首参（例如 `token_get` 的管理模式使用第二参 `supertoken`），因此应以实际 trait 签名与权限模型为准。
+- **多数业务 RPC**返回 `RpcResult<Box<RawValue>>`；订阅与少量 server 自身方法存在例外。
+- **常见组织方式**是 `rpc/<method>.rs` 一方法一文件；但并非每个命名空间都严格四层展开到同样粒度，部分 server 内建方法直接写在 `server/src/rpc_nodeget.rs`。
+- **子命名空间**通常用子目录：`rpc/static_bucket/{mod,auth,create,...}.rs`、`rpc/static_bucket_file/{mod,auth,...}.rs`。
 - **jsonrpsee 命名空间分隔符是 `_`**（自定义 fork），不是 `.`。
 
 ## 3. Feature 门控模式
@@ -149,18 +150,18 @@ make_global_cache!(TokenCache, TOKEN_CACHE_GLOBAL);
 
 所有跨 crate 依赖通过 `OnceLock` + `set_*()` / `get_*()` 注入：
 
-- `set_*` 静默忽略重复初始化（`let _ = LOCK.set(val);`）。
-- `get_*` 未初始化时 panic（`.expect("... not initialized")`）。
-- server binary 在 `serve.rs` **统一注册所有 trait 实现**。
+- `set_*` 的行为取决于具体模块：许多 setter 采用 `let _ = LOCK.set(val);` 忽略重复初始化，但也有返回 `Option` / `Result`、或在外层显式处理重复初始化的实现。
+- `get_*` / `require_*` 也并非完全统一：有的未初始化时 panic，有的返回 `Option` 或 `NodegetError`（如 `ng_db::get_db()` 返回 `Option`，`require_permission_checker()` 返回 `Option` 再由调用方决定如何报错）。
+- server binary 在 `serve.rs` **集中注册当前实际使用的 trait provider**（见 `topics/cross-cutting.md`）。
 
-现有注入点与 trait 列表见 [`topics/cross-cutting.md`](cross-cutting.md) 的「Trait 注入」。所有实现最终委托给 `ng_token` 函数。
+现有注入点与 trait 列表见 [`topics/cross-cutting.md`](cross-cutting.md) 的「Trait 注入」。其中只有 `PermissionChecker` 直接委派到 `ng_token`；其余 provider 分别委派到 `ng_monitoring`、`ng_js_worker`、`ng_crontab`/`ng_js_runtime` 等各自实现。
 
-## 6. Serde 约定
+## 6. Serde 约定（常见模式）
 
-- 所有枚举/结构体：`#[serde(rename_all = "snake_case")]`。
+- 许多枚举/结构体使用 `#[serde(rename_all = "snake_case")]`，尤其是 RBAC 数据结构、查询 DSL 与若干 RPC 相关类型；但并非仓库中所有 `Serialize/Deserialize` 类型都显式带该属性。
 - 小写枚举变体（如 `IpProvider`）：`#[serde(rename_all = "lowercase")]`。
 - JSON 列：`#[sea_orm(column_type = "JsonBinary")]`。
-- Optional 字段用 `Option<T>`，**无 serde default**；应用代码用 `unwrap_or()` / `_or_default()` 处理。
+- Optional 字段通常用 `Option<T>`，多数情况下无 serde default；但当前仓库也存在少量 `#[serde(default)]` 例子（如部分 RPC 输入结构）。应用代码通常用 `unwrap_or()` / `_or_default()` 处理。
 - `Token.token_limit: Arc<Vec<Limit>>`——ng-core 启用 serde `rc` feature，Arc 按值序列化。
 
 ## 7. 日志约定
@@ -188,7 +189,7 @@ make_global_cache!(TokenCache, TOKEN_CACHE_GLOBAL);
 | `js_runtime` | ng-js-runtime |
 | `monitoring` | ng-monitoring |
 | `crontab` / `crontab_result` | ng-crontab |
-| `db` | ng-db（虚拟 target，展开为 sea_orm/sqlx） |
+| `db` | ng-db（既有直接 `target: "db"` 事件，也会在部分日志/配置里被当作对 `sea_orm` / `sqlx` 的聚合别名使用） |
 | `auth` | 跨 crate 权限校验辅助（如 `token_time_valid`） |
 
 - `info_span!` 起始处用 `token_identity(&token)` 提取 `(token_key, username)` 作结构化字段，**避免明文 token 入日志**。
