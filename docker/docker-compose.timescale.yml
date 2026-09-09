@@ -1,0 +1,50 @@
+name: nodeget-timescale
+
+# TimescaleDB 部署模板：在 PostgreSQL 之上启用 timescaledb 扩展。
+# NodeGet 检测到 timescaledb 扩展后，会自动把监控时序表（dynamic_monitoring 等）
+# 转换为 hypertable，并启用列式压缩 + 自动保留策略，磁盘占用从此有上界。
+#
+# 迁移现有数据：先停服务，把旧 PG 数据 pg_dump 恢复到本模板的 timescaledb 容器即可。
+#
+# 可调参数（均可不设）：不设任何 NODEGET_TIMESCALE_* 时使用内置默认策略
+# （chunk=1 天 / compress=7 天 / retention 不启用），只要数据库是 timescaledb 即生效。
+# 需要覆盖默认值时：
+#   NODEGET_TIMESCALE_CHUNK_INTERVAL_DAYS = 1    # hypertable 分块间隔（天）
+#   NODEGET_TIMESCALE_COMPRESS_AFTER_DAYS = 7    # 超过该天数的 chunk 启用压缩
+#   NODEGET_TIMESCALE_RETENTION_DAYS = 0         # 超过该天数的数据自动删除；0 = 不启用（默认，避免误删历史）
+# 注意：环境变量仅在容器首次启动生成 config.toml 时写入（见 docker/entrypoint.sh）；
+#       若已挂载自定义 config.toml，请直接在其中配置 [database.timescale] 段。
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.29.1-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nodeget
+      POSTGRES_USER: nodeget
+      POSTGRES_PASSWORD: nodeget
+    volumes:
+      - ./data/timescaledb:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U nodeget -d nodeget" ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  nodeget:
+    image: genshinmc/nodeget:latest
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      NODEGET_DATABASE_URL: postgres://nodeget:nodeget@timescaledb:5432/nodeget
+      # 可选：覆盖 timescale 默认策略（不设则用内置默认 chunk=1 / compress=7 / retention=0）。
+      # 示例——显式启用 30 天自动清理：
+      # NODEGET_TIMESCALE_CHUNK_INTERVAL_DAYS: "1"
+      # NODEGET_TIMESCALE_COMPRESS_AFTER_DAYS: "7"
+      # NODEGET_TIMESCALE_RETENTION_DAYS: "30"
+    ports:
+      - "2211:2211"
+    volumes:
+      - ./data/nodeget:/nodeget

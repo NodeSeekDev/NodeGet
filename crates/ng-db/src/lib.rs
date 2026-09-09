@@ -84,6 +84,8 @@ pub mod db_connection;
 pub mod db_registry;
 #[cfg(feature = "server")]
 pub mod rpc;
+#[cfg(feature = "server")]
+pub mod timescale;
 
 // ── 便捷 Re-export ────────────────────────────────────────────────
 

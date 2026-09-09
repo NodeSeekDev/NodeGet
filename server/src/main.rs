@@ -168,6 +168,7 @@ async fn init_db_connection() {
             idle_timeout_ms: config_guard.database.idle_timeout_ms.unwrap_or(3000),
             max_lifetime_ms: config_guard.database.max_lifetime_ms.unwrap_or(30000),
             max_connections: config_guard.database.max_connections.unwrap_or(10),
+            timescale: config_guard.database.timescale.clone(),
         }
     };
 
