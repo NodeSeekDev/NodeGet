@@ -268,6 +268,8 @@ impl DynamicDataFromSystem {
                 boot_time: System::boot_time(),
                 uptime: System::uptime(),
                 process_count: cached_process_count(),
+                // 采集逻辑在流量统计后续步骤实现，当前先上报 None
+                boot_id: None,
             },
         )
     }

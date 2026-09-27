@@ -203,6 +203,9 @@ impl DataFromNetwork {
                     total_transmitted: network.total_transmitted(),
                     receive_speed: (network.received() as f64 / safe_interval_secs) as u64,
                     transmit_speed: (network.transmitted() as f64 / safe_interval_secs) as u64,
+                    // 采集逻辑在流量统计后续步骤实现，当前先上报 None
+                    ifindex: None,
+                    is_outlet: None,
                 })
                 .collect()
         };
