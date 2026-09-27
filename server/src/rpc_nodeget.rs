@@ -460,10 +460,12 @@ impl RpcServer for NodegetServerRpcImpl {
                     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
                     // execv/exit 单向抹除进程映像、无析构。重启前必须同步完成与正常
-                    // reload/stop 一致的优雅关闭：刷写监控 buffer + 关闭 DB 连接池，
-                    // 否则会丢失最近 ≤500ms 的 dynamic/summary 监控行（见 REVIEW M3）。
+                    // reload/stop 一致的优雅关闭：刷写监控 buffer 和流量统计 + 关闭 DB 连接池，
+                    // 否则会丢失最近 ≤500ms 的 dynamic/summary 监控行（见 REVIEW M3），
+                    // 以及最近 ≤60s 的流量统计快照。
                     // flush 必须在 execv 前同步 await 完成，不能 fire-and-forget。
                     ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
+                    ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
                     ng_db::DbRegistryManager::global()
                         .expect("DbRegistryManager not initialized at restart")
                         .shutdown()
