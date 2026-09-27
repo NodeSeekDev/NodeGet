@@ -582,6 +582,31 @@ fn detect_possible_data_loss(
     })
 }
 
+/// 建一个只有流量统计三张表的内存 `SQLite`，供流量统计和流量查询的测试使用。
+///
+/// 建表语句取自迁移在 `SQLite` 上的实际结果。
+#[cfg(test)]
+pub(crate) async fn traffic_tables_on_sqlite() -> sea_orm::DatabaseConnection {
+    use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+
+    // 内存库每个连接各自独立，只用一个连接
+    let mut options = ConnectOptions::new("sqlite::memory:");
+    options.max_connections(1);
+    let db = Database::connect(options).await.expect("connect sqlite");
+    db.execute_unprepared(
+        r#"
+        CREATE TABLE "traffic_snapshot" ( "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT, "uuid_id" smallint NOT NULL, "interface_name" varchar NOT NULL, "snapshot_time" integer NOT NULL, "total_received" integer NOT NULL, "total_transmitted" integer NOT NULL );
+        CREATE UNIQUE INDEX "idx-traffic_snapshot-uuid_id-interface_name-snapshot_time" ON "traffic_snapshot" ("uuid_id", "interface_name", "snapshot_time");
+        CREATE TABLE "traffic_current_total" ( "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT, "uuid_id" smallint NOT NULL, "interface_name" varchar NOT NULL, "boot_id" varchar NULL, "ifindex" integer NULL, "counter_received" integer NOT NULL, "counter_transmitted" integer NOT NULL, "report_time" integer NOT NULL, "total_received" integer NOT NULL, "total_transmitted" integer NOT NULL, "created_at" integer NOT NULL, "updated_at" integer NOT NULL );
+        CREATE UNIQUE INDEX "idx-traffic_current_total-uuid_id-interface_name-unique" ON "traffic_current_total" ("uuid_id", "interface_name");
+        CREATE TABLE "traffic_possible_data_loss" ( "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT, "uuid_id" smallint NOT NULL, "start_time" integer NOT NULL, "end_time" integer NOT NULL );
+        "#,
+    )
+    .await
+    .expect("create traffic tables");
+    db
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -962,31 +987,9 @@ mod tests {
         assert_eq!(loss.end_time, Set(reset_at));
     }
 
-    /// 建一个只有流量统计三张表的内存 `SQLite`，建表语句取自迁移在 `SQLite` 上的实际结果
-    async fn traffic_tables_on_sqlite() -> sea_orm::DatabaseConnection {
-        use sea_orm::{ConnectOptions, ConnectionTrait, Database};
-
-        // 内存库每个连接各自独立，只用一个连接
-        let mut options = ConnectOptions::new("sqlite::memory:");
-        options.max_connections(1);
-        let db = Database::connect(options).await.expect("connect sqlite");
-        db.execute_unprepared(
-            r#"
-            CREATE TABLE "traffic_snapshot" ( "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT, "uuid_id" smallint NOT NULL, "interface_name" varchar NOT NULL, "snapshot_time" integer NOT NULL, "total_received" integer NOT NULL, "total_transmitted" integer NOT NULL );
-            CREATE UNIQUE INDEX "idx-traffic_snapshot-uuid_id-interface_name-snapshot_time" ON "traffic_snapshot" ("uuid_id", "interface_name", "snapshot_time");
-            CREATE TABLE "traffic_current_total" ( "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT, "uuid_id" smallint NOT NULL, "interface_name" varchar NOT NULL, "boot_id" varchar NULL, "ifindex" integer NULL, "counter_received" integer NOT NULL, "counter_transmitted" integer NOT NULL, "report_time" integer NOT NULL, "total_received" integer NOT NULL, "total_transmitted" integer NOT NULL, "created_at" integer NOT NULL, "updated_at" integer NOT NULL );
-            CREATE UNIQUE INDEX "idx-traffic_current_total-uuid_id-interface_name-unique" ON "traffic_current_total" ("uuid_id", "interface_name");
-            CREATE TABLE "traffic_possible_data_loss" ( "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT, "uuid_id" smallint NOT NULL, "start_time" integer NOT NULL, "end_time" integer NOT NULL );
-            "#,
-        )
-        .await
-        .expect("create traffic tables");
-        db
-    }
-
     #[tokio::test]
     async fn write_to_db_skips_duplicate_snapshots_and_updates_current_totals() {
-        use super::{Traffic, current_total_model, write_to_db};
+        use super::{Traffic, current_total_model, traffic_tables_on_sqlite, write_to_db};
         use ng_db::entity::{traffic_current_total, traffic_possible_data_loss, traffic_snapshot};
         use sea_orm::{ActiveValue, EntityTrait, PaginatorTrait};
 
