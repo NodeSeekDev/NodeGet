@@ -214,6 +214,26 @@ pub struct DynamicDataFromSystem(
     pub DynamicLoadData,
     pub DynamicSystemData,
 );
+
+/// 读取本次开机的唯一标识（Linux 平台）。
+///
+/// - 返回: 读取 `/proc/sys/kernel/random/boot_id`，读取失败或内容为空返回 `None`
+#[cfg(target_os = "linux")]
+fn read_boot_id() -> Option<String> {
+    std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+        .ok()
+        .map(|content| content.trim().to_owned())
+        .filter(|boot_id| !boot_id.is_empty())
+}
+
+/// 读取本次开机的唯一标识（Windows、macOS 等非 Linux 平台）。
+///
+/// 暂未实现，返回 `None`，由服务端靠"计数器变小"判断重置。
+#[cfg(not(target_os = "linux"))]
+const fn read_boot_id() -> Option<String> {
+    None
+}
+
 /// 全局动态系统数据实例，用于缓存系统动态信息。
 static GLOBAL_DYNAMIC_DATA_FROM_SYSTEM: OnceCell<Mutex<DynamicDataFromSystem>> =
     OnceCell::const_new();
@@ -225,7 +245,7 @@ impl DynamicDataFromSystem {
     /// 2. 获取每核 CPU 使用率和频率
     /// 3. 获取内存和 Swap 使用情况
     /// 4. 获取负载均值
-    /// 5. 获取启动时间、运行时间和进程数
+    /// 5. 获取启动时间、运行时间、进程数和开机标识
     ///
     /// 返回包含 CPU、内存、负载和系统动态数据的结构体。
     async fn new() -> Self {
@@ -268,8 +288,7 @@ impl DynamicDataFromSystem {
                 boot_time: System::boot_time(),
                 uptime: System::uptime(),
                 process_count: cached_process_count(),
-                // 采集逻辑在流量统计后续步骤实现，当前先上报 None
-                boot_id: None,
+                boot_id: read_boot_id(),
             },
         )
     }

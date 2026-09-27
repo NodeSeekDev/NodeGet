@@ -7,14 +7,14 @@ use crate::config_access::get_agent_config;
 use crate::monitoring::impls::Monitor;
 use log::info;
 use ng_monitoring::data_structure::{
-    DynamicMonitoringData, StaticMonitoringData, is_excluded_summary_disk, is_virtual_interface,
+    DynamicMonitoringData, StaticMonitoringData, is_excluded_summary_disk,
 };
 
 /// 采集并打印静态与动态监控数据快照。
 ///
 /// 1. 采集静态数据（CPU 型号、系统信息、GPU 信息）
 /// 2. 采集动态数据（CPU 使用率、内存、负载、磁盘、网络、GPU 实时状态）
-/// 3. 输出经 `is_excluded_summary_disk` / `is_virtual_interface` 过滤后的摘要数据
+/// 3. 输出经 `is_excluded_summary_disk` 过滤后的磁盘、出口网卡（`is_outlet`）的摘要数据
 pub async fn dry_run() {
     let static_info = StaticMonitoringData::refresh_and_get().await;
     let dynamic_info = DynamicMonitoringData::refresh_and_get().await;
@@ -203,7 +203,7 @@ pub async fn dry_run() {
             .network
             .interfaces
             .iter()
-            .filter(|i| !is_virtual_interface(&i.interface_name))
+            .filter(|i| i.is_outlet == Some(true))
             .collect(),
     };
     for interface in interfaces {

@@ -226,10 +226,31 @@ pub struct DynamicMonitoringSummaryData {
     pub receive_speed: Option<i64>,
 }
 
-/// 虚拟网卡前缀列表，匹配这些前缀的接口在摘要统计中被排除。
+/// 虚拟网卡前缀列表，匹配这些前缀的接口按网卡名判断时视为虚拟网卡。
+///
+/// Linux 上出口网卡按 `/sys` 判断，此列表只在读不到 `/sys` 的平台上兜底。
 const VIRTUAL_INTERFACE_PREFIXES: &[&str] = &[
-    "br", "cni", "docker", "podman", "flannel", "lo", "veth", "virbr", "vmbr", "tap", "fwbr",
+    "br",
+    "cni",
+    "docker",
+    "podman",
+    "flannel",
+    "lo",
+    "veth",
+    "virbr",
+    "vmbr",
+    "tap",
+    "fwbr",
     "fwpr",
+    "fwln",
+    "tun",
+    "vnet",
+    "kube",
+    "tailscale",
+    "Meta",
+    "wg",
+    "ppp",
+    "zt",
 ];
 
 /// 排除的挂载点前缀列表，匹配这些前缀的磁盘在摘要统计中被排除。
@@ -382,7 +403,7 @@ impl DynamicMonitoringSummaryData {
     /// 使用可选的磁盘和网卡筛选列表构建 `DynamicMonitoringSummaryData`
     ///
     /// - `select_disk`: 若存在且非空，仅统计 `mount_point` 匹配该列表的磁盘；否则回退到默认排除逻辑
-    /// - `select_network_interface`: 若存在且非空，仅统计 `interface_name` 匹配该列表的网卡；否则回退到默认排除逻辑
+    /// - `select_network_interface`: 若存在且非空，仅统计 `interface_name` 匹配该列表的网卡；否则只统计出口网卡（`is_outlet`）
     #[must_use]
     pub fn from_with_filter(
         data: &DynamicMonitoringData,
@@ -417,7 +438,11 @@ impl DynamicMonitoringSummaryData {
                 .network
                 .interfaces
                 .iter()
-                .filter(|i| !is_virtual_interface(&i.interface_name))
+                // 缺少 is_outlet 时（如测试构造的数据）按网卡名判断
+                .filter(|i| {
+                    i.is_outlet
+                        .unwrap_or_else(|| !is_virtual_interface(&i.interface_name))
+                })
                 .collect(),
         };
         let total_received: u64 = ifaces.iter().map(|i| i.total_received).sum();
@@ -939,6 +964,15 @@ mod tests {
         assert!(is_virtual_interface("tap0"));
         assert!(is_virtual_interface("fwbr0"));
         assert!(is_virtual_interface("fwpr0"));
+        assert!(is_virtual_interface("fwln100i0"));
+        assert!(is_virtual_interface("tun0"));
+        assert!(is_virtual_interface("vnet0"));
+        assert!(is_virtual_interface("kube-ipvs0"));
+        assert!(is_virtual_interface("tailscale0"));
+        assert!(is_virtual_interface("Meta"));
+        assert!(is_virtual_interface("wg0"));
+        assert!(is_virtual_interface("ppp0"));
+        assert!(is_virtual_interface("zt5u4y6ejv"));
     }
 
     #[test]
@@ -1139,6 +1173,39 @@ mod tests {
         let empty: Vec<String> = vec![];
         let summary = DynamicMonitoringSummaryData::from_with_filter(&data, None, Some(&empty));
         assert_eq!(summary.total_received, Some(1000));
+    }
+
+    #[test]
+    fn network_interface_default_uses_is_outlet() {
+        // 默认只统计出口网卡：is_outlet 优先于网卡名
+        let interface =
+            |name: &str, total_received: u64, is_outlet: bool| DynamicPerNetworkInterfaceData {
+                interface_name: name.to_owned(),
+                total_received,
+                total_transmitted: 0,
+                receive_speed: 0,
+                transmit_speed: 0,
+                ifindex: None,
+                is_outlet: Some(is_outlet),
+            };
+        let mut data = monitoring_data(vec![]);
+        data.network = DynamicNetworkData {
+            interfaces: Arc::new(vec![
+                interface("eno1", 1000, true),
+                interface("eth1", 300, false),
+                interface("wg0", 200, false),
+            ]),
+            udp_connections: 0,
+            tcp_connections: 0,
+        };
+
+        let summary = DynamicMonitoringSummaryData::from_with_filter(&data, None, None);
+        assert_eq!(summary.total_received, Some(1000));
+
+        // 用户指定网卡时按指定的统计
+        let filter = vec!["eth1".to_owned()];
+        let summary = DynamicMonitoringSummaryData::from_with_filter(&data, None, Some(&filter));
+        assert_eq!(summary.total_received, Some(300));
     }
 
     #[test]

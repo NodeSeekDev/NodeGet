@@ -4,8 +4,10 @@
 //! 并为 [`StaticMonitoringData`] 和 [`DynamicMonitoringData`] 提供 trait 实现。
 //! 同时包含磁盘和网络速率采集的辅助结构体 [`DataFromDisk`] / [`DataFromNetwork`]。
 
+use crate::config_access::get_agent_config;
 use crate::monitoring::gpu::{DynamicDataFromGpu, StaticDataFromGpu};
 use crate::monitoring::network_connections::calc_connections;
+use crate::monitoring::outlet_interface::{OutletCache, read_ifindex};
 use crate::monitoring::system_impls::{DynamicDataFromSystem, StaticDataFromSystem};
 use crate::monitoring::{refresh_global_disk, refresh_global_network};
 use ng_core::utils::get_local_timestamp_ms;
@@ -14,7 +16,7 @@ use ng_monitoring::data_structure::{
     DynamicMonitoringData, DynamicNetworkData, DynamicPerDiskData, DynamicPerNetworkInterfaceData,
     StaticMonitoringData,
 };
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use sysinfo::DiskKind;
 
 /// 监控数据获取 trait，定义了刷新并获取监控数据的异步接口。
@@ -176,6 +178,9 @@ impl DataFromDisk {
     }
 }
 
+/// 出口网卡识别结果缓存，跨采集周期复用。
+static OUTLET_CACHE: LazyLock<Mutex<OutletCache>> = LazyLock::new(Mutex::default);
+
 /// 从网络获取的数据结构，包含网络接口动态数据及连接统计。
 #[derive(Debug)]
 pub struct DataFromNetwork(pub DynamicNetworkData);
@@ -185,7 +190,10 @@ impl DataFromNetwork {
     ///
     /// 1. 刷新全局网络信息并获取刷新间隔
     /// 2. 计算每个网络接口的收发速率（字节/秒）
-    /// 3. 统计 UDP 和 TCP 连接数
+    /// 3. 读取每个网络接口的网卡编号，判断是否为出口网卡：
+    ///    用户指定了网卡（`dynamic_summary_select_network_interface`）时按是否在其中判断，
+    ///    否则按算法识别（`OutletCache`）
+    /// 4. 统计 UDP 和 TCP 连接数
     ///
     /// 返回包含网络接口数据以及 UDP/TCP 连接数的结构体。
     pub async fn refresh_and_get() -> Self {
@@ -193,19 +201,31 @@ impl DataFromNetwork {
         // 同磁盘：首次或时钟异常的近 0 值会使速率变成 u64::MAX，加一个 10ms 下限。
         let safe_interval_secs = interval_secs.max(0.01);
         let networks_mutex = crate::monitoring::get_global_network().await;
+        let agent_config = get_agent_config().ok();
+        let selected_interfaces = agent_config
+            .as_ref()
+            .and_then(|config| config.dynamic_summary_select_network_interface.as_deref())
+            .filter(|selected| !selected.is_empty());
         let network_vec = {
             let networks = networks_mutex.lock().await;
+            let mut outlet_cache = OUTLET_CACHE.lock().unwrap_or_else(PoisonError::into_inner);
             networks
                 .iter()
-                .map(|(interface_name, network)| DynamicPerNetworkInterfaceData {
-                    interface_name: interface_name.clone(),
-                    total_received: network.total_received(),
-                    total_transmitted: network.total_transmitted(),
-                    receive_speed: (network.received() as f64 / safe_interval_secs) as u64,
-                    transmit_speed: (network.transmitted() as f64 / safe_interval_secs) as u64,
-                    // 采集逻辑在流量统计后续步骤实现，当前先上报 None
-                    ifindex: None,
-                    is_outlet: None,
+                .map(|(interface_name, network)| {
+                    let ifindex = read_ifindex(interface_name);
+                    let is_outlet = match selected_interfaces {
+                        Some(selected) => selected.contains(interface_name),
+                        None => outlet_cache.identify_outlet(interface_name, ifindex),
+                    };
+                    DynamicPerNetworkInterfaceData {
+                        interface_name: interface_name.clone(),
+                        total_received: network.total_received(),
+                        total_transmitted: network.total_transmitted(),
+                        receive_speed: (network.received() as f64 / safe_interval_secs) as u64,
+                        transmit_speed: (network.transmitted() as f64 / safe_interval_secs) as u64,
+                        ifindex,
+                        is_outlet: Some(is_outlet),
+                    }
                 })
                 .collect()
         };
