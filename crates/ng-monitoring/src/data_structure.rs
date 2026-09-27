@@ -563,6 +563,8 @@ pub struct DynamicSystemData {
     pub uptime: u64,
     /// 进程数量
     pub process_count: u64,
+    /// 本次开机的唯一标识
+    pub boot_id: Option<String>,
 }
 
 /// 磁盘类型枚举。
@@ -625,6 +627,10 @@ pub struct DynamicPerNetworkInterfaceData {
     pub receive_speed: u64,
     /// 发送速度（字节/秒）
     pub transmit_speed: u64,
+    /// 网卡编号
+    pub ifindex: Option<u32>,
+    /// 是否为出口网卡
+    pub is_outlet: Option<bool>,
 }
 
 /// GPU 静态信息。
@@ -716,6 +722,7 @@ mod tests {
                 boot_time: 0,
                 uptime: 0,
                 process_count: 0,
+                boot_id: None,
             },
             disk: Arc::new(disks),
             network: DynamicNetworkData {
@@ -1100,6 +1107,8 @@ mod tests {
                     total_transmitted: 500,
                     receive_speed: 100,
                     transmit_speed: 50,
+                    ifindex: None,
+                    is_outlet: None,
                 },
                 DynamicPerNetworkInterfaceData {
                     interface_name: "lo".to_owned(),
@@ -1107,6 +1116,8 @@ mod tests {
                     total_transmitted: 200,
                     receive_speed: 0,
                     transmit_speed: 0,
+                    ifindex: None,
+                    is_outlet: None,
                 },
             ]),
             udp_connections: 0,

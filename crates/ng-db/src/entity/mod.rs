@@ -15,3 +15,6 @@ pub mod static_file;
 pub mod static_monitoring;
 pub mod task;
 pub mod token;
+pub mod traffic_current_total;
+pub mod traffic_possible_data_loss;
+pub mod traffic_snapshot;

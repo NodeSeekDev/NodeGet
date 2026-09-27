@@ -11,6 +11,7 @@
 //! - `MonitoringUuidCache` — 基于 DB 的 UUID↔ID 双向缓存
 //! - `MonitoringLastCache` — 内存中的最新值缓存
 //! - `StaticHashCache` — 内存中的静态数据哈希去重缓存
+//! - `TrafficStats` — 流量统计，维护出口网卡总流量并按 15 分钟记快照
 //! - RPC 命名空间：`agent`、`agent-uuid`、`nodeget-server`
 //! - `rpc_module()` — 合并所有监控相关 RPC 方法的统一入口
 
@@ -40,6 +41,8 @@ pub mod monitoring_uuid_cache;
 pub mod rpc;
 #[cfg(feature = "server")]
 pub mod static_hash_cache;
+#[cfg(feature = "server")]
+pub mod traffic_stats;
 
 /// 构建并返回包含所有监控相关 RPC 方法的 `RpcModule`。
 ///

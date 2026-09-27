@@ -9,7 +9,7 @@ use crate::data_structure::{
 };
 use crate::query::{
     DynamicDataQuery, DynamicDataQueryField, DynamicSummaryQuery, DynamicSummaryQueryField,
-    QueryCondition, StaticDataQuery, StaticDataQueryField,
+    QueryCondition, StaticDataQuery, StaticDataQueryField, TrafficQuery,
 };
 use jsonrpsee::core::{RpcResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
@@ -30,6 +30,7 @@ pub mod query_dynamic_summary;
 mod query_dynamic_summary_multi_last;
 mod query_static;
 mod query_static_multi_last;
+mod query_traffic;
 mod report_dynamic;
 mod report_dynamic_summary;
 mod report_static;
@@ -135,6 +136,10 @@ pub trait Rpc {
         token: String,
         conditions: Vec<QueryCondition>,
     ) -> RpcResult<Box<RawValue>>;
+
+    /// 查询流量统计
+    #[method(name = "query_traffic")]
+    async fn query_traffic(&self, token: String, query: TrafficQuery) -> RpcResult<Box<RawValue>>;
 }
 
 /// `agent` RPC 实现，委托给各子模块的具体函数。
@@ -307,6 +312,14 @@ impl RpcServer for AgentRpcImpl {
         let (tk, un) = token_identity(&token);
         let span = tracing::info_span!(target: "monitoring", "agent::delete_dynamic_summary", token_key = tk, username = un, conditions = ?conditions);
         async { rpc_exec!(delete_dynamic_summary::delete_dynamic_summary(token, conditions).await) }
+            .instrument(span)
+            .await
+    }
+
+    async fn query_traffic(&self, token: String, query: TrafficQuery) -> RpcResult<Box<RawValue>> {
+        let (tk, un) = token_identity(&token);
+        let span = tracing::info_span!(target: "monitoring", "agent::query_traffic", token_key = tk, username = un, query = ?query);
+        async { rpc_exec!(query_traffic::query_traffic(token, query).await) }
             .instrument(span)
             .await
     }

@@ -287,6 +287,96 @@ pub struct DynamicSummaryResponseItem {
     pub receive_speed: Option<Value>,
 }
 
+/// 流量查询的返回方式。
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum TrafficGranularity {
+    /// 只返回时间段内的流量合计
+    Total,
+    /// 返回时间段内的每一条总流量快照
+    Detail,
+}
+
+/// 流量查询结构体。
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrafficQuery {
+    /// 设备 UUID
+    pub uuid: uuid::Uuid,
+    /// 开始时间（毫秒），不填表示从最早开始
+    pub start_time: Option<i64>,
+    /// 结束时间（毫秒），不填表示到现在
+    pub end_time: Option<i64>,
+    /// 返回方式
+    pub granularity: TrafficGranularity,
+}
+
+/// 单块网卡在时间段内的流量。
+#[derive(Serialize)]
+pub struct InterfaceTrafficItem {
+    /// 网卡名
+    pub interface_name: String,
+    /// 接收量（字节）
+    pub received: u64,
+    /// 发送量（字节）
+    pub transmitted: u64,
+}
+
+/// 单块网卡的一条总流量快照。
+#[derive(Serialize)]
+pub struct TrafficSnapshotItem {
+    /// 网卡名
+    pub interface_name: String,
+    /// 快照时间（毫秒）
+    pub snapshot_time: i64,
+    /// 到该时刻为止的总接收量（字节）
+    pub total_received: u64,
+    /// 到该时刻为止的总发送量（字节）
+    pub total_transmitted: u64,
+}
+
+/// 可能丢失数据的时间段。
+#[derive(Serialize)]
+pub struct PossibleDataLossItem {
+    /// 开始时间（毫秒）
+    pub start_time: i64,
+    /// 结束时间（毫秒）
+    pub end_time: i64,
+}
+
+/// 流量查询响应（`granularity` 为 `total`）。
+#[derive(Serialize)]
+pub struct TrafficTotalResponse {
+    /// 设备 UUID
+    pub uuid: uuid::Uuid,
+    /// 请求的开始时间（毫秒），未填写时为 `null`
+    pub start_time: Option<i64>,
+    /// 请求的结束时间（毫秒），未填写时为 `null`
+    pub end_time: Option<i64>,
+    /// 每块网卡的流量
+    pub interfaces: Vec<InterfaceTrafficItem>,
+    /// 所有网卡的接收量合计（字节）
+    pub received: u64,
+    /// 所有网卡的发送量合计（字节）
+    pub transmitted: u64,
+    /// 与时间段有重叠的可能丢失数据的时间段
+    pub possible_data_losses: Vec<PossibleDataLossItem>,
+}
+
+/// 流量查询响应（`granularity` 为 `detail`）。
+#[derive(Serialize)]
+pub struct TrafficDetailResponse {
+    /// 设备 UUID
+    pub uuid: uuid::Uuid,
+    /// 请求的开始时间（毫秒），未填写时为 `null`
+    pub start_time: Option<i64>,
+    /// 请求的结束时间（毫秒），未填写时为 `null`
+    pub end_time: Option<i64>,
+    /// 时间段内的总流量快照，按网卡名、快照时间排序
+    pub snapshots: Vec<TrafficSnapshotItem>,
+    /// 与时间段有重叠的可能丢失数据的时间段
+    pub possible_data_losses: Vec<PossibleDataLossItem>,
+}
+
 /// `dynamic_monitoring_summary` 表中以 *10 缩放存储的列名列表（单一事实来源）。
 ///
 /// 这些列以 i16 存储，读取时需除以 10.0 还原。
