@@ -9,6 +9,7 @@
 // 骨架阶段尚未接入调用方，接入后删除
 #![allow(dead_code, unused_variables, clippy::needless_pass_by_ref_mut)]
 
+use ng_monitoring::data_structure::is_virtual_interface;
 use std::collections::HashMap;
 
 /// 单块网卡的系统信息
@@ -73,7 +74,11 @@ fn read_interface_facts() -> Vec<InterfaceFacts> {
 /// - `facts`: 所有网卡的信息
 /// - 返回: 出口网卡的 (网卡名, 网卡编号)
 fn select_by_kernel(facts: &[InterfaceFacts]) -> Vec<(String, Option<u32>)> {
-    todo!()
+    facts
+        .iter()
+        .filter(|fact| !fact.is_virtual)
+        .map(|fact| (fact.name.clone(), fact.ifindex))
+        .collect()
 }
 
 /// 规则二：容器特例，`eth*` 和 `venet0` 为出口网卡。
@@ -81,7 +86,11 @@ fn select_by_kernel(facts: &[InterfaceFacts]) -> Vec<(String, Option<u32>)> {
 /// - `facts`: 所有网卡的信息
 /// - 返回: 出口网卡的 (网卡名, 网卡编号)
 fn select_by_container(facts: &[InterfaceFacts]) -> Vec<(String, Option<u32>)> {
-    todo!()
+    facts
+        .iter()
+        .filter(|fact| fact.name.starts_with("eth") || fact.name == "venet0")
+        .map(|fact| (fact.name.clone(), fact.ifindex))
+        .collect()
 }
 
 /// 规则三：按网卡名判断。
@@ -89,7 +98,7 @@ fn select_by_container(facts: &[InterfaceFacts]) -> Vec<(String, Option<u32>)> {
 /// - `name`: 网卡名
 /// - 返回: 不匹配虚拟网卡前缀（`is_virtual_interface`）时为出口网卡
 fn is_outlet_by_name(name: &str) -> bool {
-    todo!()
+    !is_virtual_interface(name)
 }
 
 /// Agent 运行在容器中且未使用主机网络时，打印一次警告日志。
@@ -101,4 +110,94 @@ fn is_outlet_by_name(name: &str) -> bool {
 /// 3. 存在时打印警告，提示使用 `--network host`
 fn warn_if_container_without_host_network(warned: &mut bool) {
     todo!()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InterfaceFacts, is_outlet_by_name, select_by_container, select_by_kernel};
+
+    /// 构造一块网卡的系统信息
+    fn fact(name: &str, ifindex: u32, is_virtual: bool) -> InterfaceFacts {
+        InterfaceFacts {
+            name: name.to_owned(),
+            ifindex: Some(ifindex),
+            is_virtual,
+        }
+    }
+
+    /// 取出选中网卡的名字
+    fn names(selected: &[(String, Option<u32>)]) -> Vec<&str> {
+        selected.iter().map(|(name, _)| name.as_str()).collect()
+    }
+
+    #[test]
+    fn kernel_selects_physical_interface_on_kvm() {
+        // KVM VPS：跑了 Docker 和 WireGuard，只有 eth0 不在 /sys/devices/virtual/net 下
+        let facts = [
+            fact("lo", 1, true),
+            fact("eth0", 2, false),
+            fact("docker0", 3, true),
+            fact("veth1a2b3c", 4, true),
+            fact("wg0", 5, true),
+        ];
+        assert_eq!(names(&select_by_kernel(&facts)), ["eth0"]);
+    }
+
+    #[test]
+    fn kernel_selects_bond_members_not_bond() {
+        // 独服做了网卡绑定：统计两块成员网卡，bond0 是虚拟网卡，不重复计算
+        let facts = [
+            fact("lo", 1, true),
+            fact("eno1", 2, false),
+            fact("eno2", 3, false),
+            fact("bond0", 4, true),
+        ];
+        assert_eq!(names(&select_by_kernel(&facts)), ["eno1", "eno2"]);
+    }
+
+    #[test]
+    fn kernel_selects_uplink_on_proxmox_host() {
+        let facts = [
+            fact("lo", 1, true),
+            fact("eno1", 2, false),
+            fact("vmbr0", 3, true),
+            fact("tap100i0", 4, true),
+            fact("fwbr100i0", 5, true),
+        ];
+        assert_eq!(names(&select_by_kernel(&facts)), ["eno1"]);
+    }
+
+    #[test]
+    fn kernel_selects_nothing_in_container() {
+        // LXC 容器里所有网卡都在 /sys/devices/virtual/net 下
+        let facts = [fact("lo", 1, true), fact("eth0", 2, true)];
+        assert!(select_by_kernel(&facts).is_empty());
+    }
+
+    #[test]
+    fn container_selects_eth_on_lxc() {
+        let facts = [fact("lo", 1, true), fact("eth0", 2, true)];
+        assert_eq!(names(&select_by_container(&facts)), ["eth0"]);
+    }
+
+    #[test]
+    fn container_selects_venet0_on_openvz() {
+        let facts = [fact("lo", 1, true), fact("venet0", 2, true)];
+        assert_eq!(names(&select_by_container(&facts)), ["venet0"]);
+    }
+
+    #[test]
+    fn container_keeps_ifindex() {
+        let facts = [fact("eth0", 42, true)];
+        assert_eq!(select_by_container(&facts), [("eth0".to_owned(), Some(42))]);
+    }
+
+    #[test]
+    fn name_rule_excludes_virtual_prefixes() {
+        assert!(is_outlet_by_name("eth0"));
+        assert!(is_outlet_by_name("ens3"));
+        assert!(!is_outlet_by_name("lo"));
+        assert!(!is_outlet_by_name("docker0"));
+        assert!(!is_outlet_by_name("veth1a2b3c"));
+    }
 }

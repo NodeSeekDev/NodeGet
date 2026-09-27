@@ -10,6 +10,7 @@
 
 use crate::data_structure::DynamicMonitoringData;
 use ng_db::entity::{traffic_possible_data_loss, traffic_snapshot};
+use sea_orm::{ActiveValue, Set};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
@@ -157,7 +158,18 @@ fn is_counter_reset(
     prev_reading: &NetworkInterfaceReading,
     current_reading: &NetworkInterfaceReading,
 ) -> bool {
-    todo!()
+    let boot_id_changed = matches!(
+        (&prev_reading.boot_id, &current_reading.boot_id),
+        (Some(prev), Some(current)) if prev != current
+    );
+    let ifindex_changed = matches!(
+        (prev_reading.ifindex, current_reading.ifindex),
+        (Some(prev), Some(current)) if prev != current
+    );
+    let counter_decreased = current_reading.counter_received < prev_reading.counter_received
+        || current_reading.counter_transmitted < prev_reading.counter_transmitted;
+
+    boot_id_changed || ifindex_changed || counter_decreased
 }
 
 /// 计算本次流量增量。
@@ -166,20 +178,34 @@ fn is_counter_reset(
 /// - `current_reading`: 本次读数
 /// - `reset`: 是否发生重置
 /// - 返回: 首次见到或发生重置时为本次计数器值，否则为本次与上一次计数器值的差
-fn compute_traffic_increase(
+const fn compute_traffic_increase(
     prev_reading: Option<&NetworkInterfaceReading>,
     current_reading: &NetworkInterfaceReading,
     reset: bool,
 ) -> Traffic {
-    todo!()
+    match prev_reading {
+        // 未重置时计数器不会变小，saturating_sub 仅作防御
+        Some(prev) if !reset => Traffic {
+            received: current_reading
+                .counter_received
+                .saturating_sub(prev.counter_received),
+            transmitted: current_reading
+                .counter_transmitted
+                .saturating_sub(prev.counter_transmitted),
+        },
+        _ => Traffic {
+            received: current_reading.counter_received,
+            transmitted: current_reading.counter_transmitted,
+        },
+    }
 }
 
 /// 计算时间所属的快照时间。
 ///
 /// - `time`: 毫秒时间戳
 /// - 返回: 向下取整到 `SNAPSHOT_INTERVAL_MS` 的毫秒时间戳（UTC），即所在 15 分钟的开始时间
-fn snapshot_time_of(time: i64) -> i64 {
-    todo!()
+const fn snapshot_time_of(time: i64) -> i64 {
+    time - time.rem_euclid(SNAPSHOT_INTERVAL_MS)
 }
 
 /// 判断重置前是否可能丢失数据。
@@ -193,5 +219,170 @@ fn detect_possible_data_loss(
     prev_reading: &NetworkInterfaceReading,
     reset_at: i64,
 ) -> Option<traffic_possible_data_loss::ActiveModel> {
-    todo!()
+    if reset_at - prev_reading.updated_at <= POSSIBLE_DATA_LOSS_THRESHOLD_MS {
+        return None;
+    }
+
+    Some(traffic_possible_data_loss::ActiveModel {
+        id: ActiveValue::default(),
+        uuid_id: Set(uuid_id),
+        start_time: Set(prev_reading.updated_at),
+        end_time: Set(reset_at),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        NetworkInterfaceReading, POSSIBLE_DATA_LOSS_THRESHOLD_MS, compute_traffic_increase,
+        detect_possible_data_loss, is_counter_reset, snapshot_time_of,
+    };
+    use sea_orm::Set;
+
+    const GB: u64 = 1024 * 1024 * 1024;
+
+    /// 构造一次读数，只关心开机标识、网卡编号和计数器
+    fn reading(
+        boot_id: Option<&str>,
+        ifindex: Option<u32>,
+        counter_received: u64,
+        counter_transmitted: u64,
+    ) -> NetworkInterfaceReading {
+        NetworkInterfaceReading {
+            boot_id: boot_id.map(str::to_owned),
+            ifindex,
+            counter_received,
+            counter_transmitted,
+            report_time: 0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn counter_not_reset_when_growing() {
+        let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
+        let current = reading(Some("a"), Some(2), 51 * GB, 10 * GB);
+        assert!(!is_counter_reset(&prev, &current));
+    }
+
+    #[test]
+    fn counter_reset_when_boot_id_changes() {
+        // 重启后计数器涨回超过旧值，只能靠开机标识发现
+        let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
+        let current = reading(Some("b"), Some(2), 60 * GB, 20 * GB);
+        assert!(is_counter_reset(&prev, &current));
+    }
+
+    #[test]
+    fn counter_reset_when_ifindex_changes() {
+        let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
+        let current = reading(Some("a"), Some(5), 60 * GB, 20 * GB);
+        assert!(is_counter_reset(&prev, &current));
+    }
+
+    #[test]
+    fn counter_reset_when_received_or_transmitted_decreases() {
+        let prev = reading(None, None, 50 * GB, 10 * GB);
+        assert!(is_counter_reset(&prev, &reading(None, None, GB, 20 * GB)));
+        assert!(is_counter_reset(&prev, &reading(None, None, 60 * GB, GB)));
+    }
+
+    #[test]
+    fn missing_boot_id_or_ifindex_is_not_compared() {
+        // 一边为空时跳过该条，不能误判为重置
+        let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
+        assert!(!is_counter_reset(
+            &prev,
+            &reading(None, None, 51 * GB, 10 * GB)
+        ));
+        let prev = reading(None, None, 50 * GB, 10 * GB);
+        assert!(!is_counter_reset(
+            &prev,
+            &reading(Some("a"), Some(2), 51 * GB, 10 * GB)
+        ));
+    }
+
+    #[test]
+    fn increase_is_difference_when_not_reset() {
+        let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
+        let current = reading(Some("a"), Some(2), 53 * GB, 11 * GB);
+        let increase = compute_traffic_increase(Some(&prev), &current, false);
+        assert_eq!(increase.received, 3 * GB);
+        assert_eq!(increase.transmitted, GB);
+    }
+
+    #[test]
+    fn increase_is_current_counter_when_reset() {
+        let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
+        let current = reading(Some("b"), Some(2), 2 * GB, GB);
+        let increase = compute_traffic_increase(Some(&prev), &current, true);
+        assert_eq!(increase.received, 2 * GB);
+        assert_eq!(increase.transmitted, GB);
+    }
+
+    #[test]
+    fn increase_is_current_counter_when_first_seen() {
+        let current = reading(Some("a"), Some(2), 30 * GB, 5 * GB);
+        let increase = compute_traffic_increase(None, &current, false);
+        assert_eq!(increase.received, 30 * GB);
+        assert_eq!(increase.transmitted, 5 * GB);
+    }
+
+    #[test]
+    fn design_example_total_across_resets() {
+        // 设计文档的例子：第 1 次开机跑到 50GB 后重启，第 2 次跑到 30GB 后网卡重建，现在 12GB，总计 92GB
+        let readings = [
+            reading(Some("boot1"), Some(2), 50 * GB, 0),
+            reading(Some("boot2"), Some(2), 30 * GB, 0),
+            reading(Some("boot2"), Some(7), 12 * GB, 0),
+        ];
+        let mut total = 0;
+        let mut prev: Option<&NetworkInterfaceReading> = None;
+        for current in &readings {
+            let reset = prev.is_some_and(|p| is_counter_reset(p, current));
+            total += compute_traffic_increase(prev, current, reset).received;
+            prev = Some(current);
+        }
+        assert_eq!(total, 92 * GB);
+    }
+
+    #[test]
+    fn snapshot_time_aligns_to_fifteen_minutes() {
+        // 2026-09-27 10:00:00 UTC
+        let ten_oclock = 1_790_503_200_000;
+        let minute = 60 * 1000;
+        assert_eq!(snapshot_time_of(ten_oclock), ten_oclock);
+        assert_eq!(
+            snapshot_time_of(ten_oclock + 7 * minute + 23_000),
+            ten_oclock
+        );
+        assert_eq!(
+            snapshot_time_of(ten_oclock + 15 * minute),
+            ten_oclock + 15 * minute
+        );
+        assert_eq!(
+            snapshot_time_of(ten_oclock + 30 * minute - 1),
+            ten_oclock + 15 * minute
+        );
+    }
+
+    #[test]
+    fn no_possible_data_loss_within_threshold() {
+        let mut prev = reading(Some("a"), Some(2), 0, 0);
+        prev.updated_at = 1_000_000;
+        let reset_at = prev.updated_at + POSSIBLE_DATA_LOSS_THRESHOLD_MS;
+        assert!(detect_possible_data_loss(1, &prev, reset_at).is_none());
+    }
+
+    #[test]
+    fn possible_data_loss_beyond_threshold() {
+        let mut prev = reading(Some("a"), Some(2), 0, 0);
+        prev.updated_at = 1_000_000;
+        let reset_at = prev.updated_at + POSSIBLE_DATA_LOSS_THRESHOLD_MS + 1;
+        let loss = detect_possible_data_loss(7, &prev, reset_at).expect("should record loss");
+        assert_eq!(loss.uuid_id, Set(7));
+        assert_eq!(loss.start_time, Set(prev.updated_at));
+        assert_eq!(loss.end_time, Set(reset_at));
+    }
 }
