@@ -528,25 +528,31 @@ fn is_boot_id_changed(
 /// - `prev_reading`: 上一次的读数，首次见到该网卡时为 `None`
 /// - `current_reading`: 本次读数
 /// - `reset`: 是否发生重置
-/// - 返回: 首次见到或发生重置时为本次计数器值，否则为本次与上一次计数器值的差
+/// - 返回: 首次见到时为 0，发生重置时为本次计数器值，否则为本次与上一次计数器值的差
+///
+/// 首次见到时计数器里是开始统计之前的流量（如开机以来），不计入，从这一刻开始统计
 const fn compute_traffic_increase(
     prev_reading: Option<&NetworkInterfaceReading>,
     current_reading: &NetworkInterfaceReading,
     reset: bool,
 ) -> Traffic {
     match prev_reading {
+        None => Traffic {
+            received: 0,
+            transmitted: 0,
+        },
+        Some(_) if reset => Traffic {
+            received: current_reading.counter_received,
+            transmitted: current_reading.counter_transmitted,
+        },
         // 未重置时计数器不会变小，saturating_sub 仅作防御
-        Some(prev) if !reset => Traffic {
+        Some(prev) => Traffic {
             received: current_reading
                 .counter_received
                 .saturating_sub(prev.counter_received),
             transmitted: current_reading
                 .counter_transmitted
                 .saturating_sub(prev.counter_transmitted),
-        },
-        _ => Traffic {
-            received: current_reading.counter_received,
-            transmitted: current_reading.counter_transmitted,
         },
     }
 }
@@ -690,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn first_report_counts_current_counter_without_snapshot() {
+    fn first_report_starts_from_zero_without_snapshot() {
         let mut state = State::default();
         let data = report(
             TEN_OCLOCK,
@@ -699,7 +705,7 @@ mod tests {
             vec![interface("eth0", 30 * GB, Some(true))],
         );
         state.apply_report(1, &data, TEN_OCLOCK);
-        assert_eq!(total_received(&state, "eth0"), 30 * GB);
+        assert_eq!(total_received(&state, "eth0"), 0);
         assert!(state.pending_snapshots.is_empty());
     }
 
@@ -716,57 +722,54 @@ mod tests {
             );
             state.apply_report(1, &data, at(minutes));
         }
-        assert_eq!(total_received(&state, "eth0"), 13 * GB);
+        assert_eq!(total_received(&state, "eth0"), 3 * GB);
         assert!(state.pending_snapshots.is_empty());
     }
 
     #[test]
     fn crossing_quarter_records_snapshot_before_adding_increase() {
         let mut state = State::default();
-        let before = TEN_OCLOCK + 14 * MINUTE;
+        let at = |minutes| TEN_OCLOCK + minutes * MINUTE;
         let after = TEN_OCLOCK + 15 * MINUTE + 1000;
-        let data = report(
-            before,
-            3600,
-            "a",
-            vec![interface("eth0", 10 * GB, Some(true))],
-        );
-        state.apply_report(1, &data, before);
-        let data = report(
-            after,
-            3600,
-            "a",
-            vec![interface("eth0", 12 * GB, Some(true))],
-        );
-        state.apply_report(1, &data, after);
+        for (time, counter) in [(at(1), 10 * GB), (at(14), 11 * GB), (after, 12 * GB)] {
+            let data = report(
+                time,
+                3600,
+                "a",
+                vec![interface("eth0", counter, Some(true))],
+            );
+            state.apply_report(1, &data, time);
+        }
 
         assert_eq!(state.pending_snapshots.len(), 1);
         let snapshot = &state.pending_snapshots[0];
         assert_eq!(snapshot.snapshot_time, Set(TEN_OCLOCK + 15 * MINUTE));
         // 快照是跨过整点前的总流量，不含本次增量
-        assert_eq!(snapshot.total_received, Set((10 * GB).cast_signed()));
-        assert_eq!(total_received(&state, "eth0"), 12 * GB);
+        assert_eq!(snapshot.total_received, Set(GB.cast_signed()));
+        assert_eq!(total_received(&state, "eth0"), 2 * GB);
     }
 
     #[test]
     fn late_report_is_dropped() {
         let mut state = State::default();
-        let data = report(
-            TEN_OCLOCK + MINUTE,
-            3600,
-            "a",
-            vec![interface("eth0", 20 * GB, Some(true))],
-        );
-        state.apply_report(1, &data, TEN_OCLOCK + MINUTE);
+        for (time, counter) in [(TEN_OCLOCK, 18 * GB), (TEN_OCLOCK + MINUTE, 20 * GB)] {
+            let data = report(
+                time,
+                3600,
+                "a",
+                vec![interface("eth0", counter, Some(true))],
+            );
+            state.apply_report(1, &data, time);
+        }
         // 采集时间更早的数据晚到，计数器更小，不能被当成重置
         let data = report(
-            TEN_OCLOCK,
+            TEN_OCLOCK + 30_000,
             3600,
             "a",
             vec![interface("eth0", 19 * GB, Some(true))],
         );
         state.apply_report(1, &data, TEN_OCLOCK + 2 * MINUTE);
-        assert_eq!(total_received(&state, "eth0"), 20 * GB);
+        assert_eq!(total_received(&state, "eth0"), 2 * GB);
     }
 
     #[test]
@@ -785,18 +788,23 @@ mod tests {
     #[test]
     fn non_outlet_interfaces_are_ignored() {
         let mut state = State::default();
-        let data = report(
-            TEN_OCLOCK,
-            3600,
-            "a",
-            vec![
-                interface("eth0", 10 * GB, Some(true)),
-                interface("docker0", 5 * GB, Some(false)),
-            ],
-        );
-        state.apply_report(1, &data, TEN_OCLOCK);
+        for (time, eth0, docker0) in [
+            (TEN_OCLOCK, 10 * GB, 5 * GB),
+            (TEN_OCLOCK + MINUTE, 12 * GB, 8 * GB),
+        ] {
+            let data = report(
+                time,
+                3600,
+                "a",
+                vec![
+                    interface("eth0", eth0, Some(true)),
+                    interface("docker0", docker0, Some(false)),
+                ],
+            );
+            state.apply_report(1, &data, time);
+        }
         assert_eq!(state.totals.len(), 1);
-        assert_eq!(total_received(&state, "eth0"), 10 * GB);
+        assert_eq!(total_received(&state, "eth0"), 2 * GB);
     }
 
     #[test]
@@ -813,7 +821,8 @@ mod tests {
         let at = TEN_OCLOCK + MINUTE;
         let data = report(at, 30, "b", vec![interface("eth0", GB, Some(true))]);
         state.apply_report(1, &data, at);
-        assert_eq!(total_received(&state, "eth0"), 51 * GB);
+        // 第一次上报不计入，重启后计数器从 0 开始的 1GB 计入
+        assert_eq!(total_received(&state, "eth0"), GB);
         assert!(state.pending_possible_data_losses.is_empty());
     }
 
@@ -838,8 +847,8 @@ mod tests {
         let loss = &state.pending_possible_data_losses[0];
         assert_eq!(loss.start_time, Set(TEN_OCLOCK));
         assert_eq!(loss.end_time, Set(TEN_OCLOCK + 115 * MINUTE));
-        assert_eq!(total_received(&state, "eth0"), 51 * GB);
-        assert_eq!(total_received(&state, "eth1"), 6 * GB);
+        assert_eq!(total_received(&state, "eth0"), GB);
+        assert_eq!(total_received(&state, "eth1"), GB);
     }
 
     /// 构造一次读数，只关心开机标识、网卡编号和计数器
@@ -923,17 +932,20 @@ mod tests {
     }
 
     #[test]
-    fn increase_is_current_counter_when_first_seen() {
+    fn increase_is_zero_when_first_seen() {
+        // 首次见到时计数器里是开始统计之前的流量，不计入
         let current = reading(Some("a"), Some(2), 30 * GB, 5 * GB);
         let increase = compute_traffic_increase(None, &current, false);
-        assert_eq!(increase.received, 30 * GB);
-        assert_eq!(increase.transmitted, 5 * GB);
+        assert_eq!(increase.received, 0);
+        assert_eq!(increase.transmitted, 0);
     }
 
     #[test]
     fn design_example_total_across_resets() {
-        // 设计文档的例子：第 1 次开机跑到 50GB 后重启，第 2 次跑到 30GB 后网卡重建，现在 12GB，总计 92GB
+        // 设计文档的例子：开机时就开始统计，第 1 次开机跑到 50GB 后重启，
+        // 第 2 次跑到 30GB 后网卡重建，现在 12GB，总计 92GB
         let readings = [
+            reading(Some("boot1"), Some(2), 0, 0),
             reading(Some("boot1"), Some(2), 50 * GB, 0),
             reading(Some("boot2"), Some(2), 30 * GB, 0),
             reading(Some("boot2"), Some(7), 12 * GB, 0),
