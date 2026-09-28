@@ -144,12 +144,13 @@ ws_url = "ws://nodeget-secondary.example.com:2211/nodeget/rpc"
 
 ## `dynamic_summary_select_disk` 与 `dynamic_summary_select_network_interface`
 
-这两个字段用于控制 **Dynamic Summary**（动态监控摘要）中磁盘和网卡的统计范围，属于**可选配置**，留空或注释掉时会回退到默认行为。
+这两个字段用于控制磁盘和网卡的统计范围，属于**可选配置**，留空或注释掉时会回退到默认行为。
 
 - **`dynamic_summary_select_disk`**：按磁盘的 `mount_point`（挂载点）进行白名单匹配，例如 `["/", "/data"]` 表示只统计根目录和
-  `/data` 的磁盘数据
+  `/data` 的磁盘数据，只影响 **Dynamic Summary**（动态监控摘要）
 - **`dynamic_summary_select_network_interface`**：按网卡的 `interface_name`（接口名）进行白名单匹配，例如 `["eth0", "eth1"]`
-  表示只统计 `eth0` 和 `eth1` 的网络流量
+  表示只统计 `eth0` 和 `eth1` 的网络流量。这份名单**同时影响 Dynamic Summary 和[流量统计](/api/monitoring/query#query-traffic)**：
+  只有列表里的网卡才会计入摘要的网络流量字段、也才会被记录周期流量
 
 ### 回退行为
 
@@ -160,13 +161,19 @@ ws_url = "ws://nodeget-secondary.example.com:2211/nodeget/rpc"
       `/var/lib/docker`、`/var/lib/kubelet/pods`、`/var/lib/rancher/k3s/agent/kubelet/pods`、`/proc`、`/sys`、
       `/sys/fs/cgroup`、`/etc/resolv.conf`、`/etc/host`、`/nix/store`，以及 `tmpfs`、`overlay`、`proc`、`sysfs`、
       `cgroup` 等文件系统
-    - **网卡**：按接口名前缀自动过滤 `br`、`cni`、`docker`、`podman`、`flannel`、`lo`、`veth`、`virbr`、`vmbr`、`tap`、`fwbr`、
-      `fwpr` 等虚拟/隧道网卡
+    - **网卡**：只统计**出口网卡**（真正连接外网的网卡）。Linux 上按内核信息判断：不在 `/sys/devices/virtual/net`
+      下的网卡视为出口网卡；容器型 VPS（所有网卡都在 `virtual` 下）则退回按 `eth*`、`venet0` 这类命名规则匹配。读不到内核信息的平台（非
+      Linux），或者上述两条规则都选不出网卡时，才按接口名前缀过滤 `br`、`cni`、`docker`、`podman`、`flannel`、`lo`、`veth`、
+      `virbr`、`vmbr`、`tap`、`fwbr`、`fwpr`、`fwln`、`tun`、`vnet`、`kube`、`tailscale`、`Meta`、`wg`、`ppp`、`zt`
+      等前缀的虚拟/隧道网卡
+
+      > 这一条规则比旧版本更准确：以前只按接口名前缀过滤，WireGuard（`wg0`）、Tailscale（`tailscale0`）、PPPoE（`ppp0`）等网卡不在
+      > 旧的前缀名单里，会被误算进摘要的网络流量。现在这些网卡默认就会被正确排除。
 
 ### 使用场景
 
-适合需要精确控制 Summary 数据的场景，例如：
+适合需要精确控制 Summary 和流量统计数据的场景，例如：
 
 - 服务器只有部分磁盘需要监控（如只关注数据盘而排除系统盘）
-- 云服务器有多张网卡，只希望统计特定网卡流量（如只统计公网网卡）
+- 云服务器有多张网卡，只希望统计特定网卡的流量（如只统计公网网卡，不计入内网专线）
 - 默认排除规则过滤了你实际想监控的项（如自定义命名的虚拟网卡）

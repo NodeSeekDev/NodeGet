@@ -16,8 +16,9 @@ agent/
     │   ├── mod.rs                    # 全局 sysinfo/NVML 单例 + Instant 时间跟踪器
     │   ├── impls.rs                  # Monitor trait，组合 Static/DynamicMonitoringData，磁盘/网络速率计算
     │   ├── gpu.rs                    # NVML GPU 静态+动态采集（block_in_place 包裹 FFI）
+    │   ├── outlet_interface.rs       # 出口网卡识别（供流量统计与 Summary 网络过滤共用），带缓存
     │   ├── system_impls/
-    │   │   ├── mod.rs                # 系统静态/动态采集 + 5s 进程计数 ticker + 发行版精确版本识别
+    │   │   ├── mod.rs                # 系统静态/动态采集 + 5s 进程计数 ticker + 发行版精确版本识别 + boot_id 读取
     │   │   ├── process.rs            # 跨平台进程计数（Windows EnumProcesses / Linux /proc）
     │   │   └── virtualization_detect.rs  # 虚拟化探测（vmaware / raw-cpuid）
     │   └── network_connections/
@@ -105,6 +106,18 @@ reload 触发点：`tasks/mod.rs` 中 EditConfig 成功后 `sleep 300ms` 再 `RE
 - `GLOBAL_SYSTEM / GLOBAL_DISK / GLOBAL_NETWORK / GLOBAL_GPU` (`mod.rs:32`)：`OnceCell<Mutex<…>>` 单例（System/Disks/Networks 与 `Option<Nvml>`，NVML 在无驱动时为 `None`）。
 - `DISK_TIME_TRACKER / NETWORK_TIME_TRACKER` (`mod.rs:62`)：`Mutex<Instant>` 速率分母；首次初始化时回拨 1s（`checked_sub`，回退 `now`），保证首 tick 间隔非零。
 - `Monitor` trait (`impls.rs:21`)：`async fn refresh_and_get() -> Self`；分别为 `StaticMonitoringData` (`impls.rs:46`)、`DynamicMonitoringData` (`impls.rs:77`) 实现。
+
+### 出口网卡识别（`monitoring/outlet_interface.rs`）
+
+- `OutletCache` (`outlet_interface.rs:27`)：`{ identified_interfaces:HashMap<(String,Option<u32>),bool>, container_warned:bool }`；每次采集复用同一个 `LazyLock<Mutex<OutletCache>>`（`impls.rs` 里的 `OUTLET_CACHE`）。
+- `OutletCache::identify_outlet` (`outlet_interface.rs:48`)：判断一块网卡是不是「出口网卡」（真正连外网、值得统计流量的网卡），按顺序尝试：规则 1（内核）不在 `/sys/devices/virtual/net` 下即为出口；规则 1 一块都选不出时（容器型 VPS，所有网卡都在 `virtual` 下）退回规则 2（容器特例）按 `eth*`/`venet0` 命名匹配；两条都选不出、或非 Linux 平台读不到 `/sys` 时，最后退回按 `VIRTUAL_INTERFACE_PREFIXES` 前缀名单判断（`ng_monitoring::data_structure::is_virtual_interface`，与 Dynamic Summary 共用同一份名单）。结果按 `(网卡名, ifindex)` 缓存，直到下次没命中缓存才重新扫描全部网卡。
+- 用户在配置里填了 `dynamic_summary_select_network_interface` 时，`identify_outlet` 完全不调用——`is_outlet` 直接取「网卡名是否在用户名单里」，见 `impls.rs:207-227`。
+- `warn_if_container_without_physical_interface` (`outlet_interface.rs:183`)：规则 1 选不出任何网卡时打一条英文 `warn!`（容器化环境、且未加 `--network host`），仅打印一次（`container_warned`），提示此时按规则 2 统计的只是容器自己的收发量。
+- 识别结果写入每块网卡的 `DynamicPerNetworkInterfaceData::is_outlet`（`Option<bool>`），随动态上报一起发给 server；server 端 `TrafficStats` 与 `DynamicMonitoringSummaryData::from_with_filter` 都读这个字段，见 `CONTRIBUTING/crates/ng-monitoring.md`。
+
+### boot_id 读取（`system_impls/mod.rs`）
+
+- `read_boot_id()`：Linux 读 `/proc/sys/kernel/random/boot_id`（内核每次启动生成的随机 UUID，重启必变）；非 Linux 平台是 `const fn`，恒返回 `None`。在 `DynamicSystemData::refresh_and_get` 里只读一次，随每条动态上报发送，供 server 端 `TrafficStats` 判断网卡计数器是否因重启而重置。
 
 ### 进程计数（`system_impls/mod.rs`）
 
@@ -236,7 +249,7 @@ Agent 作为客户端调用/接收的 JSON-RPC（方法名由 server 定义，js
 | `nodeget-server` | `nodeget-server_uuid` | `[]` | 无（预认证握手） | `verify_server_uuid` 发送，5s 等 Text 帧 result 字符串 uuid；不匹配 30s 冷却，传输错误指数重连 |
 | `agent` | `agent_report_static` | `[token, StaticMonitoringData]` | 每 server token | 静态上报，每 `static_report_interval_ms`（默认 5min） |
 | `agent` | `agent_report_dynamic_summary` | `[token, DynamicMonitoringSummaryData]` | 每 server token | 动态 summary，每 `summary_interval_ms`（默认 1s），按 select_disk/select_network_interface 过滤 |
-| `agent` | `agent_report_dynamic` | `[token, DynamicMonitoringData]` | 每 server token | 全量动态，每 `dynamic_interval_ms`（默认 1s，即默认每 tick） |
+| `agent` | `agent_report_dynamic` | `[token, DynamicMonitoringData]` | 每 server token | 全量动态，每 `dynamic_interval_ms`（默认 1s，即默认每 tick）；`system.boot_id` 与每块网卡的 `ifindex`/`is_outlet` 随此上报一并发送，供 server 端流量统计使用 |
 
 鉴权流程：每 server 持有 config 中的独立 token，所有上报/任务方法的第一参数都是该 token。握手阶段先 `nodeget-server_uuid` 校验身份，再 `task_register_task` 订阅任务流；server 下发任务与订阅共用同一方法名（见陷阱）。
 

@@ -120,6 +120,10 @@ export default [
                 text: '批量执行',
                 link: '/guide/features/batch-exec.md',
             },
+            {
+                text: '流量统计',
+                link: '/guide/features/traffic.md',
+            },
         ]
     },
     {

@@ -270,6 +270,157 @@ pub struct DynamicDataQuery {
 }
 ```
 
+## Query Traffic
+
+查询一台设备在指定时间段内的流量。
+
+### 方法
+
+调用方法名为 `agent_query_traffic`，需要提供以下参数：
+
+```json
+{
+  "token": "demo_token",
+  "query": {
+    "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+    "start_time": 1769344160000,
+    "end_time": 1769347760000,
+    "granularity": "total"
+  }
+}
+```
+
+参数结构体：
+
+```rust
+pub struct TrafficQuery {
+    pub uuid: uuid::Uuid,               // 设备 UUID
+    pub start_time: Option<i64>,        // 开始时间（毫秒），不填表示从最早开始
+    pub end_time: Option<i64>,          // 结束时间（毫秒），不填表示到现在
+    pub granularity: TrafficGranularity,
+}
+
+pub enum TrafficGranularity {
+    Total,   // 只返回时间段内的流量合计
+    Detail,  // 返回时间段内的每一条总流量快照
+}
+```
+
+- `uuid`: 要查询的设备 UUID
+- `start_time` / `end_time`: 查询的时间范围（毫秒时间戳），任一不填表示不限制该端
+- `granularity`:
+  - `total`：按网卡返回时间段内的流量合计
+  - `detail`：返回时间段内的每一条总流量快照，最长时间跨度 92 天
+
+流量统计只对**出口网卡**（真正连接外网的网卡）计数，容器、隧道等虚拟网卡不计入，避免重复统计。可以在 Agent 配置里通过
+`dynamic_summary_select_network_interface` 手动指定要统计哪些网卡；不指定时按内置规则自动识别，详见
+[Agent 配置](/guide/config/agent)。
+
+### 权限要求
+
+- **Scope**: `AgentUuid`，需覆盖 `query.uuid`
+- **Permission**: `DynamicMonitoring::Read(Network)`
+
+权限配置示例：
+
+```json
+{
+  "scopes": [
+    {"agent_uuid": "e8583352-39e8-5a5b-b66c-e450689088fd"}
+  ],
+  "permissions": [
+    {"dynamic_monitoring": {"read": "network"}}
+  ]
+}
+```
+
+### 返回值
+
+`granularity` 为 `total` 时，返回每块网卡的流量合计：
+
+```json
+{
+  "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+  "start_time": 1769344160000,
+  "end_time": 1769347760000,
+  "interfaces": [
+    { "interface_name": "eth0", "received": 1048576, "transmitted": 524288 }
+  ],
+  "received": 1048576,
+  "transmitted": 524288,
+  "possible_data_losses": []
+}
+```
+
+`granularity` 为 `detail` 时，返回时间段内的每一条总流量快照：
+
+```json
+{
+  "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+  "start_time": 1769344160000,
+  "end_time": 1769347760000,
+  "snapshots": [
+    {
+      "interface_name": "eth0",
+      "snapshot_time": 1769344200000,
+      "total_received": 10485760,
+      "total_transmitted": 5242880
+    }
+  ],
+  "possible_data_losses": []
+}
+```
+
+两种返回都带有 `possible_data_losses`：与查询时间段有重叠的"可能丢失数据"时间段（比如网卡计数器重置、设备离线超过 10
+分钟），提醒这段时间内的流量统计可能不准：
+
+```json
+[
+  { "start_time": 1769344000000, "end_time": 1769344500000 }
+]
+```
+
+### 完整示例
+
+请求：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent_query_traffic",
+  "params": {
+    "token": "demo_key:demo_secret",
+    "query": {
+      "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+      "start_time": 1769344160000,
+      "end_time": 1769347760000,
+      "granularity": "total"
+    }
+  },
+  "id": 1
+}
+```
+
+响应：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+    "start_time": 1769344160000,
+    "end_time": 1769347760000,
+    "interfaces": [
+      { "interface_name": "eth0", "received": 1048576, "transmitted": 524288 }
+    ],
+    "received": 1048576,
+    "transmitted": 524288,
+    "possible_data_losses": []
+  }
+}
+```
+
 ## Static Data Multi Last Query
 
 批量获取多个 Agent 的最新一条静态监控数据。等价于为每个 UUID 执行 `agent_query_static` 并设置 `condition: ["last"]`。
