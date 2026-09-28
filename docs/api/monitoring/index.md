@@ -10,7 +10,7 @@
 >
 > 客户端应调用：
 > - `agent_report_static` / `agent_report_dynamic` / `agent_report_dynamic_summary`
-> - `agent_query_static` / `agent_query_dynamic` / `agent_query_dynamic_summary`
+> - `agent_query_static` / `agent_query_dynamic` / `agent_query_dynamic_summary` / `agent_query_traffic`
 > - `agent_delete_static` / `agent_delete_dynamic` / `agent_delete_dynamic_summary`
 > - `agent_static_data_multi_last_query` / `agent_dynamic_data_multi_last_query` /
     `agent_dynamic_summary_multi_last_query`

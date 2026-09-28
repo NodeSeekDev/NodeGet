@@ -94,7 +94,7 @@ loop {
 
 1. 安装 rustls `aws_lc_rs` default_provider。
 2. `init_or_skip_super_token`。
-3. 初始化全部缓存：`TokenCache`、`MonitoringUuidCache`、`StaticHashCache`、`MonitoringLastCache`、`StaticCache`、`CrontabCache`、`runtime_pool`、`monitoring_buffer`、`DbRegistryManager`（`db_path` 默认 `./db/`）。
+3. 初始化全部缓存：`TokenCache`、`MonitoringUuidCache`、`StaticHashCache`、`MonitoringLastCache`、`StaticCache`、`CrontabCache`、`runtime_pool`、`monitoring_buffer`、`TrafficStats`（`traffic_stats.rs`，从 `traffic_current_total` 表重建内存态，失败直接 `expect` panic，不允许带着空状态继续启动）、`DbRegistryManager`（`db_path` 默认 `./db/`）。
 4. 注入四个 trait 提供者：`ServerPermissionChecker`、`TaskMonitoringUuidProvider`、`JsWorkerServiceImpl`、`CronJsWorkerScheduler`。
 5. 构建合并的 RPC 模块 + `RpcTimingMiddleware(TRACE)` + `ServerConfig`（默认 `max_conns` **100**、`resp` **100MiB**、`req` **10MiB**）。
 6. 构建 axum router。
@@ -117,8 +117,8 @@ loop {
 
 - `tls_enabled = tls_cert.is_some() && tls_key.is_some()`。TLS 分支使用 `axum_server::bind_rustls` + `build_http1_only_tls_config`（加载失败 `panic`）。明文分支使用 `TcpListener::bind`（失败 `panic`）+ `axum::serve` 配合 `into_make_service_with_connect_info::<SocketAddr>`。
 - `tokio::select!` biased：
-  - `serve_future` 完成 → `flush_and_shutdown` + `DbRegistryManager.shutdown` + 5s 超时的 `stop_handle.shutdown` + abort unix task + 清理 socket 文件。
-  - `reload_notify` 触发 → 同样的 shutdown，但 `stop_handle.shutdown` 改为**非阻塞 spawn**，使 `run()` 立即返回到 `main` 的热重载循环。
+  - `serve_future` 完成 → `monitoring_buffer::flush_and_shutdown` + `TrafficStats::flush_and_shutdown` + `DbRegistryManager.shutdown` + 5s 超时的 `stop_handle.shutdown` + abort unix task + 清理 socket 文件。
+  - `reload_notify` 触发 → 同样的 shutdown（含 `TrafficStats::flush_and_shutdown`），但 `stop_handle.shutdown` 改为**非阻塞 spawn**，使 `run()` 立即返回到 `main` 的热重载循环。
 - 两个分支对 `serve_future` 的结果都 `unwrap()`（见「注意事项」）。
 
 #### Unix socket — `server/src/subcommands/serve.rs:379`
@@ -254,7 +254,7 @@ loop {
 
 ### self_update 二进制替换流程
 
-`reqwest` 下载（**2 分钟**超时、`User-Agent: NodeGet-Server`），拒绝小于 **1024 字节**的响应，调用 `ng_core::self_update::replace_binary`，Unix 上对规范化 exe 路径 `chmod 0o755`（失败仅 warn），然后 spawn 一个 **3 秒**延迟的重启任务（Windows 用 `restart_process`，其他用 `restart_process_with_exec_v`），使 RPC 的 Ok 响应能在进程被替换之前送出。先 `check_if_update_needed(tag)`，已在目标版本则直接 Ok 返回。
+`reqwest` 下载（**2 分钟**超时、`User-Agent: NodeGet-Server`），拒绝小于 **1024 字节**的响应，调用 `ng_core::self_update::replace_binary`，Unix 上对规范化 exe 路径 `chmod 0o755`（失败仅 warn），然后 spawn 一个 **3 秒**延迟的重启任务（Windows 用 `restart_process`，其他用 `restart_process_with_exec_v`），使 RPC 的 Ok 响应能在进程被替换之前送出。先 `check_if_update_needed(tag)`，已在目标版本则直接 Ok 返回。延迟重启任务在 `execv`/进程退出前**同步 await** `monitoring_buffer::flush_and_shutdown` 与 `TrafficStats::flush_and_shutdown`，再 `DbRegistryManager.shutdown`——`execv`/`exit` 单向抹除进程映像、不跑析构，不这么做会丢最近 ≤500ms 的监控行和最近 ≤60s 的流量统计快照（`rpc_nodeget.rs:461-468`）。
 
 ### TLS / ALPN
 
