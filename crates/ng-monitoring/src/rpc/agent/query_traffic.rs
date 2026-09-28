@@ -312,7 +312,7 @@ fn database_error(e: &DbErr) -> NodegetError {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_DETAIL_RANGE_MS, query_detail, query_possible_data_losses, query_total};
+    use super::*;
     use crate::traffic_stats::traffic_tables_on_sqlite;
     use ng_db::entity::{traffic_current_total, traffic_possible_data_loss, traffic_snapshot};
     use sea_orm::{ActiveValue, DatabaseConnection, EntityTrait, Set};

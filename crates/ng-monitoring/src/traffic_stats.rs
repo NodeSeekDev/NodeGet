@@ -615,10 +615,7 @@ pub(crate) async fn traffic_tables_on_sqlite() -> sea_orm::DatabaseConnection {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        NetworkInterfaceReading, POSSIBLE_DATA_LOSS_THRESHOLD_MS, State, compute_traffic_increase,
-        detect_possible_data_loss, is_counter_reset, snapshot_time_of,
-    };
+    use super::*;
     use crate::data_structure::{
         DynamicCPUData, DynamicLoadData, DynamicMonitoringData, DynamicNetworkData,
         DynamicPerNetworkInterfaceData, DynamicRamData, DynamicSystemData,
@@ -1001,7 +998,6 @@ mod tests {
 
     #[tokio::test]
     async fn write_to_db_skips_duplicate_snapshots_and_updates_current_totals() {
-        use super::{Traffic, current_total_model, traffic_tables_on_sqlite, write_to_db};
         use ng_db::entity::{traffic_current_total, traffic_possible_data_loss, traffic_snapshot};
         use sea_orm::{ActiveValue, EntityTrait, PaginatorTrait};
 

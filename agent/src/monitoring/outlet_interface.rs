@@ -192,7 +192,7 @@ fn warn_if_container_without_physical_interface(warned: &mut bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{InterfaceFacts, is_outlet_by_name, select_by_container, select_by_kernel};
+    use super::*;
 
     /// 构造一块网卡的系统信息
     fn fact(name: &str, ifindex: u32, is_virtual: bool) -> InterfaceFacts {
