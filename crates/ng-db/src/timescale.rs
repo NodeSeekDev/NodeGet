@@ -95,6 +95,37 @@ fn days_to_ms(days: u64) -> anyhow::Result<u64> {
     Ok(ms)
 }
 
+/// 压缩策略的调度间隔（毫秒）：优先跟随 hypertable 的**实际** chunk 间隔。
+///
+/// 压缩的工作单元是 chunk。调度与 chunk 间隔一致时每轮最多只压一个新
+/// chunk；若用 `TimescaleDB` 默认的 1 天调度而 chunk 是小时级，一天内到期的
+/// 多个 chunk 会堆在一次 job 里压缩，形成磁盘 I/O 尖峰（生产库实测：一次
+/// 5.1 GB / 335 s）。
+///
+/// 之所以读实际值而不是 `config.chunk_interval_days`：chunk 间隔只在
+/// `create_hypertable` 时由配置决定，之后可用 `set_chunk_time_interval()`
+/// 手工调整（生产库把 `dynamic_monitoring` 调成 6 小时摊薄 I/O），此时
+/// 配置里的天数与之不一致，按配置回写会把手工调整覆盖掉。
+///
+/// 读不到或读到非法值（`NULL` / 非正数）时回落到配置天数。
+fn compression_schedule_ms(
+    actual_chunk_ms: Option<i64>,
+    config_chunk_days: u64,
+) -> anyhow::Result<u64> {
+    match actual_chunk_ms {
+        Some(ms) if ms > 0 => Ok(ms as u64),
+        _ => days_to_ms(config_chunk_days),
+    }
+}
+
+/// 把毫秒间隔渲染成 SQL `interval` 表达式（供
+/// `add_compression_policy(..., schedule_interval => ...)` 使用）。
+///
+/// 入参只可能来自查询到的整数或 `days_to_ms`，故拼接安全。
+fn interval_ms_literal(ms: u64) -> String {
+    format!("{ms} * INTERVAL '1 millisecond'")
+}
+
 /// 为 SQL 标识符加双引号并转义内嵌双引号（防注入）。
 ///
 /// 当前所有入参均为编译期常量，此函数是防御性措施，同时保证 `schema`
@@ -264,13 +295,22 @@ async fn setup_table(
 
     // 压缩策略：先移除再注册，使配置变更在下次启动时生效（幂等）。
     // compress_after_days = 0 表示所有数据立即可压缩（含实时数据）。
+    // schedule_interval 与 chunk 间隔对齐（见 compression_schedule_ms），
+    // 否则重启后策略会被重建为默认的 1 天调度，把多个到期 chunk 堆到一次。
+    let schedule_ms = compression_schedule_ms(
+        chunk_interval_ms(db, table.name).await?,
+        config.chunk_interval_days,
+    )?;
     db.execute_unprepared(&format!(
         "SELECT remove_compression_policy({table_regclass}, if_exists => true); \
-         SELECT add_compression_policy({table_regclass}, compress_after => {ms});",
+         SELECT add_compression_policy({table_regclass}, compress_after => {ms}, \
+         schedule_interval => {schedule});",
         ms = days_to_ms(config.compress_after_days)?,
+        schedule = interval_ms_literal(schedule_ms),
     ))
     .await?;
-    info!(target: "db", table = table.name, compress_after_days = config.compress_after_days, "compression policy applied");
+    info!(target: "db", table = table.name, compress_after_days = config.compress_after_days,
+          schedule_interval_ms = schedule_ms, "compression policy applied");
 
     if config.retention_days > 0 {
         db.execute_unprepared(&format!(
@@ -365,6 +405,31 @@ async fn has_integer_now_func(db: &DatabaseConnection, table: &str) -> anyhow::R
     Ok(row.is_some())
 }
 
+/// hypertable 时间维度的**实际** chunk 间隔（毫秒）。
+///
+/// 整数时间列取 `integer_interval`；时间戳列回落到 `time_interval`（秒）。
+/// 限定当前 schema，避免多 schema 同名表误判。
+async fn chunk_interval_ms(db: &DatabaseConnection, table: &str) -> anyhow::Result<Option<i64>> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            format!(
+                "SELECT COALESCE(integer_interval, \
+                        (extract(epoch FROM time_interval) * 1000))::BIGINT AS ms \
+                 FROM timescaledb_information.dimensions \
+                 WHERE hypertable_name = '{table}' \
+                   AND hypertable_schema = current_schema() \
+                 ORDER BY dimension_number LIMIT 1"
+            ),
+        ))
+        .await?;
+    let ms = row
+        .map(|row| row.try_get::<Option<i64>>("", "ms"))
+        .transpose()?
+        .flatten();
+    Ok(ms)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,6 +447,26 @@ mod tests {
         // 超过 SQL BIGINT 上限（或乘法溢出）应显式报错，而不是回绕/panic
         assert!(days_to_ms(max_days + 1).is_err());
         assert!(days_to_ms(u64::MAX).is_err());
+    }
+
+    #[test]
+    fn compression_schedule_follows_chunk_interval() {
+        // 实际 chunk 间隔优先（生产库把 dynamic_monitoring 设为 6 小时）
+        assert_eq!(
+            compression_schedule_ms(Some(21_600_000), 1).unwrap(),
+            21_600_000
+        );
+        // 读不到 / 非正值 → 回落到配置天数，而不是 0 或 panic
+        assert_eq!(compression_schedule_ms(None, 1).unwrap(), 86_400_000);
+        assert_eq!(compression_schedule_ms(Some(0), 2).unwrap(), 172_800_000);
+        assert_eq!(compression_schedule_ms(Some(-1), 1).unwrap(), 86_400_000);
+        // 配置天数溢出仍显式报错（与 days_to_ms 一致）
+        assert!(compression_schedule_ms(None, u64::MAX).is_err());
+        // 渲染成 SQL interval 表达式
+        assert_eq!(
+            interval_ms_literal(21_600_000),
+            "21600000 * INTERVAL '1 millisecond'"
+        );
     }
 
     #[test]
