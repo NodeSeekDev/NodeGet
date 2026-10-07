@@ -72,6 +72,21 @@ struct Traffic {
     transmitted: u64,
 }
 
+/// 一块网卡当前的总流量，供查询接口读取
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceCurrentTotal {
+    /// 设备编号
+    pub uuid_id: i16,
+    /// 网卡名
+    pub interface_name: String,
+    /// 总接收量（字节）
+    pub total_received: u64,
+    /// 总发送量（字节）
+    pub total_transmitted: u64,
+    /// 最近一次更新时间（毫秒时间戳）
+    pub updated_at: i64,
+}
+
 /// 流量统计的内存状态
 #[derive(Debug, Default)]
 struct State {
@@ -84,6 +99,23 @@ struct State {
 }
 
 impl State {
+    /// 列出所有网卡当前的总流量，顺序不固定。
+    fn current_totals(&self) -> Vec<InterfaceCurrentTotal> {
+        self.prev_readings
+            .iter()
+            .map(|(key, reading)| {
+                let total = self.totals.get(key).copied().unwrap_or_default();
+                InterfaceCurrentTotal {
+                    uuid_id: key.0,
+                    interface_name: key.1.clone(),
+                    total_received: total.received,
+                    total_transmitted: total.transmitted,
+                    updated_at: reading.updated_at,
+                }
+            })
+            .collect()
+    }
+
     /// 用一条动态监控上报更新内存状态。
     ///
     /// - `uuid_id`: 设备编号
@@ -249,6 +281,22 @@ impl TrafficStats {
             .apply_report(uuid_id, data, received_at);
     }
 
+    /// 列出所有网卡当前的总流量。
+    ///
+    /// - 返回: 未初始化或已关闭时为 `None`；包含已软删除设备的网卡，由调用方过滤
+    pub fn current_totals() -> Option<Vec<InterfaceCurrentTotal>> {
+        let stats = TRAFFIC_STATS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()?;
+        let totals = stats
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .current_totals();
+        Some(totals)
+    }
+
     /// 把内存中的变化写入数据库。
     ///
     /// 1. 取出并清空尚未写库的可能丢失数据的时间段；复制所有网卡的上一次读数和总流量
@@ -404,7 +452,7 @@ async fn write_to_db(
 /// - `backend`: 数据库类型
 /// - `columns`: 每行的列数
 /// - 返回: 单条 SQL 的参数上限除以列数，至少为 1
-fn max_rows_per_statement(backend: DatabaseBackend, columns: usize) -> usize {
+pub(crate) fn max_rows_per_statement(backend: DatabaseBackend, columns: usize) -> usize {
     let max_variables = if backend == DatabaseBackend::Sqlite {
         SQLITE_MAX_VARIABLES
     } else {
@@ -665,6 +713,38 @@ mod tests {
             state.apply_report(1, &data, at(minutes));
         }
         assert_eq!(total_received(&state, "eth0"), 3 * GB);
+    }
+
+    #[test]
+    fn current_totals_lists_outlet_interfaces_with_totals_and_update_time() {
+        let mut state = State::default();
+        for (time, eth0, docker0) in [
+            (TEN_OCLOCK, 10 * GB, 5 * GB),
+            (TEN_OCLOCK + MINUTE, 12 * GB, 8 * GB),
+        ] {
+            let data = report(
+                time,
+                3600,
+                "a",
+                vec![
+                    interface("eth0", eth0, Some(true)),
+                    interface("docker0", docker0, Some(false)),
+                ],
+            );
+            state.apply_report(1, &data, time);
+        }
+
+        let totals = state.current_totals();
+        assert_eq!(
+            totals,
+            [InterfaceCurrentTotal {
+                uuid_id: 1,
+                interface_name: "eth0".to_owned(),
+                total_received: 2 * GB,
+                total_transmitted: 0,
+                updated_at: TEN_OCLOCK + MINUTE,
+            }]
+        );
     }
 
     #[test]

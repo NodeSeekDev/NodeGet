@@ -377,6 +377,65 @@ pub struct TrafficDetailResponse {
     pub possible_data_losses: Vec<PossibleDataLossItem>,
 }
 
+/// 单块网卡当前的总流量。
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct InterfaceCurrentTrafficItem {
+    /// 网卡名
+    pub interface_name: String,
+    /// 总接收量（字节）
+    pub total_received: u64,
+    /// 总发送量（字节）
+    pub total_transmitted: u64,
+    /// 总流量最近一次更新的时间（毫秒）
+    pub updated_at: i64,
+    /// 已存快照中最晚的时间（毫秒），还没有快照时为 `null`
+    pub last_snapshot_time: Option<i64>,
+}
+
+/// 一台设备当前的总流量。
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct DeviceCurrentTraffic {
+    /// 设备 UUID
+    pub uuid: uuid::Uuid,
+    /// 每块出口网卡的总流量，按网卡名排序
+    pub interfaces: Vec<InterfaceCurrentTrafficItem>,
+}
+
+/// 写入的一条总流量快照。
+#[derive(Debug, Deserialize)]
+pub struct TrafficSnapshotWrite {
+    /// 设备 UUID
+    pub uuid: uuid::Uuid,
+    /// 网卡名
+    pub interface_name: String,
+    /// 快照时间（毫秒）
+    pub snapshot_time: i64,
+    /// 到该时刻为止的总接收量（字节）
+    pub total_received: i64,
+    /// 到该时刻为止的总发送量（字节）
+    pub total_transmitted: i64,
+}
+
+/// 写入总流量快照的结果。
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct TrafficSnapshotWriteResponse {
+    /// 新写入的条数
+    pub inserted: u64,
+    /// 因同一网卡同一时间已有快照而忽略的条数
+    pub ignored: u64,
+    /// 因设备不存在或已删除而跳过的条数
+    pub skipped: u64,
+}
+
+/// 删除总流量快照的结果。
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct TrafficSnapshotDeleteResponse {
+    /// 删除的快照条数
+    pub deleted_snapshots: u64,
+    /// 删除的可能丢失数据时间段条数
+    pub deleted_possible_data_losses: u64,
+}
+
 /// `dynamic_monitoring_summary` 表中以 *10 缩放存储的列名列表（单一事实来源）。
 ///
 /// 这些列以 i16 存储，读取时需除以 10.0 还原。
