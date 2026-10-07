@@ -6,8 +6,9 @@
 
 use crate::monitoring_uuid_cache::MonitoringUuidCache;
 use crate::query::{
-    DynamicDataQueryField, InterfaceTrafficItem, PossibleDataLossItem, TrafficDetailResponse,
-    TrafficGranularity, TrafficQuery, TrafficSnapshotItem, TrafficTotalResponse,
+    DynamicDataQueryField, InterfaceSnapshotRangeItem, InterfaceTrafficItem, PossibleDataLossItem,
+    TrafficDetailResponse, TrafficGranularity, TrafficQuery, TrafficRangeResponse,
+    TrafficSnapshotItem, TrafficTotalResponse,
 };
 use crate::rpc::agent::AgentRpcImpl;
 use jsonrpsee::core::RpcResult;
@@ -18,7 +19,9 @@ use ng_core::utils::get_local_timestamp_ms_i64;
 use ng_db::entity::{traffic_current_total, traffic_possible_data_loss, traffic_snapshot};
 use ng_infra::server::{RpcHelper, to_rpc_error};
 use ng_token::get::check_token_limit;
-use sea_orm::{ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+};
 use serde_json::value::RawValue;
 use tracing::debug;
 
@@ -29,20 +32,23 @@ const MAX_DETAIL_RANGE_MS: i64 = 92 * 24 * 60 * 60 * 1000;
 ///
 /// - `token` — 身份认证凭据
 /// - `query` — 查询参数
-/// - 返回值 — `granularity` 为 `total` 时返回 `TrafficTotalResponse`，为 `detail` 时返回 `TrafficDetailResponse`
+/// - 返回值 — `granularity` 为 `total` 时返回 `TrafficTotalResponse`，为 `detail` 时返回
+///   `TrafficDetailResponse`，为 `range` 时返回 `TrafficRangeResponse`
 ///
 /// 内部步骤：
 /// 1. 解析 Token 并验证 `DynamicMonitoring::Read(Network)` 权限（`Scope`: `AgentUuid`）
 /// 2. 通过 `MonitoringUuidCache` 把 UUID 转为 `uuid_id`
 /// 3. 开始时间晚于结束时间时返回错误
-/// 4. 按 `granularity` 查询流量（`query_total` / `query_detail`）
-/// 5. 查询可能丢失数据的时间段（`query_possible_data_losses`），一并返回
+/// 4. 按 `granularity` 查询流量（`query_total` / `query_detail` / `query_range`）
+/// 5. `total` 和 `detail` 还查询可能丢失数据的时间段（`query_possible_data_losses`），一并返回；
+///    `range` 忽略开始时间和结束时间，不返回这一项
 ///
 /// # Errors
 ///
 /// - Token 解析失败时返回 `NodegetError::ParseError`
 /// - 权限不足时返回 `NodegetError::PermissionDenied`
 /// - UUID 未找到时返回 `NodegetError::NotFound`
+/// - `total` 填了开始时间但某块网卡找不到起点快照时返回 `NodegetError::NotFound`
 /// - 开始时间晚于结束时间、`detail` 时间范围超过 `MAX_DETAIL_RANGE_MS` 时返回 `NodegetError::InvalidInput`
 /// - 数据库查询失败时返回 `NodegetError::DatabaseError`
 pub async fn query_traffic(token: String, query: TrafficQuery) -> RpcResult<Box<RawValue>> {
@@ -82,11 +88,11 @@ pub async fn query_traffic(token: String, query: TrafficQuery) -> RpcResult<Box<
         }
 
         let db = AgentRpcImpl::get_db()?;
-        let possible_data_losses =
-            query_possible_data_losses(db, uuid_id, query.start_time, query.end_time).await?;
-
         let response = match query.granularity {
             TrafficGranularity::Total => {
+                let possible_data_losses =
+                    query_possible_data_losses(db, uuid_id, query.start_time, query.end_time)
+                        .await?;
                 let interfaces = query_total(db, uuid_id, query.start_time, query.end_time).await?;
                 let received = interfaces.iter().map(|item| item.received).sum();
                 let transmitted = interfaces.iter().map(|item| item.transmitted).sum();
@@ -101,6 +107,9 @@ pub async fn query_traffic(token: String, query: TrafficQuery) -> RpcResult<Box<
                 })
             }
             TrafficGranularity::Detail => {
+                let possible_data_losses =
+                    query_possible_data_losses(db, uuid_id, query.start_time, query.end_time)
+                        .await?;
                 let snapshots = query_detail(db, uuid_id, query.start_time, query.end_time).await?;
                 serde_json::value::to_raw_value(&TrafficDetailResponse {
                     uuid: query.uuid,
@@ -108,6 +117,13 @@ pub async fn query_traffic(token: String, query: TrafficQuery) -> RpcResult<Box<
                     end_time: query.end_time,
                     snapshots,
                     possible_data_losses,
+                })
+            }
+            TrafficGranularity::Range => {
+                let interfaces = query_range(db, uuid_id).await?;
+                serde_json::value::to_raw_value(&TrafficRangeResponse {
+                    uuid: query.uuid,
+                    interfaces,
                 })
             }
         }
@@ -132,9 +148,19 @@ pub async fn query_traffic(token: String, query: TrafficQuery) -> RpcResult<Box<
 /// - 返回: 每块网卡的流量，按网卡名排序；结束时间之前还没有数据的网卡不返回
 ///
 /// 每块网卡分别计算：
-/// 1. 开始值：开始时间之前（含）最近的一条快照；没有快照或未填开始时间时为 0
-/// 2. 结束值：未填结束时间时取 `traffic_current_total`；否则取结束时间之前（含）最近的一条快照
+/// 1. 结束值：未填结束时间时取 `traffic_current_total`；否则取结束时间之前（含）最近的一条快照，
+///    没有则这块网卡不返回
+/// 2. 开始值：未填开始时间时为 0；否则取开始时间之前（含）最近的一条快照
 /// 3. 流量 = 结束值 − 开始值
+///
+/// 填了开始时间但某块网卡找不到起点快照时返回错误：没有快照就不知道开始时的总流量，
+/// 不能当 0 算，否则会把开始之前的流量都算进去。快照由 Worker 定时写入，
+/// 没装 Worker、Worker 没运行，或设备在开始时间之后才开始统计，都会这样。
+///
+/// # Errors
+///
+/// - 填了开始时间但某块网卡找不到起点快照时返回 `NodegetError::NotFound`
+/// - 数据库查询失败时返回 `NodegetError::DatabaseError`
 async fn query_total(
     db: &DatabaseConnection,
     uuid_id: i16,
@@ -165,7 +191,13 @@ async fn query_total(
             None => (0, 0),
             Some(start_time) => latest_snapshot_at(db, uuid_id, &interface_name, start_time)
                 .await?
-                .unwrap_or((0, 0)),
+                .ok_or_else(|| {
+                    NodegetError::NotFound(format!(
+                        "No traffic snapshot of interface {interface_name} at or before start_time; \
+                         make sure the traffic snapshot worker is installed and running \
+                         (traffic before the agent was installed is not counted)"
+                    ))
+                })?,
         };
 
         items.push(InterfaceTrafficItem {
@@ -201,6 +233,48 @@ async fn latest_snapshot_at(
         .await
         .map_err(|e| database_error(&e))?;
     Ok(snapshot.map(|snapshot| (snapshot.total_received, snapshot.total_transmitted)))
+}
+
+/// 查询每块网卡有快照数据的时间范围。
+///
+/// - `db`: 数据库连接
+/// - `uuid_id`: 设备编号
+/// - 返回: 每块有快照的网卡最早和最晚的快照时间，按网卡名排序
+async fn query_range(
+    db: &DatabaseConnection,
+    uuid_id: i16,
+) -> anyhow::Result<Vec<InterfaceSnapshotRangeItem>> {
+    let rows: Vec<(String, i64, i64)> = traffic_snapshot::Entity::find()
+        .select_only()
+        .column(traffic_snapshot::Column::InterfaceName)
+        .column_as(
+            traffic_snapshot::Column::SnapshotTime.min(),
+            "first_snapshot_time",
+        )
+        .column_as(
+            traffic_snapshot::Column::SnapshotTime.max(),
+            "last_snapshot_time",
+        )
+        .filter(traffic_snapshot::Column::UuidId.eq(uuid_id))
+        .group_by(traffic_snapshot::Column::InterfaceName)
+        .order_by_asc(traffic_snapshot::Column::InterfaceName)
+        .into_tuple()
+        .all(db)
+        .await
+        .map_err(|e| database_error(&e))?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(interface_name, first_snapshot_time, last_snapshot_time)| {
+                InterfaceSnapshotRangeItem {
+                    interface_name,
+                    first_snapshot_time,
+                    last_snapshot_time,
+                }
+            },
+        )
+        .collect())
 }
 
 /// 查询时间段内的所有总流量快照。
@@ -400,18 +474,63 @@ mod tests {
     #[tokio::test]
     async fn total_between_two_times_uses_latest_snapshots_before_each() {
         let db = seeded_db().await;
-        // 开始 10:05 → eth0 取 10:00 的 100，eth1 没有快照取 0
+        // 开始 10:20 → eth0 取 10:15 的 150，eth1 取 10:15 的 10
         // 结束 10:31 → eth0 取 10:30 的 230，eth1 取 10:15 的 10
-        let items = query_total(&db, 1, Some(at(5)), Some(at(31)))
+        let items = query_total(&db, 1, Some(at(20)), Some(at(31)))
             .await
             .unwrap();
-        assert_eq!(received(&items), [("eth0", 130), ("eth1", 10)]);
-        assert_eq!(items[0].transmitted, 13);
+        assert_eq!(received(&items), [("eth0", 80), ("eth1", 0)]);
+        assert_eq!(items[0].transmitted, 8);
+    }
+
+    #[tokio::test]
+    async fn total_without_start_snapshot_reports_not_found() {
+        let db = seeded_db().await;
+        // 开始 10:05：eth0 有 10:00 的快照，但 eth1 最早的快照是 10:15，找不到起点
+        let error = query_total(&db, 1, Some(at(5)), Some(at(31)))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<NodegetError>(),
+            Some(NodegetError::NotFound(_))
+        ));
+
+        // 开始时间早于所有快照同样报缺失，不能当 0 算
+        let error = query_total(&db, 1, Some(at(-60)), None).await.unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<NodegetError>(),
+            Some(NodegetError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn range_lists_first_and_last_snapshot_per_interface() {
+        let db = seeded_db().await;
+        let interfaces = query_range(&db, 1).await.unwrap();
+        let listed: Vec<_> = interfaces
+            .iter()
+            .map(|item| {
+                (
+                    item.interface_name.as_str(),
+                    item.first_snapshot_time,
+                    item.last_snapshot_time,
+                )
+            })
+            .collect();
+        assert_eq!(listed, [("eth0", at(0), at(30)), ("eth1", at(15), at(15))]);
+    }
+
+    #[tokio::test]
+    async fn range_without_snapshots_is_empty() {
+        let db = seeded_db().await;
+        let interfaces = query_range(&db, 3).await.unwrap();
+        assert!(interfaces.is_empty());
     }
 
     #[tokio::test]
     async fn total_to_now_uses_current_total() {
         let db = seeded_db().await;
+        // 开始 10:15 → eth0 取 150，eth1 取 10；到现在 eth0 260，eth1 20
         let items = query_total(&db, 1, Some(at(15)), None).await.unwrap();
         assert_eq!(received(&items), [("eth0", 110), ("eth1", 10)]);
 
