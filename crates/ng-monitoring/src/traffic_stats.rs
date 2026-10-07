@@ -1,12 +1,12 @@
 //! 流量统计。
 //!
 //! 根据 Agent 上报的出口网卡累计值，维护每块网卡的总流量（跨重启累加），
-//! 每进入一个新的 15 分钟记一次总流量快照，定时写入数据库。
-//! 周期流量 = 结束时刻总流量 − 开始时刻总流量。
-//! 由 `report_dynamic` 调用 `update_total_traffic`；快照供流量查询使用。
+//! 定时写入数据库；计数器重置前可能丢失数据时，记录可能丢失数据的时间段。
+//! 总流量快照由 JS Worker 通过 `agent_write_traffic_snapshot` 写入，不在这里生成。
+//! 由 `report_dynamic` 调用 `update_total_traffic`。
 
 use crate::data_structure::DynamicMonitoringData;
-use ng_db::entity::{traffic_current_total, traffic_possible_data_loss, traffic_snapshot};
+use ng_db::entity::{traffic_current_total, traffic_possible_data_loss};
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveValue, DatabaseBackend, DatabaseConnection, DbErr, EntityTrait, Iterable, Set,
@@ -20,8 +20,6 @@ use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use tracing::{debug, error, info, warn};
 
-/// 快照间隔（毫秒），15 分钟
-const SNAPSHOT_INTERVAL_MS: i64 = 15 * 60 * 1000;
 /// 判定可能丢失数据的最短间隔（毫秒），10 分钟
 const POSSIBLE_DATA_LOSS_THRESHOLD_MS: i64 = 10 * 60 * 1000;
 /// 定时写库间隔（毫秒）
@@ -77,8 +75,6 @@ struct State {
     prev_readings: HashMap<(i16, String), NetworkInterfaceReading>,
     /// (设备编号, 网卡名) → 总流量
     totals: HashMap<(i16, String), Traffic>,
-    /// 尚未写库的总流量快照
-    pending_snapshots: Vec<traffic_snapshot::ActiveModel>,
     /// 尚未写库的可能丢失数据的时间段
     pending_possible_data_losses: Vec<traffic_possible_data_loss::ActiveModel>,
 }
@@ -93,11 +89,9 @@ impl State {
     /// 1. 有网卡缺少 `is_outlet`（老版本 Agent）时直接跳过
     /// 2. 逐块处理 `is_outlet` 为真的网卡：
     ///    1. 用本次上报组成本次读数，取出上一次的读数；Agent 采集时间早于上一次的直接丢弃
-    ///    2. `received_at` 与上一次更新时间不在同一个 15 分钟（`snapshot_time_of`）时，
-    ///       以当前总流量记一条快照，时间为 `received_at` 所在 15 分钟的开始时间
-    ///    3. 判断是否重置（`is_counter_reset`），算出本次流量增量（`compute_traffic_increase`），加到总流量
-    ///    4. 发生重置时判断是否可能丢失数据（`detect_possible_data_loss`），同一台设备同一时间段只记一次
-    ///    5. 用本次读数替换上一次的读数
+    ///    2. 判断是否重置（`is_counter_reset`），算出本次流量增量（`compute_traffic_increase`），加到总流量
+    ///    3. 发生重置时判断是否可能丢失数据（`detect_possible_data_loss`），同一台设备同一时间段只记一次
+    ///    4. 用本次读数替换上一次的读数
     fn apply_report(&mut self, uuid_id: i16, data: &DynamicMonitoringData, received_at: i64) {
         let interfaces = &data.network.interfaces;
         if interfaces
@@ -132,19 +126,6 @@ impl State {
                 updated_at: received_at,
             };
             let total = self.totals.get(&key).copied().unwrap_or_default();
-
-            if let Some(prev) = prev_reading
-                && snapshot_time_of(prev.updated_at) != snapshot_time_of(received_at)
-            {
-                self.pending_snapshots.push(traffic_snapshot::ActiveModel {
-                    id: ActiveValue::default(),
-                    uuid_id: Set(uuid_id),
-                    interface_name: Set(interface.interface_name.clone()),
-                    snapshot_time: Set(snapshot_time_of(received_at)),
-                    total_received: Set(total.received.cast_signed()),
-                    total_transmitted: Set(total.transmitted.cast_signed()),
-                });
-            }
 
             let reset = prev_reading.is_some_and(|prev| is_counter_reset(prev, &current_reading));
             let increase = compute_traffic_increase(prev_reading, &current_reading, reset);
@@ -266,11 +247,11 @@ impl TrafficStats {
 
     /// 把内存中的变化写入数据库。
     ///
-    /// 1. 取出并清空尚未写库的快照、可能丢失数据的时间段；复制所有网卡的上一次读数和总流量
+    /// 1. 取出并清空尚未写库的可能丢失数据的时间段；复制所有网卡的上一次读数和总流量
     /// 2. 在同一个事务中写入（`write_to_db`）
-    /// 3. 写库失败时把取出的快照、可能丢失数据的时间段放回内存，下次重试
+    /// 3. 写库失败时把取出的可能丢失数据的时间段放回内存，下次重试
     async fn flush(&self) {
-        let (snapshots, possible_data_losses, current_totals) = {
+        let (possible_data_losses, current_totals) = {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             let current_totals: Vec<_> = state
                 .prev_readings
@@ -281,37 +262,26 @@ impl TrafficStats {
                 })
                 .collect();
             (
-                std::mem::take(&mut state.pending_snapshots),
                 std::mem::take(&mut state.pending_possible_data_losses),
                 current_totals,
             )
         };
-        if snapshots.is_empty() && possible_data_losses.is_empty() && current_totals.is_empty() {
+        if possible_data_losses.is_empty() && current_totals.is_empty() {
             return;
         }
 
-        let snapshot_count = snapshots.len();
         let result = match ng_db::get_db() {
-            Some(db) => {
-                write_to_db(
-                    db,
-                    snapshots.clone(),
-                    current_totals,
-                    possible_data_losses.clone(),
-                )
-                .await
-            }
+            Some(db) => write_to_db(db, current_totals, possible_data_losses.clone()).await,
             None => Err(DbErr::Custom("database not initialized".to_owned())),
         };
 
         match result {
             Ok(()) => {
-                debug!(target: "monitoring", snapshots = snapshot_count, "Traffic stats flushed");
+                debug!(target: "monitoring", "Traffic stats flushed");
             }
             Err(e) => {
                 error!(target: "monitoring", error = %e, "Traffic stats flush failed, will retry next time");
                 let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-                state.pending_snapshots.splice(0..0, snapshots);
                 state
                     .pending_possible_data_losses
                     .splice(0..0, possible_data_losses);
@@ -377,41 +347,25 @@ async fn flush_loop(stats: Arc<TrafficStats>) {
     }
 }
 
-/// 在同一个事务中写入快照、当前总流量和可能丢失数据的时间段。
+/// 在同一个事务中写入当前总流量和可能丢失数据的时间段。
 ///
 /// - `db`: 数据库连接
-/// - `snapshots`: 待插入的总流量快照
 /// - `current_totals`: 每块网卡的上一次读数和总流量
 /// - `possible_data_losses`: 待插入的可能丢失数据的时间段
 /// - 返回: 任一步失败时返回错误，事务回滚
 ///
 /// 按单条 SQL 的参数上限（`max_rows_per_statement`）分批写入：
-/// 1. 插入快照，同一 (设备, 网卡, 快照时间) 已存在则跳过
-/// 2. 写入当前总流量，同一 (设备, 网卡) 已存在则更新
-/// 3. 插入可能丢失数据的时间段
+/// 1. 写入当前总流量，同一 (设备, 网卡) 已存在则更新
+/// 2. 插入可能丢失数据的时间段
 async fn write_to_db(
     db: &DatabaseConnection,
-    snapshots: Vec<traffic_snapshot::ActiveModel>,
     current_totals: Vec<traffic_current_total::ActiveModel>,
     possible_data_losses: Vec<traffic_possible_data_loss::ActiveModel>,
 ) -> Result<(), DbErr> {
     use traffic_current_total::Column as CurrentTotal;
-    use traffic_snapshot::Column as Snapshot;
 
     let backend = db.get_database_backend();
     let txn = db.begin().await?;
-
-    let rows = max_rows_per_statement(backend, traffic_snapshot::Column::iter().count());
-    for chunk in snapshots.chunks(rows) {
-        traffic_snapshot::Entity::insert_many(chunk.to_vec())
-            .on_conflict_do_nothing_on([
-                Snapshot::UuidId,
-                Snapshot::InterfaceName,
-                Snapshot::SnapshotTime,
-            ])
-            .exec_without_returning(&txn)
-            .await?;
-    }
 
     let on_conflict = OnConflict::columns([CurrentTotal::UuidId, CurrentTotal::InterfaceName])
         .update_columns([
@@ -557,14 +511,6 @@ const fn compute_traffic_increase(
     }
 }
 
-/// 计算时间所属的快照时间。
-///
-/// - `time`: 毫秒时间戳
-/// - 返回: 向下取整到 `SNAPSHOT_INTERVAL_MS` 的毫秒时间戳（UTC），即所在 15 分钟的开始时间
-const fn snapshot_time_of(time: i64) -> i64 {
-    time - time.rem_euclid(SNAPSHOT_INTERVAL_MS)
-}
-
 /// 判断重置前是否可能丢失数据。
 ///
 /// - `uuid_id`: 设备编号
@@ -693,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn first_report_starts_from_zero_without_snapshot() {
+    fn first_report_starts_from_zero() {
         let mut state = State::default();
         let data = report(
             TEN_OCLOCK,
@@ -703,11 +649,10 @@ mod tests {
         );
         state.apply_report(1, &data, TEN_OCLOCK);
         assert_eq!(total_received(&state, "eth0"), 0);
-        assert!(state.pending_snapshots.is_empty());
     }
 
     #[test]
-    fn increase_within_same_quarter_adds_without_snapshot() {
+    fn increases_accumulate_across_reports() {
         let mut state = State::default();
         let at = |minutes| TEN_OCLOCK + minutes * MINUTE;
         for (minutes, counter) in [(1, 10 * GB), (2, 11 * GB), (3, 13 * GB)] {
@@ -720,30 +665,6 @@ mod tests {
             state.apply_report(1, &data, at(minutes));
         }
         assert_eq!(total_received(&state, "eth0"), 3 * GB);
-        assert!(state.pending_snapshots.is_empty());
-    }
-
-    #[test]
-    fn crossing_quarter_records_snapshot_before_adding_increase() {
-        let mut state = State::default();
-        let at = |minutes| TEN_OCLOCK + minutes * MINUTE;
-        let after = TEN_OCLOCK + 15 * MINUTE + 1000;
-        for (time, counter) in [(at(1), 10 * GB), (at(14), 11 * GB), (after, 12 * GB)] {
-            let data = report(
-                time,
-                3600,
-                "a",
-                vec![interface("eth0", counter, Some(true))],
-            );
-            state.apply_report(1, &data, time);
-        }
-
-        assert_eq!(state.pending_snapshots.len(), 1);
-        let snapshot = &state.pending_snapshots[0];
-        assert_eq!(snapshot.snapshot_time, Set(TEN_OCLOCK + 15 * MINUTE));
-        // 快照是跨过整点前的总流量，不含本次增量
-        assert_eq!(snapshot.total_received, Set(GB.cast_signed()));
-        assert_eq!(total_received(&state, "eth0"), 2 * GB);
     }
 
     #[test]
@@ -958,26 +879,6 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_time_aligns_to_fifteen_minutes() {
-        // 2026-09-27 10:00:00 UTC
-        let ten_oclock = 1_790_503_200_000;
-        let minute = 60 * 1000;
-        assert_eq!(snapshot_time_of(ten_oclock), ten_oclock);
-        assert_eq!(
-            snapshot_time_of(ten_oclock + 7 * minute + 23_000),
-            ten_oclock
-        );
-        assert_eq!(
-            snapshot_time_of(ten_oclock + 15 * minute),
-            ten_oclock + 15 * minute
-        );
-        assert_eq!(
-            snapshot_time_of(ten_oclock + 30 * minute - 1),
-            ten_oclock + 15 * minute
-        );
-    }
-
-    #[test]
     fn no_possible_data_loss_within_threshold() {
         let mut prev = reading(Some("a"), Some(2), 0, 0);
         prev.updated_at = 1_000_000;
@@ -997,19 +898,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_to_db_skips_duplicate_snapshots_and_updates_current_totals() {
-        use ng_db::entity::{traffic_current_total, traffic_possible_data_loss, traffic_snapshot};
+    async fn write_to_db_updates_current_totals_and_inserts_losses() {
+        use ng_db::entity::{traffic_current_total, traffic_possible_data_loss};
         use sea_orm::{ActiveValue, EntityTrait, PaginatorTrait};
 
         let db = traffic_tables_on_sqlite().await;
-        let snapshot = traffic_snapshot::ActiveModel {
-            id: ActiveValue::default(),
-            uuid_id: Set(1),
-            interface_name: Set("eth0".to_owned()),
-            snapshot_time: Set(TEN_OCLOCK),
-            total_received: Set(100),
-            total_transmitted: Set(10),
-        };
         let loss = traffic_possible_data_loss::ActiveModel {
             id: ActiveValue::default(),
             uuid_id: Set(1),
@@ -1030,16 +923,14 @@ mod tests {
                 .collect()
         };
 
-        write_to_db(&db, vec![snapshot.clone()], current_totals(100), vec![loss])
+        write_to_db(&db, current_totals(100), vec![loss])
             .await
             .expect("first write");
-        // 同一时刻的快照再写一次（重试场景）不能报错，当前总流量应被更新
-        write_to_db(&db, vec![snapshot], current_totals(300), Vec::new())
+        // 同一块网卡再写一次，当前总流量应被更新而不是重复插入
+        write_to_db(&db, current_totals(300), Vec::new())
             .await
             .expect("second write");
 
-        let snapshot_count = traffic_snapshot::Entity::find().count(&db).await.unwrap();
-        assert_eq!(snapshot_count, 1);
         let loss_count = traffic_possible_data_loss::Entity::find()
             .count(&db)
             .await
