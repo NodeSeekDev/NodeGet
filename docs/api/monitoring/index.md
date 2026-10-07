@@ -10,8 +10,10 @@
 >
 > 客户端应调用：
 > - `agent_report_static` / `agent_report_dynamic` / `agent_report_dynamic_summary`
-> - `agent_query_static` / `agent_query_dynamic` / `agent_query_dynamic_summary` / `agent_query_traffic`
+> - `agent_query_static` / `agent_query_dynamic` / `agent_query_dynamic_summary` / `agent_query_traffic` /
+    `agent_query_traffic_current`
 > - `agent_delete_static` / `agent_delete_dynamic` / `agent_delete_dynamic_summary`
+> - `agent_write_traffic_snapshot` / `agent_delete_traffic_snapshot`（流量统计快照的写入与清理，由 Worker 调用）
 > - `agent_static_data_multi_last_query` / `agent_dynamic_data_multi_last_query` /
     `agent_dynamic_summary_multi_last_query`
 >
