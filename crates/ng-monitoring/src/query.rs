@@ -295,6 +295,8 @@ pub enum TrafficGranularity {
     Total,
     /// 返回时间段内的每一条总流量快照
     Detail,
+    /// 返回每块网卡有快照数据的时间范围，忽略 `start_time` 和 `end_time`
+    Range,
 }
 
 /// 流量查询结构体。
@@ -311,7 +313,7 @@ pub struct TrafficQuery {
 }
 
 /// 单块网卡在时间段内的流量。
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct InterfaceTrafficItem {
     /// 网卡名
     pub interface_name: String,
@@ -375,6 +377,26 @@ pub struct TrafficDetailResponse {
     pub snapshots: Vec<TrafficSnapshotItem>,
     /// 与时间段有重叠的可能丢失数据的时间段
     pub possible_data_losses: Vec<PossibleDataLossItem>,
+}
+
+/// 单块网卡有快照数据的时间范围。
+#[derive(Serialize)]
+pub struct InterfaceSnapshotRangeItem {
+    /// 网卡名
+    pub interface_name: String,
+    /// 最早一条快照的时间（毫秒）
+    pub first_snapshot_time: i64,
+    /// 最晚一条快照的时间（毫秒）
+    pub last_snapshot_time: i64,
+}
+
+/// 流量查询响应（`granularity` 为 `range`）。
+#[derive(Serialize)]
+pub struct TrafficRangeResponse {
+    /// 设备 UUID
+    pub uuid: uuid::Uuid,
+    /// 每块网卡有快照数据的时间范围，按网卡名排序
+    pub interfaces: Vec<InterfaceSnapshotRangeItem>,
 }
 
 /// 单块网卡当前的总流量。
