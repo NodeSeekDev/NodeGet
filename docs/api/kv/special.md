@@ -54,6 +54,14 @@
 ### Server Namespace
 
 - `database_limit_crontab_result`: 与 `database_limit_*` 类似，Crontab 执行记录，但必须存在于 `global` Kv 中，其他位置无效
+- `database_limit_traffic_snapshot`: 单位毫秒。流量统计快照的保留时长，同样必须存在于 `global` Kv 中，其他位置无效。由流量统计 Worker（
+  `traffic-snapshot-worker`）读取，每小时删除比 `现在 - 该值` 更早的快照以及整段早于该时间的"可能丢失数据"记录。没有配置时默认 365 天；小于 1
+  小时或不是整数的值视为不合法，同样回退为默认值（避免把"天数"误填成毫秒而清空所有快照）
+- `traffic_snapshot_interval`: 单位毫秒。流量统计快照的间隔，必须存在于 `global` Kv 中，其他位置无效。由流量统计 Worker 读取，每个时间段（按
+  UTC 时间对齐）最多存一条快照。必须是 60000（1 分钟）的整数倍，没有配置时默认 900000（15 分钟），不合法的值回退为默认值。建议选能整除一天的值（如
+  5、10、15、20、30、60 分钟），不能整除一天的值也能用，只是每天的整点时刻会漂移
+
+上面两个键由 Bootstrap 里的流量统计 Worker 使用，Server 本身不读取，详见[流量统计](/guide/features/traffic)。
 
 ### Frontend Namespace
 
