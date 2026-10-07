@@ -213,10 +213,10 @@ impl DataFromNetwork {
                 .iter()
                 .map(|(interface_name, network)| {
                     let ifindex = read_ifindex(interface_name);
-                    let is_outlet = match selected_interfaces {
-                        Some(selected) => selected.contains(interface_name),
-                        None => outlet_cache.identify_outlet(interface_name, ifindex),
-                    };
+                    let is_outlet = selected_interfaces.map_or_else(
+                        || outlet_cache.identify_outlet(interface_name, ifindex),
+                        |selected| selected.contains(interface_name),
+                    );
                     DynamicPerNetworkInterfaceData {
                         interface_name: interface_name.clone(),
                         total_received: network.total_received(),
