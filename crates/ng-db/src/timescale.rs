@@ -5,7 +5,7 @@
 //! `PostgreSQL` 时，本模块把这些时序表转换为 `hypertable`，并按 `chunk`
 //! 配置列式压缩与自动保留策略：
 //!
-//! - **压缩**：对 `compress_after_days` 天前的 `chunk` 启用列式压缩（`zstd`），
+//! - **压缩**：对结束超过 `compress_after_hours` 小时的 `chunk` 启用列式压缩（`zstd`），
 //!   监控 JSON 数据通常可压缩 10 倍以上；
 //! - **保留**：当 `retention_days > 0` 时，超过该天数的 `chunk` 由后台 job
 //!   自动删除（`drop_chunks`），磁盘占用从此有上界；默认 `0` = 不启用，
@@ -58,7 +58,8 @@ struct TimescaleTable {
     segment_by: &'static str,
 }
 
-/// 一天的毫秒数，`chunk` 间隔与策略时长按整数时间列（毫秒 epoch）计算。
+/// 一小时 / 一天的毫秒数，`chunk` 间隔与策略时长按整数时间列（毫秒 epoch）计算。
+const MS_PER_HOUR: u64 = 3_600_000;
 const MS_PER_DAY: u64 = 86_400_000;
 
 /// 毫秒 epoch 的 `now()` 函数名，供 `set_integer_now_func` 注册。
@@ -78,21 +79,31 @@ const TIMESCALE_TABLES: &[TimescaleTable] = &[
     },
 ];
 
-/// 天 → 毫秒。
+/// 时长 → 毫秒（`unit_ms` 为该单位的毫秒数）。
 ///
 /// 溢出（超过 `i64::MAX` 毫秒，即 `SQL` `BIGINT` 上限）时返回错误，
 /// 由调用方走失败横幅路径——配置错误应显式暴露，而不是 debug panic
 /// 或 release 回绕成错误的小数值。
-fn days_to_ms(days: u64) -> anyhow::Result<u64> {
-    let ms = days.checked_mul(MS_PER_DAY).ok_or_else(|| {
-        anyhow::anyhow!("timescale 时长配置过大（{days} 天），超出 SQL BIGINT 毫秒上限")
+fn duration_to_ms(value: u64, unit_ms: u64, unit: &str) -> anyhow::Result<u64> {
+    let ms = value.checked_mul(unit_ms).ok_or_else(|| {
+        anyhow::anyhow!("timescale 时长配置过大（{value} {unit}），超出 SQL BIGINT 毫秒上限")
     })?;
     if i64::try_from(ms).is_err() {
         return Err(anyhow::anyhow!(
-            "timescale 时长配置过大（{days} 天），超出 SQL BIGINT 毫秒上限"
+            "timescale 时长配置过大（{value} {unit}），超出 SQL BIGINT 毫秒上限"
         ));
     }
     Ok(ms)
+}
+
+/// 小时 → 毫秒（`chunk` 间隔与压缩延迟按小时配置）。
+fn hours_to_ms(hours: u64) -> anyhow::Result<u64> {
+    duration_to_ms(hours, MS_PER_HOUR, "小时")
+}
+
+/// 天 → 毫秒（保留期 `retention_days` 仍以天为单位）。
+fn days_to_ms(days: u64) -> anyhow::Result<u64> {
+    duration_to_ms(days, MS_PER_DAY, "天")
 }
 
 /// 压缩策略的调度间隔（毫秒）：优先跟随 hypertable 的**实际** chunk 间隔。
@@ -102,19 +113,16 @@ fn days_to_ms(days: u64) -> anyhow::Result<u64> {
 /// 多个 chunk 会堆在一次 job 里压缩，形成磁盘 I/O 尖峰（生产库实测：一次
 /// 5.1 GB / 335 s）。
 ///
-/// 之所以读实际值而不是 `config.chunk_interval_days`：chunk 间隔只在
-/// `create_hypertable` 时由配置决定，之后可用 `set_chunk_time_interval()`
-/// 手工调整（生产库把 `dynamic_monitoring` 调成 6 小时摊薄 I/O），此时
-/// 配置里的天数与之不一致，按配置回写会把手工调整覆盖掉。
+/// 之所以读实际值而不是配置：chunk 间隔只在 `create_hypertable` 时由配置
+/// 决定，之后可用 `set_chunk_time_interval()` 手工调整（生产库把
+/// `dynamic_monitoring` 调成 6 小时摊薄 I/O），此时配置值与之不一致，按配置
+/// 回写会把手工调整覆盖掉。
 ///
-/// 读不到或读到非法值（`NULL` / 非正数）时回落到配置天数。
-fn compression_schedule_ms(
-    actual_chunk_ms: Option<i64>,
-    config_chunk_days: u64,
-) -> anyhow::Result<u64> {
+/// 读不到或读到非法值（`NULL` / 非正数）时回落到配置换算出的毫秒数。
+const fn compression_schedule_ms(actual_chunk_ms: Option<i64>, fallback_ms: u64) -> u64 {
     match actual_chunk_ms {
-        Some(ms) if ms > 0 => Ok(ms as u64),
-        _ => days_to_ms(config_chunk_days),
+        Some(ms) if ms > 0 => ms as u64,
+        _ => fallback_ms,
     }
 }
 
@@ -168,8 +176,8 @@ pub async fn setup_timescale_if_available(
     let config = config.cloned().unwrap_or_default();
     info!(
         target: "db",
-        chunk_interval_days = config.chunk_interval_days,
-        compress_after_days = config.compress_after_days,
+        chunk_interval_hours = config.effective_chunk_interval_hours(),
+        compress_after_hours = config.effective_compress_after_hours(),
         retention_days = config.retention_days,
         "timescaledb detected; applying hypertable setup"
     );
@@ -267,7 +275,7 @@ async fn setup_table(
         db.execute_unprepared(&format!(
             "SELECT create_hypertable({table_regclass}, 'timestamp', \
              chunk_time_interval => {chunk_ms}, migrate_data => true);",
-            chunk_ms = days_to_ms(config.chunk_interval_days)?,
+            chunk_ms = hours_to_ms(config.effective_chunk_interval_hours())?,
         ))
         .await?;
         info!(target: "db", table = table.name, "converted to hypertable");
@@ -294,23 +302,24 @@ async fn setup_table(
     }
 
     // 压缩策略：先移除再注册，使配置变更在下次启动时生效（幂等）。
-    // compress_after_days = 0 表示所有数据立即可压缩（含实时数据）。
+    // compress_after_hours = 0 表示已结束的 chunk 立即可压缩。
     // schedule_interval 与 chunk 间隔对齐（见 compression_schedule_ms），
     // 否则重启后策略会被重建为默认的 1 天调度，把多个到期 chunk 堆到一次。
-    let schedule_ms = compression_schedule_ms(
-        chunk_interval_ms(db, table.name).await?,
-        config.chunk_interval_days,
-    )?;
+    let chunk_ms = hours_to_ms(config.effective_chunk_interval_hours())?;
+    let schedule_ms = compression_schedule_ms(chunk_interval_ms(db, table.name).await?, chunk_ms);
+    let compress_after_ms = hours_to_ms(config.effective_compress_after_hours())?;
     db.execute_unprepared(&format!(
         "SELECT remove_compression_policy({table_regclass}, if_exists => true); \
          SELECT add_compression_policy({table_regclass}, compress_after => {ms}, \
          schedule_interval => {schedule});",
-        ms = days_to_ms(config.compress_after_days)?,
+        ms = compress_after_ms,
         schedule = interval_ms_literal(schedule_ms),
     ))
     .await?;
-    info!(target: "db", table = table.name, compress_after_days = config.compress_after_days,
-          schedule_interval_ms = schedule_ms, "compression policy applied");
+    info!(target: "db", table = table.name,
+          compress_after_hours = config.effective_compress_after_hours(),
+          compress_after_ms = compress_after_ms, schedule_interval_ms = schedule_ms,
+          "compression policy applied");
 
     if config.retention_days > 0 {
         db.execute_unprepared(&format!(
@@ -450,18 +459,28 @@ mod tests {
     }
 
     #[test]
+    fn hours_to_ms_rejects_overflow() {
+        assert_eq!(hours_to_ms(0).unwrap(), 0);
+        assert_eq!(hours_to_ms(6).unwrap(), 21_600_000);
+        assert_eq!(hours_to_ms(24).unwrap(), MS_PER_DAY);
+        // 刚好压线（i64::MAX 毫秒）应通过，超过则显式报错
+        let max_hours = i64::MAX as u64 / MS_PER_HOUR;
+        assert!(hours_to_ms(max_hours).is_ok());
+        assert!(hours_to_ms(max_hours + 1).is_err());
+        assert!(hours_to_ms(u64::MAX).is_err());
+    }
+
+    #[test]
     fn compression_schedule_follows_chunk_interval() {
         // 实际 chunk 间隔优先（生产库把 dynamic_monitoring 设为 6 小时）
         assert_eq!(
-            compression_schedule_ms(Some(21_600_000), 1).unwrap(),
+            compression_schedule_ms(Some(21_600_000), 86_400_000),
             21_600_000
         );
-        // 读不到 / 非正值 → 回落到配置天数，而不是 0 或 panic
-        assert_eq!(compression_schedule_ms(None, 1).unwrap(), 86_400_000);
-        assert_eq!(compression_schedule_ms(Some(0), 2).unwrap(), 172_800_000);
-        assert_eq!(compression_schedule_ms(Some(-1), 1).unwrap(), 86_400_000);
-        // 配置天数溢出仍显式报错（与 days_to_ms 一致）
-        assert!(compression_schedule_ms(None, u64::MAX).is_err());
+        // 读不到 / 非正值 → 回落到配置换算出的毫秒数，而不是 0 或 panic
+        assert_eq!(compression_schedule_ms(None, 21_600_000), 21_600_000);
+        assert_eq!(compression_schedule_ms(Some(0), 172_800_000), 172_800_000);
+        assert_eq!(compression_schedule_ms(Some(-1), 86_400_000), 86_400_000);
         // 渲染成 SQL interval 表达式
         assert_eq!(
             interval_ms_literal(21_600_000),

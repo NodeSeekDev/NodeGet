@@ -29,8 +29,8 @@ docker compose -f docker/docker-compose.timescale.yml up -d
 database_url = "postgres://nodeget:nodeget@host:5432/nodeget"
 
 [database.timescale]
-chunk_interval_days = 1    # hypertable 分块间隔（天），默认 1
-compress_after_days = 7    # 超过该天数的 chunk 启用压缩，默认 7
+chunk_interval_hours = 6   # hypertable 分块间隔（小时），默认 6
+compress_after_hours = 12  # chunk 结束满该小时数后启用压缩，默认 12
 retention_days = 30        # 超过该天数的数据自动删除；默认 0 = 不启用
 ```
 

@@ -5,7 +5,7 @@ NodeGet 的数据主体是每秒一条的监控时序数据（`dynamic_monitorin
 
 1. 把上述时序表转换为 **hypertable**（含存量数据自动迁移 `migrate_data`；首次转换会随存量数据量拉长启动时间，属一次性成本）；
 2. 注册整数时间 now() 函数（`set_integer_now_func`）；
-3. 对 `compress_after_days` 天前的 chunk 启用 **zstd 列式压缩**（监控 JSON 数据实测可压缩 380~1000 倍）；
+3. 对结束超过 `compress_after_hours` 小时的 chunk 启用 **zstd 列式压缩**（监控 JSON 数据实测可压缩 380~1000 倍）；
 4. 当配置 `retention_days > 0` 时，注册**自动保留策略**（`drop_chunks`），超过该天数的数据由后台 job 自动删除，磁盘占用从此有上界（实测：约 1.4 GB/天裸写 → 压缩后 ~2-4 MB/天 → 30 天封顶）。
 
 > [!NOTE]
@@ -145,9 +145,9 @@ retention policy applied
    database_url = "postgresql://nodeget_user:换成强密码@127.0.0.1:5432/nodeget_db"
 
    [database.timescale]
-   chunk_interval_days = 1
-   compress_after_days = 7
-   retention_days = 30
+   chunk_interval_hours = 6    # 分块间隔（小时），默认 6
+   compress_after_hours = 12   # chunk 结束满 12 小时后启用压缩
+   retention_days = 30         # 超过 30 天的数据自动删除
    ```
 
 ## 四、配置参数
@@ -156,21 +156,35 @@ retention policy applied
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `chunk_interval_days` | `1` | hypertable 分块间隔（天），影响 chunk 数量与压缩/删除粒度 |
-| `compress_after_days` | `7` | 距离当前时间超过该天数的 chunk 启用 zstd 列式压缩；**`0` = 所有数据立即可压缩**（压缩 job 会频繁执行，一般不建议） |
+| `chunk_interval_hours` | `6` | hypertable 分块间隔（小时），影响 chunk 数量与压缩/删除粒度 |
+| `compress_after_hours` | `12` | chunk **结束**满该小时数后启用 zstd 列式压缩；**`0` = 已结束的 chunk 立即可压缩** |
 | `retention_days` | `0` | 超过该天数的数据自动删除；**默认 0 = 不启用**（避免误删历史数据），需显式配置 |
+| `chunk_interval_days` | — | **已废弃**，仅为兼容旧配置保留：等价于 `chunk_interval_hours = 天数 × 24`（新键优先） |
+| `compress_after_days` | — | **已废弃**，仅为兼容旧配置保留（`compress_after_hours` 优先） |
+
+> [!TIP]
+> 时间粒度用**小时**而不是天：监控数据按秒写入，1 天一个 chunk 可达数 GB，压缩
+> （zstd）与删除（`drop_chunks`）都要整块搬运，容易打满磁盘 I/O、拖慢正在写入的连接
+> （生产实例实测：1 天块压缩约 340 s，6 小时块约 85 s）。压缩策略的调度间隔会自动
+> 跟随实际 chunk 间隔，因此每轮 job 最多压缩一个 chunk，不会把多个到期 chunk 堆在一起。
 
 > [!NOTE]
-> 若 `retention_days < compress_after_days`，数据会在压缩策略生效**之前**就被保留策略删除
-> （删除优先于压缩）。如希望"先压缩保留、到期再删"，请保持 `retention_days > compress_after_days`。
+> 若 `retention_days × 24 < compress_after_hours`，数据会在压缩策略生效**之前**就被保留策略删除
+> （删除优先于压缩）。如希望"先压缩保留、到期再删"，请保持 `retention_days × 24 > compress_after_hours`。
 
-Docker 部署时通过 entrypoint 生成配置，环境变量：
+Docker 部署时通过 entrypoint 在**首次启动**生成 `config.toml`；环境变量仍以**天**为单位
+（写入的是上面两个已废弃的天级键，NodeGet 会按 ×24 换算成小时）：
 
 ```bash
 NODEGET_TIMESCALE_CHUNK_INTERVAL_DAYS
 NODEGET_TIMESCALE_COMPRESS_AFTER_DAYS
 NODEGET_TIMESCALE_RETENTION_DAYS
 ```
+
+> [!NOTE]
+> 环境变量只在容器首次启动生成配置时生效，配置文件已存在时一律以文件为准。
+> 想用小时级粒度：直接编辑已生成的 `config.toml`（加 `chunk_interval_hours` /
+> `compress_after_hours`，新键优先于天级旧键）后重启容器。
 
 ## 五、数据迁移（从普通 PostgreSQL）
 
@@ -199,7 +213,7 @@ SELECT job_id, proc_name, config
 FROM timescaledb_information.jobs
 WHERE hypertable_name IN ('dynamic_monitoring', 'dynamic_monitoring_summary');
 
--- 压缩效果（过 compress_after_days 后手动跑一次 job 或等待后台调度）
+-- 压缩效果（过 compress_after_hours 后手动跑一次 job 或等待后台调度）
 CALL run_job(<policy_compression 的 job_id>);
 SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks
 FROM timescaledb_information.chunks
@@ -209,7 +223,8 @@ WHERE hypertable_name = 'dynamic_monitoring';
 SELECT pg_size_pretty(pg_total_relation_size('dynamic_monitoring'));
 ```
 
-策略参数（`compress_after_days` / `retention_days`）修改后**重启 NodeGet 即生效**（每次启动按配置重新注册策略）。
+策略参数（`chunk_interval_hours` / `compress_after_hours` / `retention_days`，以及已废弃的天级旧键）修改后**重启 NodeGet 即生效**（每次启动按配置重新注册策略）。`chunk_interval_hours` 只影响新建的 hypertable；已存在的表可用
+`SELECT set_chunk_time_interval('<table>', <毫秒>)` 手工调整（下次 NodeGet 启动时压缩策略的调度间隔会自动跟随新的实际间隔）。
 
 ## 七、从零开始（无历史数据）
 
@@ -228,5 +243,5 @@ SELECT pg_size_pretty(pg_total_relation_size('dynamic_monitoring'));
 - **Q：首次启动为什么变慢？** `migrate_data => true` 会把存量数据迁入 hypertable，数据量越大耗时越长（一次性成本，后续启动不重复迁移）。
 - **Q：`set_integer_now_func` 报错？** 已内置幂等检查（已设置则跳过），正常不会报错。
 - **Q：为什么默认不启用 `retention_days`？** 自动删除会立即作用于存量数据，默认关闭以保护历史数据，需要时显式开启。
-- **Q：压缩为什么没立即生效？** 压缩策略只处理 `compress_after_days` 之前的 chunk（默认 7 天），新数据需要时间自然过期；也可手动 `CALL run_job(<job_id>)` 提前压缩。integer 时间维度的策略参数必须传**整数毫秒**（如 `604800000` 表示 7 天），不能传 `INTERVAL`。
+- **Q：压缩为什么没立即生效？** 压缩策略只处理**结束**已满 `compress_after_hours` 小时的 chunk（默认 12 小时；注意是从 chunk 的**结束时刻**起算，不是开始时刻），且调度间隔跟随 chunk 间隔（默认 6 小时），所以新数据最多再等约一个调度周期才会被压；也可手动 `CALL run_job(<job_id>)` 提前压缩。integer 时间维度的策略参数必须传**整数毫秒**（如 `604800000` 表示 7 天），不能传 `INTERVAL`。
 - **Q：初始化部分失败会怎样？** 单表转换/策略失败不阻断服务启动（以普通表继续运行），但启动日志会输出醒目的失败横幅，请按提示检查修复后重启；只有扩展检测或 now() 函数创建失败才会阻断启动。
