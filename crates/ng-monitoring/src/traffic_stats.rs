@@ -6,12 +6,16 @@
 //! 由 `report_dynamic` 调用 `update_total_traffic`。
 
 use crate::data_structure::DynamicMonitoringData;
+use ng_db::entity::traffic_current_total::Column as CurrentTotal;
 use ng_db::entity::{traffic_current_total, traffic_possible_data_loss};
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveValue, DatabaseBackend, DatabaseConnection, DbErr, EntityTrait, Iterable, Set,
     TransactionTrait,
 };
+// 只有 `traffic_tables_on_sqlite` 用到，它仅在测试里编译
+#[cfg(test)]
+use sea_orm::{ConnectOptions, ConnectionTrait, Database};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -362,8 +366,6 @@ async fn write_to_db(
     current_totals: Vec<traffic_current_total::ActiveModel>,
     possible_data_losses: Vec<traffic_possible_data_loss::ActiveModel>,
 ) -> Result<(), DbErr> {
-    use traffic_current_total::Column as CurrentTotal;
-
     let backend = db.get_database_backend();
     let txn = db.begin().await?;
 
@@ -539,8 +541,6 @@ fn detect_possible_data_loss(
 /// 建表语句取自迁移在 `SQLite` 上的实际结果。
 #[cfg(test)]
 pub(crate) async fn traffic_tables_on_sqlite() -> sea_orm::DatabaseConnection {
-    use sea_orm::{ConnectOptions, ConnectionTrait, Database};
-
     // 内存库每个连接各自独立，只用一个连接
     let mut options = ConnectOptions::new("sqlite::memory:");
     options.max_connections(1);
@@ -566,7 +566,7 @@ mod tests {
         DynamicCPUData, DynamicLoadData, DynamicMonitoringData, DynamicNetworkData,
         DynamicPerNetworkInterfaceData, DynamicRamData, DynamicSystemData,
     };
-    use sea_orm::Set;
+    use sea_orm::{PaginatorTrait, Set};
     use std::sync::Arc;
 
     const GB: u64 = 1024 * 1024 * 1024;
@@ -899,9 +899,6 @@ mod tests {
 
     #[tokio::test]
     async fn write_to_db_updates_current_totals_and_inserts_losses() {
-        use ng_db::entity::{traffic_current_total, traffic_possible_data_loss};
-        use sea_orm::{ActiveValue, EntityTrait, PaginatorTrait};
-
         let db = traffic_tables_on_sqlite().await;
         let loss = traffic_possible_data_loss::ActiveModel {
             id: ActiveValue::default(),
