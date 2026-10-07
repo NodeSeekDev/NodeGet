@@ -9,7 +9,7 @@ use crate::data_structure::{
 };
 use crate::query::{
     DynamicDataQuery, DynamicDataQueryField, DynamicSummaryQuery, DynamicSummaryQueryField,
-    QueryCondition, StaticDataQuery, StaticDataQueryField, TrafficQuery,
+    QueryCondition, StaticDataQuery, StaticDataQueryField, TrafficQuery, TrafficSnapshotWrite,
 };
 use jsonrpsee::core::{RpcResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
@@ -24,6 +24,7 @@ mod delete_common;
 mod delete_dynamic;
 mod delete_dynamic_summary;
 mod delete_static;
+mod delete_traffic_snapshot;
 mod query_dynamic;
 mod query_dynamic_multi_last;
 pub mod query_dynamic_summary;
@@ -31,9 +32,11 @@ mod query_dynamic_summary_multi_last;
 mod query_static;
 mod query_static_multi_last;
 mod query_traffic;
+mod query_traffic_current;
 mod report_dynamic;
 mod report_dynamic_summary;
 mod report_static;
+mod write_traffic_snapshot;
 
 /// `agent` RPC trait 定义，使用 `#[rpc]` 宏自动生成 server 端骨架。
 #[rpc(server, namespace = "agent")]
@@ -140,6 +143,31 @@ pub trait Rpc {
     /// 查询流量统计
     #[method(name = "query_traffic")]
     async fn query_traffic(&self, token: String, query: TrafficQuery) -> RpcResult<Box<RawValue>>;
+
+    /// 查询设备当前的总流量，`uuids` 不填表示所有设备
+    #[method(name = "query_traffic_current")]
+    async fn query_traffic_current(
+        &self,
+        token: String,
+        uuids: Option<Vec<Uuid>>,
+    ) -> RpcResult<Box<RawValue>>;
+
+    /// 批量写入总流量快照
+    #[method(name = "write_traffic_snapshot")]
+    async fn write_traffic_snapshot(
+        &self,
+        token: String,
+        snapshots: Vec<TrafficSnapshotWrite>,
+    ) -> RpcResult<Box<RawValue>>;
+
+    /// 删除指定时间及之前的总流量快照，`uuid` 不填表示所有设备
+    #[method(name = "delete_traffic_snapshot")]
+    async fn delete_traffic_snapshot(
+        &self,
+        token: String,
+        end_time: i64,
+        uuid: Option<Uuid>,
+    ) -> RpcResult<Box<RawValue>>;
 }
 
 /// `agent` RPC 实现，委托给各子模块的具体函数。
@@ -322,5 +350,45 @@ impl RpcServer for AgentRpcImpl {
         async { rpc_exec!(query_traffic::query_traffic(token, query).await) }
             .instrument(span)
             .await
+    }
+
+    async fn query_traffic_current(
+        &self,
+        token: String,
+        uuids: Option<Vec<Uuid>>,
+    ) -> RpcResult<Box<RawValue>> {
+        let (tk, un) = token_identity(&token);
+        let span = tracing::info_span!(target: "monitoring", "agent::query_traffic_current", token_key = tk, username = un, uuids = ?uuids);
+        async { rpc_exec!(query_traffic_current::query_traffic_current(token, uuids).await) }
+            .instrument(span)
+            .await
+    }
+
+    async fn write_traffic_snapshot(
+        &self,
+        token: String,
+        snapshots: Vec<TrafficSnapshotWrite>,
+    ) -> RpcResult<Box<RawValue>> {
+        let (tk, un) = token_identity(&token);
+        // 一次最多上万条，只记条数
+        let span = tracing::info_span!(target: "monitoring", "agent::write_traffic_snapshot", token_key = tk, username = un, count = snapshots.len());
+        async { rpc_exec!(write_traffic_snapshot::write_traffic_snapshot(token, snapshots).await) }
+            .instrument(span)
+            .await
+    }
+
+    async fn delete_traffic_snapshot(
+        &self,
+        token: String,
+        end_time: i64,
+        uuid: Option<Uuid>,
+    ) -> RpcResult<Box<RawValue>> {
+        let (tk, un) = token_identity(&token);
+        let span = tracing::info_span!(target: "monitoring", "agent::delete_traffic_snapshot", token_key = tk, username = un, end_time, uuid = ?uuid);
+        async {
+            rpc_exec!(delete_traffic_snapshot::delete_traffic_snapshot(token, end_time, uuid).await)
+        }
+        .instrument(span)
+        .await
     }
 }
