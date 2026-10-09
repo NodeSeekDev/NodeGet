@@ -492,14 +492,9 @@ where
     }
 
     if req.method() == axum::http::Method::GET {
-        let Some(cache) = StaticCache::global() else {
-            return axum::response::Response::builder()
-                .status(StatusCode::OK)
-                .header(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")
-                .body(jsonrpsee::server::HttpBody::from(landing_html))
-                .expect("Failed to build HTML response");
-        };
-        if let Some(model) = cache.get_http_root()
+        // 静态根已启用时提供静态文件；缓存未初始化、未配置或未启用时一律返回着陆页
+        if let Some(cache) = StaticCache::global()
+            && let Some(model) = cache.get_http_root()
             && model.enable
         {
             let path = req.uri().path().to_owned();
