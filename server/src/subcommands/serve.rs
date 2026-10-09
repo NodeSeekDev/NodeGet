@@ -214,13 +214,7 @@ pub async fn run(config: &ServerConfig) {
                 let mut rpc_service = jsonrpc_service.clone();
                 async move {
                     if is_websocket_upgrade(req.headers()) {
-                        return rpc_service.call(req).await.unwrap_or_else(|e| {
-                            tracing::error!(target: "server", error = %e, "RPC call failed");
-                            axum::http::Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                                .expect("Failed to build error response")
-                        });
+                        return call_rpc(&mut rpc_service, req, "RPC call failed").await;
                     }
                     if let Some(cache) = StaticCache::global()
                         && let Some(model) = cache.get_http_root()
@@ -234,13 +228,7 @@ pub async fn run(config: &ServerConfig) {
                         return serve_static_file(&model.path, &path, model.cors, &method, inm)
                             .await;
                     }
-                    rpc_service.call(req).await.unwrap_or_else(|e| {
-                        tracing::error!(target: "server", error = %e, "RPC call failed");
-                        axum::http::Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                            .expect("Failed to build error response")
-                    })
+                    call_rpc(&mut rpc_service, req, "RPC call failed").await
                 }
             }));
 
@@ -500,13 +488,7 @@ where
     if is_websocket_upgrade(req.headers()) {
         // 与下方非 WS 路径一致的错误兜底：upgrade/service 层抛错时
         // 返回 500 并记录日志，而非 unwrap() 致 handler task panic。
-        return rpc_service.call(req).await.unwrap_or_else(|e| {
-            tracing::error!(target: "server", error = %e, "RPC WebSocket upgrade call failed");
-            axum::http::Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                .expect("Failed to build error response")
-        });
+        return call_rpc(&mut rpc_service, req, "RPC WebSocket upgrade call failed").await;
     }
 
     if req.method() == axum::http::Method::GET {
@@ -535,8 +517,30 @@ where
             .expect("Failed to build HTML response");
     }
 
+    call_rpc(&mut rpc_service, req, "RPC call failed").await
+}
+
+/// 把请求交给 JSON-RPC 服务；服务层出错时记日志并返回 500
+///
+/// 避免 `unwrap()` 导致 handler task panic。
+///
+/// - `rpc_service`：jsonrpsee 的 tower service
+/// - req：原始 HTTP 请求
+/// - `failure_log`：出错时写入日志的说明文字
+async fn call_rpc<S>(
+    rpc_service: &mut S,
+    req: axum::extract::Request,
+    failure_log: &str,
+) -> axum::http::Response<jsonrpsee::server::HttpBody>
+where
+    S: Service<
+            axum::extract::Request,
+            Response = axum::http::Response<jsonrpsee::server::HttpBody>,
+        >,
+    S::Error: std::fmt::Display,
+{
     rpc_service.call(req).await.unwrap_or_else(|e| {
-        tracing::error!(target: "server", error = %e, "RPC call failed");
+        tracing::error!(target: "server", error = %e, "{failure_log}");
         axum::http::Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
