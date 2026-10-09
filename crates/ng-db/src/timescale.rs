@@ -21,13 +21,14 @@
 //! # 主键契约变化（重要）
 //!
 //! `hypertable` 要求所有唯一索引（含主键）包含分区列。因此把表转换为
-//! `hypertable` 时，主键从 `(id)` 调整为 **`(id, timestamp)`**，`id` 不再是
-//! 唯一约束列（仍为自增 identity 且全局唯一）。
+//! `hypertable` 时，主键从 `(id)` 调整为 **`(id, <该表的时间列>)`**（监控表为
+//! `timestamp`，流量快照为 `snapshot_time`），`id` 不再是唯一约束列
+//! （仍为自增 identity 且全局唯一）。
 //!
 //! - 现有代码（按 `id` 过滤的增删改查、无目标 `ON CONFLICT DO NOTHING`
 //!   批量写入）均不受影响；
 //! - 但**启用 `TimescaleDB` 后**，任何 `REFERENCES <table>(id)` 外键或
-//!   `ON CONFLICT (id)` 语句将不再合法，需要把目标列改为 `(id, timestamp)`。
+//!   `ON CONFLICT (id)` 语句将不再合法，需要把目标列改为 `(id, <时间列>)`。
 //! - 该转换**不可逆**：普通 `PostgreSQL`（无 `timescaledb` 扩展）无法读取
 //!   已转换的表，降级前必须先 `untable`（官方迁移工具）或备份。
 //!
@@ -54,6 +55,8 @@ struct TimescaleTable {
     name: &'static str,
     /// 默认主键约束名（`<table>_pkey`，由 `SeaORM` 建表时生成）
     pk_name: &'static str,
+    /// 时间列（分区列）。各表不同：监控表是 `timestamp`，流量快照是 `snapshot_time`。
+    time_column: &'static str,
     /// 压缩时的 `segmentby` 列（按 agent 分片，同一 agent 的连续行压在一起）
     segment_by: &'static str,
 }
@@ -70,11 +73,24 @@ const TIMESCALE_TABLES: &[TimescaleTable] = &[
     TimescaleTable {
         name: "dynamic_monitoring",
         pk_name: "dynamic_monitoring_pkey",
+        time_column: "timestamp",
         segment_by: "uuid_id",
     },
     TimescaleTable {
         name: "dynamic_monitoring_summary",
         pk_name: "dynamic_monitoring_summary_pkey",
+        time_column: "timestamp",
+        segment_by: "uuid_id",
+    },
+    // 流量快照：由 traffic-snapshot-worker 每 traffic_snapshot_interval（默认 15 分钟）
+    // 写入一行/网卡，行数与监控表同级（长期增长），且查询均为"某 agent 某时间段"扫描，
+    // 因此同样纳入 hypertable/压缩。注意它的时间列是 snapshot_time。
+    // traffic_current_total（每网卡一行原地 upsert）与 traffic_possible_data_loss
+    // （低写入量的区间标记）是热点小表，不转换。
+    TimescaleTable {
+        name: "traffic_snapshot",
+        pk_name: "traffic_snapshot_pkey",
+        time_column: "snapshot_time",
         segment_by: "uuid_id",
     },
 ];
@@ -220,6 +236,49 @@ pub async fn setup_timescale_if_available(
     Ok(())
 }
 
+/// 把表转换为 `hypertable` 所需的三条 DDL（纯字符串生成，便于单测覆盖时间列接线）。
+///
+/// 返回顺序：NULL 时间列防御检查、主键加宽、`create_hypertable`。
+/// 时间列由 [`TimescaleTable`] 提供——各表不同（监控表是 `timestamp`，流量快照是
+/// `snapshot_time`）。任何一处漏接都会让 `TimescaleDB` 报"列不存在"，使该表退化
+/// 为普通表（启动横幅报错但不阻断服务），因此这里集中生成并由单测守住。
+fn conversion_sql(
+    table: &TimescaleTable,
+    table_ref: &str,
+    pk_ref: &str,
+    table_regclass: &str,
+    chunk_ms: u64,
+) -> (String, String, String) {
+    // 时间列是编译期常量，作为标识符内插（quote_ident 保证大小写/特殊字符正确）；
+    // create_hypertable 的第二个参数是 text 参数，用带引号的字面量。
+    let time = quote_ident(table.time_column);
+    let null_check = format!("SELECT 1 FROM {table_ref} WHERE {time} IS NULL LIMIT 1");
+    let pk_widen = format!(
+        "ALTER TABLE {table_ref} DROP CONSTRAINT IF EXISTS {pk_ref}; \
+         ALTER TABLE {table_ref} ADD PRIMARY KEY (id, {time});"
+    );
+    let create = format!(
+        "SELECT create_hypertable({table_regclass}, '{time_col}', \
+         chunk_time_interval => {chunk_ms}, migrate_data => true);",
+        time_col = table.time_column,
+    );
+    (null_check, pk_widen, create)
+}
+
+/// 启用压缩的 DDL。
+///
+/// `compress_orderby` 必须是该表的时间列；`compress_segmentby` 接收列名的
+/// 字符串字面量（而非标识符），列名为编译期常量。
+fn compression_enable_sql(table: &TimescaleTable, table_ref: &str) -> String {
+    format!(
+        "ALTER TABLE {table_ref} SET (timescaledb.compress, \
+         timescaledb.compress_segmentby = '{segment_by}', \
+         timescaledb.compress_orderby = '{time_column} DESC');",
+        segment_by = table.segment_by,
+        time_column = table.time_column,
+    )
+}
+
 /// 对单个表执行幂等的 `hypertable` 转换与策略配置。
 async fn setup_table(
     db: &DatabaseConnection,
@@ -229,33 +288,41 @@ async fn setup_table(
 ) -> anyhow::Result<()> {
     let table_ref = format!("{}.{}", quote_ident(schema), quote_ident(table.name));
     let pk_ref = quote_ident(table.pk_name);
-    // compress_segmentby 接受列名字符串字面量（非标识符），列名为编译期常量。
-    let seg_literal = format!("'{}'", table.segment_by);
     // Timescale 的 regclass 文本参数（create_hypertable / 策略函数），
     // 用 quote_ident 限定 schema（含大写/特殊字符的 schema 也能正确解析）。
     let table_regclass = regclass_literal(schema, table.name);
     let now_regclass = regclass_literal(schema, NOW_FUNC);
 
     if !is_hypertable(db, table.name).await? {
-        // 防御性检查：timestamp 列在迁移定义中为 NOT NULL，正常情况下
-        // 不存在 NULL；一旦旧库/脏数据出现 NULL，ADD PRIMARY KEY (id, timestamp)
-        // 会永久失败且每次启动重复报错。此处提前检查并给出明确错误。
+        let (null_check_sql, pk_widen_sql, create_hypertable_sql) = conversion_sql(
+            table,
+            &table_ref,
+            &pk_ref,
+            &table_regclass,
+            hours_to_ms(config.effective_chunk_interval_hours())?,
+        );
+
+        // 防御性检查：时间列在迁移定义中为 NOT NULL，正常情况下不存在 NULL；
+        // 一旦旧库/脏数据出现 NULL，ADD PRIMARY KEY (id, <时间列>) 会永久失败
+        // 且每次启动重复报错。此处提前检查并给出明确错误。
         let has_null_ts = db
             .query_one_raw(Statement::from_string(
                 DatabaseBackend::Postgres,
-                format!("SELECT 1 FROM {table_ref} WHERE timestamp IS NULL LIMIT 1"),
+                null_check_sql,
             ))
             .await?;
         if has_null_ts.is_some() {
             anyhow::bail!(
-                "table {} contains rows with NULL timestamp; cannot convert to hypertable \
-                 (primary key (id, timestamp) requires a non-null timestamp column)",
-                table.name
+                "table {} contains rows with NULL {}; cannot convert to hypertable \
+                 (primary key (id, {}) requires a non-null time column)",
+                table.name,
+                table.time_column,
+                table.time_column
             );
         }
 
-        // hypertable 要求所有唯一索引（含主键）包含分区列 timestamp，
-        // 因此先把主键从 (id) 调整为 (id, timestamp)。
+        // hypertable 要求所有唯一索引（含主键）包含分区列（即该表的时间列），
+        // 因此先把主键从 (id) 调整为 (id, <时间列>)。
         // id 仍为自增 identity 且全局唯一，SeaORM 的按 id 删除不受影响。
         // 注意：pk_name 依赖 SeaORM 建表时生成的默认约束名 `<table>_pkey`；
         // 若主键约束曾被手工改名，此 DROP 不命中、下方 ADD PRIMARY KEY 会
@@ -263,21 +330,12 @@ async fn setup_table(
         // 注意：此 DDL 与下方 create_hypertable 分属两个隐式事务，进程
         // 间隙被杀时表会短暂无主键（下次启动可自愈，因为再跑会先检查
         // is_hypertable 再重建主键）。
-        db.execute_unprepared(&format!(
-            "ALTER TABLE {table_ref} DROP CONSTRAINT IF EXISTS {pk_ref}; \
-             ALTER TABLE {table_ref} ADD PRIMARY KEY (id, timestamp);"
-        ))
-        .await?;
+        db.execute_unprepared(&pk_widen_sql).await?;
 
         // migrate_data => true：把表内已有数据迁入 hypertable。
         // 必须在非事务上下文执行，见模块文档。
         // 首次转换会随存量数据量拉长启动时间（一次性成本）。
-        db.execute_unprepared(&format!(
-            "SELECT create_hypertable({table_regclass}, 'timestamp', \
-             chunk_time_interval => {chunk_ms}, migrate_data => true);",
-            chunk_ms = hours_to_ms(config.effective_chunk_interval_hours())?,
-        ))
-        .await?;
+        db.execute_unprepared(&create_hypertable_sql).await?;
         info!(target: "db", table = table.name, "converted to hypertable");
     }
 
@@ -292,12 +350,8 @@ async fn setup_table(
 
     // 压缩设置（仅首次开启；开启后 segmentby/orderby 不可随意变更）。
     if !is_compression_enabled(db, table.name).await? {
-        db.execute_unprepared(&format!(
-            "ALTER TABLE {table_ref} SET (timescaledb.compress, \
-             timescaledb.compress_segmentby = {seg_literal}, \
-             timescaledb.compress_orderby = 'timestamp DESC');",
-        ))
-        .await?;
+        db.execute_unprepared(&compression_enable_sql(table, &table_ref))
+            .await?;
         info!(target: "db", table = table.name, "compression enabled");
     }
 
@@ -486,6 +540,67 @@ mod tests {
             interval_ms_literal(21_600_000),
             "21600000 * INTERVAL '1 millisecond'"
         );
+    }
+
+    /// 每张纳入时序管理的表都必须用**自己的**时间列生成 DDL。
+    /// 这是流量快照（`snapshot_time`）能被正确转换的唯一保障：漏接会变成
+    /// "列不存在" → 该表初始化失败，退化为普通表。
+    #[test]
+    fn timeseries_tables_use_their_own_time_column() {
+        let snapshot = TIMESCALE_TABLES
+            .iter()
+            .find(|t| t.name == "traffic_snapshot")
+            .expect("traffic_snapshot 必须纳入时序管理");
+        assert_eq!(snapshot.time_column, "snapshot_time");
+        assert_eq!(snapshot.pk_name, "traffic_snapshot_pkey");
+        assert_eq!(snapshot.segment_by, "uuid_id");
+
+        for table in TIMESCALE_TABLES {
+            let (null_check, pk_widen, create) = conversion_sql(
+                table,
+                "\"public\".\"t\"",
+                "\"t_pkey\"",
+                "'\"public\".\"t\"'",
+                21_600_000,
+            );
+            let time = quote_ident(table.time_column);
+            assert!(
+                null_check.contains(&format!("WHERE {time} IS NULL")),
+                "{}: {null_check}",
+                table.name
+            );
+            assert!(
+                pk_widen.contains(&format!("ADD PRIMARY KEY (id, {time})")),
+                "{}: {pk_widen}",
+                table.name
+            );
+            assert!(
+                create.contains(&format!("'{}'", table.time_column))
+                    && create.contains("migrate_data => true"),
+                "{}: {create}",
+                table.name
+            );
+            let compress = compression_enable_sql(table, "\"public\".\"t\"");
+            assert!(
+                compress.contains(&format!("compress_segmentby = '{}'", table.segment_by))
+                    && compress
+                        .contains(&format!("compress_orderby = '{} DESC'", table.time_column)),
+                "{}: {compress}",
+                table.name
+            );
+        }
+    }
+
+    /// 按唯一键原地 upsert 的热点小表不纳入 hypertable：
+    /// 行数少、写入模式是原地更新，分区与压缩没有收益。
+    #[test]
+    fn upsert_tables_stay_plain() {
+        for name in ["traffic_current_total", "traffic_possible_data_loss"] {
+            assert!(
+                !TIMESCALE_TABLES.iter().any(|t| t.name == name),
+                "{name} 不应被转换为 hypertable"
+            );
+        }
     }
 
     #[test]
