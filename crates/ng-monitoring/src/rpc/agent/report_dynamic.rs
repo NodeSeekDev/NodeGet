@@ -2,12 +2,14 @@
 //!
 //! Agent 上报动态监控数据。数据经权限校验后同时送入：
 //! 1. `MonitoringBuffer` — 异步批量写入数据库
-//! 2. `MonitoringLastCache` — 更新内存中的最新值缓存
+//! 2. `TrafficStats` — 更新出口网卡的总流量
+//! 3. `MonitoringLastCache` — 更新内存中的最新值缓存
 
 use crate::data_structure::DynamicMonitoringData;
 use crate::monitoring_buffer;
 use crate::monitoring_last_cache::{MonitoringLastCache, build_dynamic_value_prebuilt};
 use crate::monitoring_uuid_cache::MonitoringUuidCache;
+use crate::traffic_stats::TrafficStats;
 use jsonrpsee::core::RpcResult;
 use ng_core::error::NodegetError;
 use ng_core::permission::data_structure::{DynamicMonitoring, Permission, Scope};
@@ -31,7 +33,8 @@ use tracing::debug;
 /// 2. 通过 `MonitoringUuidCache::get_or_insert` 查找或创建 UUID→ID 映射
 /// 3. 将各字段序列化为 JSON 并构建 `ActiveModel`
 /// 4. 送入 `MonitoringBuffer` 等待批量写入
-/// 5. 同时更新 `MonitoringLastCache` 内存缓存
+/// 5. 更新出口网卡的总流量（`TrafficStats::update_total_traffic`）
+/// 6. 同时更新 `MonitoringLastCache` 内存缓存
 pub async fn report_dynamic(
     token: String,
     dynamic_monitoring_data: DynamicMonitoringData,
@@ -70,6 +73,7 @@ pub async fn report_dynamic(
             .map_err(|e| NodegetError::DatabaseError(format!("UUID cache error: {e}")))?;
 
         let timestamp = dynamic_monitoring_data.time.cast_signed();
+        let received_at = get_local_timestamp_ms_i64()?;
 
         let cpu_val = serde_json::to_value(&dynamic_monitoring_data.cpu)
             .map_err(|e| NodegetError::SerializationError(format!("cpu_data: {e}")))?;
@@ -90,7 +94,7 @@ pub async fn report_dynamic(
             id: ActiveValue::default(),
             uuid_id: Set(uuid_id),
             timestamp: Set(timestamp),
-            storage_time: Set(Some(get_local_timestamp_ms_i64()?)),
+            storage_time: Set(Some(received_at)),
             // ActiveModel 各字段 clone（Value 结构复制，远比 to_value 反射序列化廉价），
             // 原值 move 给 cache_value，避免 build_dynamic_value 重新 to_value 7 次。
             cpu_data: Set(cpu_val.clone()),
@@ -107,6 +111,8 @@ pub async fn report_dynamic(
         monitoring_buffer::with_buffers(|b| b.dynamic_mon.send(in_data)).ok_or_else(|| {
             NodegetError::ConfigNotFound("MonitoringBuffers not initialized".to_owned())
         })?;
+
+        TrafficStats::update_total_traffic(uuid_id, &dynamic_monitoring_data, received_at);
 
         let cache_value = build_dynamic_value_prebuilt(
             agent_uuid,

@@ -46,7 +46,7 @@ use crate::rpc_timing::RpcTimingMiddleware;
 /// 5. 构建 RPC 模块和 axum 路由表
 /// 6. 启动 TCP（可选 TLS）+ Unix Socket 监听
 /// 7. 通过 `tokio::select!` 同时等待：服务器正常退出 或 热重载信号
-/// 8. 退出前刷新 monitoring buffer、关闭 DB registry、清理 Unix socket 文件
+/// 8. 退出前刷新 monitoring buffer 和流量统计、关闭 DB registry、清理 Unix socket 文件
 #[allow(clippy::too_many_lines)]
 pub async fn run(config: &ServerConfig) {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -86,6 +86,11 @@ pub async fn run(config: &ServerConfig) {
 
     ng_monitoring::monitoring_buffer::init(config.monitoring_buffer.as_ref());
     debug!(target: "server", "Monitoring buffer initialized");
+
+    ng_monitoring::traffic_stats::TrafficStats::init()
+        .await
+        .expect("Failed to initialize traffic stats");
+    debug!(target: "server", "Traffic stats initialized");
 
     let db_path = config.db_path.clone().unwrap_or_else(|| "./db/".to_owned());
     ng_db::DbRegistryManager::init(db_path).await;
@@ -421,6 +426,7 @@ pub async fn run(config: &ServerConfig) {
             result = &mut serve_future => {
                 result.unwrap();
                 ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
+                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
                 ng_db::DbRegistryManager::global()
                     .expect("DbRegistryManager not initialized at shutdown")
                     .shutdown()
@@ -438,6 +444,7 @@ pub async fn run(config: &ServerConfig) {
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping TLS server...");
                 ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
+                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
                 ng_db::DbRegistryManager::global()
                     .expect("DbRegistryManager not initialized at shutdown")
                     .shutdown()
@@ -474,6 +481,7 @@ pub async fn run(config: &ServerConfig) {
             result = &mut serve_future => {
                 result.unwrap();
                 ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
+                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
                 ng_db::DbRegistryManager::global()
                     .expect("DbRegistryManager not initialized at shutdown")
                     .shutdown()
@@ -490,6 +498,7 @@ pub async fn run(config: &ServerConfig) {
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping server for restart...");
                 ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
+                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
                 ng_db::DbRegistryManager::global()
                     .expect("DbRegistryManager not initialized at shutdown")
                     .shutdown()

@@ -17,6 +17,8 @@ mod gpu;
 pub mod impls;
 // 网络连接监控模块
 mod network_connections;
+// 出口网卡识别模块
+mod outlet_interface;
 // 系统实现模块
 mod system_impls;
 

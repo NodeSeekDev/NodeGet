@@ -86,9 +86,19 @@ agent 采集 (静态 5min / 动态+summary 1s 默认)
   → server: agent_report_static / agent_report_dynamic / agent_report_dynamic_summary
   → MonitoringBuffer（mpsc → 批量 INSERT）
   → DB (static_monitoring / dynamic_monitoring / dynamic_monitoring_summary)
+
+agent_report_dynamic 额外同步分支（不经 mpsc）：
+  → TrafficStats::update_total_traffic（按出口网卡累加内存总流量，检测可能丢失数据）
+  → 每 60s 一次 flush_loop 批量写库 → DB (traffic_current_total / traffic_possible_data_loss)
+
+总流量快照由 JS Worker 定时生成（服务端不生成，只提供基础接口）：
+  Worker → agent.query_traffic_current（读 TrafficStats 内存里的总流量 + 每块网卡最晚的快照时间）
+         → agent.write_traffic_snapshot → DB (traffic_snapshot)
+         → agent.delete_traffic_snapshot（清理过期快照和可能丢失数据记录）
+  → agent.query_traffic 只读数据库三张表，按时间段返回流量合计、逐条快照或快照时间范围
 ```
 
-查询走多层缓存以减少打 DB：`MonitoringUuidCache`（全量 DB 加载）、`MonitoringLastCache`（派生最近值，手写 OnceLock）、`StaticHashCache`（`data_hash -> static_monitoring::Model` 的哈希去重缓存）。详见 [`crates/ng-monitoring.md`](../crates/ng-monitoring.md)。
+查询走多层缓存以减少打 DB：`MonitoringUuidCache`（全量 DB 加载）、`MonitoringLastCache`（派生最近值，手写 OnceLock）、`StaticHashCache`（`data_hash -> static_monitoring::Model` 的哈希去重缓存）。周期流量统计（`TrafficStats`）是独立于以上三张监控表的另一套内存态 + 落库节奏，详见 [`crates/ng-monitoring.md`](../crates/ng-monitoring.md) 的「流量统计」小节。
 
 ### 3.2 任务下行
 
