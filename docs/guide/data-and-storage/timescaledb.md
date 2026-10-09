@@ -1,9 +1,10 @@
 # TimescaleDB 部署指南
 
-NodeGet 的数据主体是每秒一条的监控时序数据（`dynamic_monitoring`、`dynamic_monitoring_summary`）。
+NodeGet 有两类逐时增长的时序数据：每秒一条的监控数据（`dynamic_monitoring`、`dynamic_monitoring_summary`）和由
+`traffic-snapshot-worker` 按 `traffic_snapshot_interval`（默认 15 分钟）写入的流量快照（`traffic_snapshot`）。
 当数据库是安装了 **timescaledb** 扩展的 PostgreSQL 时，NodeGet 会在**启动时自动**完成时序优化，无需改业务代码：
 
-1. 把上述时序表转换为 **hypertable**（含存量数据自动迁移 `migrate_data`；首次转换会随存量数据量拉长启动时间，属一次性成本）；
+1. 把上述三张时序表转换为 **hypertable**（含存量数据自动迁移 `migrate_data`；首次转换会随存量数据量拉长启动时间，属一次性成本）；
 2. 注册整数时间 now() 函数（`set_integer_now_func`）；
 3. 对结束超过 `compress_after_hours` 小时的 chunk 启用 **zstd 列式压缩**（监控 JSON 数据实测可压缩 380~1000 倍）；
 4. 当配置 `retention_days > 0` 时，注册**自动保留策略**（`drop_chunks`），超过该天数的数据由后台 job 自动删除，磁盘占用从此有上界（实测：约 1.4 GB/天裸写 → 压缩后 ~2-4 MB/天 → 30 天封顶）。
@@ -13,11 +14,12 @@ NodeGet 的数据主体是每秒一条的监控时序数据（`dynamic_monitorin
 > 未安装扩展时启动日志会显示 `timescaledb extension not installed; skipping timescale setup`，直接跳过。
 
 > [!WARNING]
-> **hypertable 转换不可逆**：转换后表结构（主键从 `(id)` 变为 `(id, timestamp)`）依赖 timescaledb 扩展，
+> **hypertable 转换不可逆**：转换后表结构（主键从 `(id)` 变为 `(id, <该表的时间列>)`：监控表为
+> `(id, timestamp)`，流量快照为 `(id, snapshot_time)`）依赖 timescaledb 扩展，
 > 普通 PostgreSQL（无扩展）无法读取。降级/回退需要先用 TimescaleDB 官方迁移工具 `untable`
 > 转换回普通表，或提前做好备份。
 > 另外，**主键契约发生变化**：`id` 不再是唯一约束列（仍为自增且全局唯一）。现有业务代码不受影响，
-> 但转换后 `REFERENCES <table>(id)` 外键或 `ON CONFLICT (id)` 语句将不再合法，需改用 `(id, timestamp)`。
+> 但转换后 `REFERENCES <table>(id)` 外键或 `ON CONFLICT (id)` 语句将不再合法，需改用 `(id, <时间列>)`。
 > **扩展版本必须与库一致**：由某版本 timescaledb 初始化的库（`pg_extension` 记录版本）只能由
 > **同版本或更高版本**的扩展加载。用低版本镜像接管高版本初始化的库会报
 > `could not access file "timescaledb-<ver>"`，请保持镜像 timescaledb 版本 >= 建库时的版本。
@@ -171,6 +173,8 @@ retention policy applied
 > [!NOTE]
 > 若 `retention_days × 24 < compress_after_hours`，数据会在压缩策略生效**之前**就被保留策略删除
 > （删除优先于压缩）。如希望"先压缩保留、到期再删"，请保持 `retention_days × 24 > compress_after_hours`。
+> 该保留策略同样作用于流量快照 `traffic_snapshot`；快照数据还受 worker 侧 Kv
+> `database_limit_traffic_snapshot`（默认 365 天）约束，两个阈值中**更早到期者先生效**。
 
 Docker 部署时通过 entrypoint 在**首次启动**生成 `config.toml`；环境变量仍以**天**为单位
 （写入的是上面两个已废弃的天级键，NodeGet 会按 ×24 换算成小时）：
@@ -211,7 +215,7 @@ SELECT hypertable_name, compression_enabled FROM timescaledb_information.hyperta
 -- 压缩/保留策略
 SELECT job_id, proc_name, config
 FROM timescaledb_information.jobs
-WHERE hypertable_name IN ('dynamic_monitoring', 'dynamic_monitoring_summary');
+WHERE hypertable_name IN ('dynamic_monitoring', 'dynamic_monitoring_summary', 'traffic_snapshot');
 
 -- 压缩效果（过 compress_after_hours 后手动跑一次 job 或等待后台调度）
 CALL run_job(<policy_compression 的 job_id>);
