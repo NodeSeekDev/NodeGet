@@ -101,11 +101,11 @@ NodeGet 文档以 **`CC BY 4.0`** 协议开源，范围包括 `docs` 目录下�
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=NodeSeekDev%2FNodeGet&type=date&legend=top-left">
+<a href="https://star-history.dera.page/#NodeSeekDev/NodeGet&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=NodeSeekDev/NodeGet&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=NodeSeekDev/NodeGet&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=NodeSeekDev/NodeGet&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=NodeSeekDev/NodeGet&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=NodeSeekDev/NodeGet&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=NodeSeekDev/NodeGet&type=date&legend=top-left" />
  </picture>
 </a>
 
