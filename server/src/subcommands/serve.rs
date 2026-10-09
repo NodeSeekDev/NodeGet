@@ -137,151 +137,23 @@ pub async fn run(config: &ServerConfig) {
         )
         .to_service_builder()
         .build(rpc_module, stop_handle.clone());
-    let jsonrpc_service_for_root = jsonrpc_service.clone();
     let landing_html = render_root_html(&config.server_uuid.to_string(), env!("CARGO_PKG_VERSION"));
 
-    let jsonrpc_service_for_rpc = jsonrpc_service_for_root.clone();
-    let landing_html_for_rpc = landing_html.clone();
+    // `/` 与 `/nodeget/rpc` 行为完全一致，共用同一个路由
+    let root_route = any({
+        let rpc_service = jsonrpc_service.clone();
+        move |req: axum::extract::Request| {
+            handle_rpc_root(rpc_service.clone(), landing_html.clone(), req)
+        }
+    });
 
     // 使用 ng-static::router::router() 提供静态文件和 WebDAV 路由
     let static_router = ng_static::router::router();
 
     let app =
         axum::Router::new()
-            .route(
-                "/",
-                any(move |req: axum::extract::Request| {
-                    let mut rpc_service = jsonrpc_service_for_root.clone();
-                    let landing_html = landing_html.clone();
-                    async move {
-                        if is_websocket_upgrade(req.headers()) {
-                            // 与下方非 WS 路径一致的错误兜底：upgrade/service 层抛错时
-                            // 返回 500 并记录日志，而非 unwrap() 致 handler task panic。
-                            return rpc_service.call(req).await.unwrap_or_else(|e| {
-                                tracing::error!(target: "server", error = %e, "RPC WebSocket upgrade call failed");
-                                axum::http::Response::builder()
-                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                                    .expect("Failed to build error response")
-                            });
-                        }
-
-                        if req.method() == axum::http::Method::GET {
-                            let Some(cache) = StaticCache::global() else {
-                                return axum::response::Response::builder()
-                                    .status(StatusCode::OK)
-                                    .header(
-                                        axum::http::header::CONTENT_TYPE,
-                                        "text/html; charset=utf-8",
-                                    )
-                                    .body(jsonrpsee::server::HttpBody::from(landing_html))
-                                    .expect("Failed to build HTML response");
-                            };
-                            if let Some(model) = cache.get_http_root()
-                                && model.enable
-                            {
-                                let path = req.uri().path().to_owned();
-                                let method = req.method().clone();
-                                let inm = req
-                                    .headers()
-                                    .get(axum::http::header::IF_NONE_MATCH)
-                                    .and_then(|v| v.to_str().ok());
-                                return serve_static_file(
-                                    &model.path,
-                                    &path,
-                                    model.cors,
-                                    &method,
-                                    inm,
-                                )
-                                .await;
-                            }
-                            return axum::response::Response::builder()
-                                .status(StatusCode::OK)
-                                .header(
-                                    axum::http::header::CONTENT_TYPE,
-                                    "text/html; charset=utf-8",
-                                )
-                                .body(jsonrpsee::server::HttpBody::from(landing_html))
-                                .expect("Failed to build HTML response");
-                        }
-
-                        rpc_service.call(req).await.unwrap_or_else(|e| {
-                            tracing::error!(target: "server", error = %e, "RPC call failed");
-                            axum::http::Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                                .expect("Failed to build error response")
-                        })
-                    }
-                }),
-            )
-            .route(
-                "/nodeget/rpc",
-                any(move |req: axum::extract::Request| {
-                    let mut rpc_service = jsonrpc_service_for_rpc.clone();
-                    let landing_html = landing_html_for_rpc.clone();
-                    async move {
-                        if is_websocket_upgrade(req.headers()) {
-                            // 与下方非 WS 路径一致的错误兜底：upgrade/service 层抛错时
-                            // 返回 500 并记录日志，而非 unwrap() 致 handler task panic。
-                            return rpc_service.call(req).await.unwrap_or_else(|e| {
-                                tracing::error!(target: "server", error = %e, "RPC WebSocket upgrade call failed");
-                                axum::http::Response::builder()
-                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                                    .expect("Failed to build error response")
-                            });
-                        }
-
-                        if req.method() == axum::http::Method::GET {
-                            let Some(cache) = StaticCache::global() else {
-                                return axum::response::Response::builder()
-                                    .status(StatusCode::OK)
-                                    .header(
-                                        axum::http::header::CONTENT_TYPE,
-                                        "text/html; charset=utf-8",
-                                    )
-                                    .body(jsonrpsee::server::HttpBody::from(landing_html))
-                                    .expect("Failed to build HTML response");
-                            };
-                            if let Some(model) = cache.get_http_root()
-                                && model.enable
-                            {
-                                let path = req.uri().path().to_owned();
-                                let method = req.method().clone();
-                                let inm = req
-                                    .headers()
-                                    .get(axum::http::header::IF_NONE_MATCH)
-                                    .and_then(|v| v.to_str().ok());
-                                return serve_static_file(
-                                    &model.path,
-                                    &path,
-                                    model.cors,
-                                    &method,
-                                    inm,
-                                )
-                                .await;
-                            }
-                            return axum::response::Response::builder()
-                                .status(StatusCode::OK)
-                                .header(
-                                    axum::http::header::CONTENT_TYPE,
-                                    "text/html; charset=utf-8",
-                                )
-                                .body(jsonrpsee::server::HttpBody::from(landing_html))
-                                .expect("Failed to build HTML response");
-                        }
-
-                        rpc_service.call(req).await.unwrap_or_else(|e| {
-                            tracing::error!(target: "server", error = %e, "RPC call failed");
-                            axum::http::Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                                .expect("Failed to build error response")
-                        })
-                    }
-                }),
-            )
+            .route("/", root_route.clone())
+            .route("/nodeget/rpc", root_route)
             // 合并 ng-static 的静态文件和 WebDAV 路由
             .merge(static_router)
             .route(
@@ -601,6 +473,75 @@ fn is_websocket_upgrade(headers: &axum::http::HeaderMap) -> bool {
         });
 
     has_upgrade_header && has_connection_upgrade
+}
+
+/// 处理 `/` 与 `/nodeget/rpc` 的请求
+///
+/// 按顺序分流：
+/// 1. WebSocket 升级 → 交给 JSON-RPC 服务
+/// 2. GET → 静态根（已启用时）或着陆页
+/// 3. 其余方法 → 交给 JSON-RPC 服务
+///
+/// - `rpc_service`：jsonrpsee 的 tower service
+/// - `landing_html`：着陆页 HTML
+/// - req：原始 HTTP 请求
+async fn handle_rpc_root<S>(
+    mut rpc_service: S,
+    landing_html: String,
+    req: axum::extract::Request,
+) -> axum::http::Response<jsonrpsee::server::HttpBody>
+where
+    S: Service<
+            axum::extract::Request,
+            Response = axum::http::Response<jsonrpsee::server::HttpBody>,
+        >,
+    S::Error: std::fmt::Display,
+{
+    if is_websocket_upgrade(req.headers()) {
+        // 与下方非 WS 路径一致的错误兜底：upgrade/service 层抛错时
+        // 返回 500 并记录日志，而非 unwrap() 致 handler task panic。
+        return rpc_service.call(req).await.unwrap_or_else(|e| {
+            tracing::error!(target: "server", error = %e, "RPC WebSocket upgrade call failed");
+            axum::http::Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
+                .expect("Failed to build error response")
+        });
+    }
+
+    if req.method() == axum::http::Method::GET {
+        let Some(cache) = StaticCache::global() else {
+            return axum::response::Response::builder()
+                .status(StatusCode::OK)
+                .header(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")
+                .body(jsonrpsee::server::HttpBody::from(landing_html))
+                .expect("Failed to build HTML response");
+        };
+        if let Some(model) = cache.get_http_root()
+            && model.enable
+        {
+            let path = req.uri().path().to_owned();
+            let method = req.method().clone();
+            let inm = req
+                .headers()
+                .get(axum::http::header::IF_NONE_MATCH)
+                .and_then(|v| v.to_str().ok());
+            return serve_static_file(&model.path, &path, model.cors, &method, inm).await;
+        }
+        return axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .body(jsonrpsee::server::HttpBody::from(landing_html))
+            .expect("Failed to build HTML response");
+    }
+
+    rpc_service.call(req).await.unwrap_or_else(|e| {
+        tracing::error!(target: "server", error = %e, "RPC call failed");
+        axum::http::Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
+            .expect("Failed to build error response")
+    })
 }
 
 /// JS Worker HTTP 路由的请求头结构
