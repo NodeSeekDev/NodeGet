@@ -15,7 +15,7 @@ use jsonrpsee::core::RpcResult;
 use ng_core::error::NodegetError;
 use ng_core::permission::data_structure::{DynamicMonitoring, Permission, Scope};
 use ng_core::permission::token_auth::TokenOrAuth;
-use ng_core::utils::get_local_timestamp_ms_i64;
+use ng_core::utils::{DEFAULT_MONITORING_QUERY_LIMIT, get_local_timestamp_ms_i64};
 use ng_db::entity::{traffic_current_total, traffic_possible_data_loss, traffic_snapshot};
 use ng_infra::server::{RpcHelper, to_rpc_error};
 use ng_token::get::check_token_limit;
@@ -304,7 +304,8 @@ const fn range_within_limit(start: i64, end: i64, max_range_ms: i64) -> bool {
 ///
 /// 1. 时间范围不合法或超过 `MAX_DETAIL_RANGE_MS` 时返回错误，未填的一端按最早快照时间、
 ///    当前时间计算；跨度用 `range_within_limit` 做溢出安全比较
-/// 2. 查询范围内的快照，按网卡名、快照时间排序
+/// 2. 查询范围内的快照，按网卡名、快照时间排序，最多返回 `DEFAULT_MONITORING_QUERY_LIMIT` 行，
+///    与 `dynamic` / `static` / `dynamic_summary` 查询一致（超出部分截断，不报错）
 async fn query_detail(
     db: &DatabaseConnection,
     uuid_id: i16,
@@ -342,6 +343,7 @@ async fn query_detail(
         .filter(traffic_snapshot::Column::SnapshotTime.lte(range_end))
         .order_by_asc(traffic_snapshot::Column::InterfaceName)
         .order_by_asc(traffic_snapshot::Column::SnapshotTime)
+        .limit(DEFAULT_MONITORING_QUERY_LIMIT)
         .all(db)
         .await
         .map_err(|e| database_error(&e))?;
@@ -581,6 +583,36 @@ mod tests {
                 ("eth1", at(15), 10)
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn detail_is_clamped_to_default_monitoring_query_limit() {
+        let db = seeded_db().await;
+        // 额外插入超过上限的快照，确认 detail 与兄弟查询一样截断，而不是把整段范围全部返回
+        let base = at(100);
+        let total_rows = DEFAULT_MONITORING_QUERY_LIMIT + 5;
+        let rows: Vec<_> = (0..total_rows)
+            .map(|i| traffic_snapshot::ActiveModel {
+                id: ActiveValue::default(),
+                uuid_id: Set(1),
+                interface_name: Set("eth2".to_owned()),
+                snapshot_time: Set(base + i.cast_signed()),
+                total_received: Set(0),
+                total_transmitted: Set(0),
+            })
+            .collect();
+        // SQLite 单条 SQL 最多绑定 999 个参数，按行分批插入
+        for chunk in rows.chunks(100) {
+            traffic_snapshot::Entity::insert_many(chunk.to_vec())
+                .exec(&db)
+                .await
+                .unwrap();
+        }
+
+        let snapshots = query_detail(&db, 1, Some(base), Some(base + total_rows.cast_signed()))
+            .await
+            .unwrap();
+        assert_eq!(snapshots.len(), DEFAULT_MONITORING_QUERY_LIMIT as usize);
     }
 
     /// 断言查询返回 `NodegetError::InvalidInput`。
