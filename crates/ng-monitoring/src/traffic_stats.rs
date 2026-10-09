@@ -26,6 +26,11 @@ use tracing::{debug, error, info, warn};
 
 /// 判定可能丢失数据的最短间隔（毫秒），10 分钟
 const POSSIBLE_DATA_LOSS_THRESHOLD_MS: i64 = 10 * 60 * 1000;
+/// 判定非重置的静默缺口是否可能丢失数据的最短间隔（毫秒），30 分钟
+///
+/// 动态上报间隔默认 1 秒（可配置，静态上报默认 5 分钟），30 分钟远超正常上报间隔，
+/// 只会在 Agent 长时间停机/断网、期间完全没有上报而网卡计数器仍在增长时触发，避免误报。
+const STALE_GAP_POSSIBLE_DATA_LOSS_THRESHOLD_MS: i64 = 30 * 60 * 1000;
 /// 定时写库间隔（毫秒）
 const FLUSH_INTERVAL_MS: u64 = 60 * 1000;
 /// `flush_and_shutdown` 等待最后一次写库的最长时间
@@ -127,7 +132,8 @@ impl State {
     ///    1. 用本次上报组成本次读数，取出上一次的读数；Agent 采集时间早于上一次的直接丢弃
     ///    2. 按方向判断是否重置（`detect_counter_reset`），算出本次流量增量
     ///       （`compute_traffic_increase`），加到总流量
-    ///    3. 发生重置时判断是否可能丢失数据（`detect_possible_data_loss`），同一台设备同一时间段只记一次
+    ///    3. 发生重置或距上次读数超过静默阈值时判断是否可能丢失数据（`detect_possible_data_loss`），
+    ///       同一台设备同一时间段只记一次
     ///    4. 用本次读数替换上一次的读数
     fn apply_report(&mut self, uuid_id: i16, data: &DynamicMonitoringData, received_at: i64) {
         let interfaces = &data.network.interfaces;
@@ -176,16 +182,22 @@ impl State {
                 },
             );
 
-            if reset.any()
-                && !possible_data_loss_recorded
-                && let Some(prev) = prev_reading
-            {
-                let reset_at = if is_boot_id_changed(prev, &current_reading) {
-                    boot_at
+            if !possible_data_loss_recorded && let Some(prev) = prev_reading {
+                // 重置：终点取重置时刻（能推算开机时刻时用开机时刻），沿用原有阈值
+                // 非重置：本次与上次读数的间隔超过静默阈值说明这段窗口没有上报，终点取本次收到时间
+                let (loss_end_at, threshold_ms) = if reset.any() {
+                    let reset_at = if is_boot_id_changed(prev, &current_reading) {
+                        boot_at
+                    } else {
+                        received_at
+                    };
+                    (reset_at, POSSIBLE_DATA_LOSS_THRESHOLD_MS)
                 } else {
-                    received_at
+                    (received_at, STALE_GAP_POSSIBLE_DATA_LOSS_THRESHOLD_MS)
                 };
-                if let Some(loss) = detect_possible_data_loss(uuid_id, prev, reset_at) {
+                if let Some(loss) =
+                    detect_possible_data_loss(uuid_id, prev, loss_end_at, threshold_ms)
+                {
                     self.pending_possible_data_losses.push(loss);
                     possible_data_loss_recorded = true;
                 }
@@ -635,18 +647,21 @@ const fn compute_traffic_increase(
     }
 }
 
-/// 判断重置前是否可能丢失数据。
+/// 判断一段时间是否可能丢失数据。
 ///
 /// - `uuid_id`: 设备编号
-/// - `prev_reading`: 重置前上一次的读数
-/// - `reset_at`: 重置时刻（毫秒时间戳）；重启时为开机时间（收到时间 − 已开机时长），其他情况为收到时间
-/// - 返回: `prev_reading.updated_at` 到 `reset_at` 超过 `POSSIBLE_DATA_LOSS_THRESHOLD_MS` 时返回该时间段
+/// - `prev_reading`: 上一次的读数
+/// - `loss_end_at`: 该时间段的结束时刻（毫秒时间戳）；重置时为重置时刻（重启时为开机时间，
+///   即收到时间 − 已开机时长），非重置的静默缺口时为本次收到时间
+/// - `threshold_ms`: 触发记录的最短间隔（毫秒）
+/// - 返回: `prev_reading.updated_at` 到 `loss_end_at` 的间隔超过 `threshold_ms` 时返回该时间段
 fn detect_possible_data_loss(
     uuid_id: i16,
     prev_reading: &NetworkInterfaceReading,
-    reset_at: i64,
+    loss_end_at: i64,
+    threshold_ms: i64,
 ) -> Option<traffic_possible_data_loss::ActiveModel> {
-    if reset_at - prev_reading.updated_at <= POSSIBLE_DATA_LOSS_THRESHOLD_MS {
+    if loss_end_at - prev_reading.updated_at <= threshold_ms {
         return None;
     }
 
@@ -654,7 +669,7 @@ fn detect_possible_data_loss(
         id: ActiveValue::default(),
         uuid_id: Set(uuid_id),
         start_time: Set(prev_reading.updated_at),
-        end_time: Set(reset_at),
+        end_time: Set(loss_end_at),
     })
 }
 
@@ -1123,7 +1138,10 @@ mod tests {
         let mut prev = reading(Some("a"), Some(2), 0, 0);
         prev.updated_at = 1_000_000;
         let reset_at = prev.updated_at + POSSIBLE_DATA_LOSS_THRESHOLD_MS;
-        assert!(detect_possible_data_loss(1, &prev, reset_at).is_none());
+        assert!(
+            detect_possible_data_loss(1, &prev, reset_at, POSSIBLE_DATA_LOSS_THRESHOLD_MS)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1131,10 +1149,63 @@ mod tests {
         let mut prev = reading(Some("a"), Some(2), 0, 0);
         prev.updated_at = 1_000_000;
         let reset_at = prev.updated_at + POSSIBLE_DATA_LOSS_THRESHOLD_MS + 1;
-        let loss = detect_possible_data_loss(7, &prev, reset_at).expect("should record loss");
+        let loss = detect_possible_data_loss(7, &prev, reset_at, POSSIBLE_DATA_LOSS_THRESHOLD_MS)
+            .expect("should record loss");
         assert_eq!(loss.uuid_id, Set(7));
         assert_eq!(loss.start_time, Set(prev.updated_at));
         assert_eq!(loss.end_time, Set(reset_at));
+    }
+
+    #[test]
+    fn stale_gap_without_reset_records_possible_data_loss() {
+        let mut state = State::default();
+        let at = |minutes| TEN_OCLOCK + minutes * MINUTE;
+        let first = report(
+            at(0),
+            3600,
+            "a",
+            vec![interface_counters("eth0", 10 * GB, 20 * GB, Some(2))],
+        );
+        state.apply_report(1, &first, at(0));
+        // 计数器正常增长、未发生重置，但间隔超过静默阈值：这段窗口没有上报，也要记录
+        let received_at = at(0) + STALE_GAP_POSSIBLE_DATA_LOSS_THRESHOLD_MS + 1;
+        let second = report(
+            received_at,
+            3600,
+            "a",
+            vec![interface_counters("eth0", 20 * GB, 30 * GB, Some(2))],
+        );
+        state.apply_report(1, &second, received_at);
+        // 未重置时增量照常按差值累加
+        assert_eq!(total_received(&state, "eth0"), 10 * GB);
+        assert_eq!(state.pending_possible_data_losses.len(), 1);
+        let loss = &state.pending_possible_data_losses[0];
+        assert_eq!(loss.start_time, Set(at(0)));
+        assert_eq!(loss.end_time, Set(received_at));
+    }
+
+    #[test]
+    fn short_gap_without_reset_records_no_possible_data_loss() {
+        let mut state = State::default();
+        let at = |minutes| TEN_OCLOCK + minutes * MINUTE;
+        let first = report(
+            at(0),
+            3600,
+            "a",
+            vec![interface_counters("eth0", 10 * GB, 20 * GB, Some(2))],
+        );
+        state.apply_report(1, &first, at(0));
+        // 恰好等于静默阈值不记录（阈值是「超过」才记录）
+        let received_at = at(0) + STALE_GAP_POSSIBLE_DATA_LOSS_THRESHOLD_MS;
+        let second = report(
+            received_at,
+            3600,
+            "a",
+            vec![interface_counters("eth0", 20 * GB, 30 * GB, Some(2))],
+        );
+        state.apply_report(1, &second, received_at);
+        assert_eq!(total_received(&state, "eth0"), 10 * GB);
+        assert!(state.pending_possible_data_losses.is_empty());
     }
 
     #[tokio::test]
