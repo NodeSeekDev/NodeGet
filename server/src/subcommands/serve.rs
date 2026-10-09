@@ -28,6 +28,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::Service;
@@ -150,87 +151,40 @@ pub async fn run(config: &ServerConfig) {
     // 使用 ng-static::router::router() 提供静态文件和 WebDAV 路由
     let static_router = ng_static::router::router();
 
-    let app =
-        axum::Router::new()
-            .route("/", root_route.clone())
-            .route("/nodeget/rpc", root_route)
-            // 合并 ng-static 的静态文件和 WebDAV 路由
-            .merge(static_router)
-            .route(
-                "/worker-route/{route_name}",
-                any(
-                    |Path(route_name): Path<String>, req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            .route(
-                "/worker-route/{route_name}/",
-                any(
-                    |Path(route_name): Path<String>, req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            .route(
-                "/worker-route/{route_name}/{*path}",
-                any(
-                    |Path((route_name, _path)): Path<(String, String)>,
-                     req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            // 新的统一前缀 /nodeget/worker-route/*，与 /nodeget/static/* 保持一致。
-            // 旧的 /worker-route/* 保留用于过渡，后续版本将移除。
-            .route(
-                "/nodeget/worker-route/{route_name}",
-                any(
-                    |Path(route_name): Path<String>, req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            .route(
-                "/nodeget/worker-route/{route_name}/",
-                any(
-                    |Path(route_name): Path<String>, req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            .route(
-                "/nodeget/worker-route/{route_name}/{*path}",
-                any(
-                    |Path((route_name, _path)): Path<(String, String)>,
-                     req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            // Terminal WebSocket 路由（独立 state）
-            .merge(ng_terminal::router())
-            .fallback(any(move |req: axum::extract::Request| {
-                let mut rpc_service = jsonrpc_service.clone();
-                async move {
-                    if is_websocket_upgrade(req.headers()) {
-                        return call_rpc(&mut rpc_service, req, "RPC call failed").await;
-                    }
-                    if let Some(cache) = StaticCache::global()
-                        && let Some(model) = cache.get_http_root()
-                    {
-                        let path = req.uri().path().to_owned();
-                        let method = req.method().clone();
-                        let inm = req
-                            .headers()
-                            .get(axum::http::header::IF_NONE_MATCH)
-                            .and_then(|v| v.to_str().ok());
-                        return serve_static_file(&model.path, &path, model.cors, &method, inm)
-                            .await;
-                    }
-                    call_rpc(&mut rpc_service, req, "RPC call failed").await
+    let app = axum::Router::new()
+        .route("/", root_route.clone())
+        .route("/nodeget/rpc", root_route)
+        // 合并 ng-static 的静态文件和 WebDAV 路由
+        .merge(static_router);
+
+    // 新的统一前缀 /nodeget/worker-route/*，与 /nodeget/static/* 保持一致。
+    // 旧的 /worker-route/* 保留用于过渡，后续版本将移除。
+    let app = add_worker_routes(app, "/worker-route");
+    let app = add_worker_routes(app, "/nodeget/worker-route");
+
+    let app = app
+        // Terminal WebSocket 路由（独立 state）
+        .merge(ng_terminal::router())
+        .fallback(any(move |req: axum::extract::Request| {
+            let mut rpc_service = jsonrpc_service.clone();
+            async move {
+                if is_websocket_upgrade(req.headers()) {
+                    return call_rpc(&mut rpc_service, req, "RPC call failed").await;
                 }
-            }));
+                if let Some(cache) = StaticCache::global()
+                    && let Some(model) = cache.get_http_root()
+                {
+                    let path = req.uri().path().to_owned();
+                    let method = req.method().clone();
+                    let inm = req
+                        .headers()
+                        .get(axum::http::header::IF_NONE_MATCH)
+                        .and_then(|v| v.to_str().ok());
+                    return serve_static_file(&model.path, &path, model.cors, &method, inm).await;
+                }
+                call_rpc(&mut rpc_service, req, "RPC call failed").await
+            }
+        }));
 
     ng_crontab::init_crontab_worker();
     debug!(target: "server", "Crontab worker initialized");
@@ -583,6 +537,34 @@ struct JsRouteOutputHeader {
     name: String,
     /// 头字段值
     value: String,
+}
+
+/// 在 `prefix` 下注册 JS Worker HTTP 路由的三种网址形状
+///
+/// - `{prefix}/{route_name}`
+/// - `{prefix}/{route_name}/`
+/// - `{prefix}/{route_name}/{*path}`
+///
+/// 三者都只取 `route_name`，交给 [`worker_route`] 处理。
+fn add_worker_routes(app: axum::Router, prefix: &str) -> axum::Router {
+    app.route(&format!("{prefix}/{{route_name}}"), any(worker_route))
+        .route(&format!("{prefix}/{{route_name}}/"), any(worker_route))
+        .route(
+            &format!("{prefix}/{{route_name}}/{{*path}}"),
+            any(worker_route),
+        )
+}
+
+/// JS Worker HTTP 路由的入口：从网址中取出 `route_name` 后交给 [`handle_js_worker_route`]
+///
+/// 用 `HashMap` 收集所有路径参数，使带或不带 `{*path}` 的路由共用同一个处理函数；
+/// `{*path}` 的内容不使用，直接忽略。
+async fn worker_route(
+    Path(mut params): Path<HashMap<String, String>>,
+    req: axum::extract::Request,
+) -> axum::http::Response<jsonrpsee::server::HttpBody> {
+    let route_name = params.remove("route_name").unwrap_or_default();
+    handle_js_worker_route(route_name, req).await
 }
 
 /// 处理 JS Worker HTTP 路由请求
