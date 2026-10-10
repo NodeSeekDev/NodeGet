@@ -1,0 +1,59 @@
+{
+  "_comment": "构建矩阵。release.yml 构建全部；nightly.yml 只构建带 \"nightly\": true 的条目。新增 target 时在对应分组里加一行即可。",
+  "server_linux": [
+    { "release_for": "linux_x86_64_musl", "target": "x86_64-unknown-linux-musl", "binary_name": "nodeget-server-linux-x86_64-musl", "nightly": true },
+    { "release_for": "linux_x86_64_gnu", "target": "x86_64-unknown-linux-gnu", "binary_name": "nodeget-server-linux-x86_64-gnu", "nightly": true },
+    { "release_for": "linux_aarch64_gnu", "target": "aarch64-unknown-linux-gnu", "binary_name": "nodeget-server-linux-aarch64-gnu" },
+    { "release_for": "linux_aarch64_musl", "target": "aarch64-unknown-linux-musl", "binary_name": "nodeget-server-linux-aarch64-musl", "nightly": true },
+    { "release_for": "linux_armv7_gnueabihf", "target": "armv7-unknown-linux-gnueabihf", "binary_name": "nodeget-server-linux-armv7-gnueabihf" }
+  ],
+  "agent_linux": [
+    { "release_for": "linux_x86_64_musl", "target": "x86_64-unknown-linux-musl", "binary_name": "nodeget-agent-linux-x86_64-musl", "nightly": true },
+    { "release_for": "linux_x86_64_gnu", "target": "x86_64-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-x86_64-gnu", "nightly": true },
+    { "release_for": "linux_i686_gnu", "target": "i686-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-i686-gnu" },
+    { "release_for": "linux_i686_musl", "target": "i686-unknown-linux-musl", "binary_name": "nodeget-agent-linux-i686-musl" },
+    { "release_for": "linux_aarch64_gnu", "target": "aarch64-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-aarch64-gnu" },
+    { "release_for": "linux_aarch64_musl", "target": "aarch64-unknown-linux-musl", "binary_name": "nodeget-agent-linux-aarch64-musl", "nightly": true },
+    { "release_for": "linux_arm_gnueabi", "target": "arm-unknown-linux-gnueabi", "binary_name": "nodeget-agent-linux-arm-gnueabi" },
+    { "release_for": "linux_arm_gnueabihf", "target": "arm-unknown-linux-gnueabihf", "binary_name": "nodeget-agent-linux-arm-gnueabihf" },
+    { "release_for": "linux_arm_musleabi", "target": "arm-unknown-linux-musleabi", "binary_name": "nodeget-agent-linux-arm-musleabi" },
+    { "release_for": "linux_arm_musleabihf", "target": "arm-unknown-linux-musleabihf", "binary_name": "nodeget-agent-linux-arm-musleabihf" },
+    { "release_for": "linux_arm_androideabi", "target": "arm-linux-androideabi", "binary_name": "nodeget-agent-linux-arm-androideabi", "build_std": true },
+    { "release_for": "linux_armv7_gnueabi", "target": "armv7-unknown-linux-gnueabi", "binary_name": "nodeget-agent-linux-armv7-gnueabi" },
+    { "release_for": "linux_armv7_gnueabihf", "target": "armv7-unknown-linux-gnueabihf", "binary_name": "nodeget-agent-linux-armv7-gnueabihf" },
+    { "release_for": "linux_armv7_musleabi", "target": "armv7-unknown-linux-musleabi", "binary_name": "nodeget-agent-linux-armv7-musleabi" },
+    { "release_for": "linux_armv7_musleabihf", "target": "armv7-unknown-linux-musleabihf", "binary_name": "nodeget-agent-linux-armv7-musleabihf" },
+    { "release_for": "linux_armv7_androideabi", "target": "armv7-linux-androideabi", "binary_name": "nodeget-agent-linux-armv7-androideabi", "build_std": true },
+    { "release_for": "linux_armv5te_gnueabi", "target": "armv5te-unknown-linux-gnueabi", "binary_name": "nodeget-agent-linux-armv5te-gnueabi", "build_std": true },
+    { "release_for": "linux_armv5te_musleabi", "target": "armv5te-unknown-linux-musleabi", "binary_name": "nodeget-agent-linux-armv5te-musleabi", "build_std": true },
+    { "release_for": "linux_thumbv7neon_gnueabihf", "target": "thumbv7neon-unknown-linux-gnueabihf", "binary_name": "nodeget-agent-linux-thumbv7neon-gnueabihf" },
+    { "release_for": "linux_thumbv7neon_androideabi", "target": "thumbv7neon-linux-androideabi", "binary_name": "nodeget-agent-linux-thumbv7neon-androideabi", "build_std": true },
+    { "release_for": "linux_mips_gnu", "target": "mips-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-mips-gnu", "build_std": true },
+    { "release_for": "linux_mips_musl", "target": "mips-unknown-linux-musl", "binary_name": "nodeget-agent-linux-mips-musl", "build_std": true },
+    { "release_for": "linux_mipsel_gnu", "target": "mipsel-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-mipsel-gnu", "build_std": true },
+    { "release_for": "linux_mipsel_musl", "target": "mipsel-unknown-linux-musl", "binary_name": "nodeget-agent-linux-mipsel-musl", "build_std": true },
+    { "release_for": "linux_mips64_gnu", "target": "mips64-unknown-linux-gnuabi64", "binary_name": "nodeget-agent-linux-mips64-gnu", "build_std": true, "no_upx": true },
+    { "release_for": "linux_mips64_musl", "target": "mips64-unknown-linux-muslabi64", "binary_name": "nodeget-agent-linux-mips64-musl", "build_std": true, "no_upx": true },
+    { "release_for": "linux_mips64el_gnu", "target": "mips64el-unknown-linux-gnuabi64", "binary_name": "nodeget-agent-linux-mips64el-gnu", "build_std": true, "no_upx": true },
+    { "release_for": "linux_mips64el_musl", "target": "mips64el-unknown-linux-muslabi64", "binary_name": "nodeget-agent-linux-mips64el-musl", "build_std": true, "no_upx": true },
+    { "release_for": "linux_powerpc_gnu", "target": "powerpc-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-powerpc-gnu", "build_std": true },
+    { "release_for": "linux_powerpc64_gnu", "target": "powerpc64-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-powerpc64-gnu", "no_upx": true },
+    { "release_for": "linux_powerpc64le_gnu", "target": "powerpc64le-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-powerpc64le-gnu", "no_upx": true },
+    { "release_for": "linux_s390x_gnu", "target": "s390x-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-s390x-gnu", "no_upx": true },
+    { "release_for": "linux_riscv64gc_gnu", "target": "riscv64gc-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-riscv64gc-gnu", "no_upx": true }
+  ],
+  "server_windows": [
+    { "release_for": "windows_x86_64", "target": "x86_64-pc-windows-msvc", "binary_name": "nodeget-server-windows-x86_64.exe", "nightly": true },
+    { "release_for": "windows_aarch64", "target": "aarch64-pc-windows-msvc", "binary_name": "nodeget-server-windows-aarch64.exe" }
+  ],
+  "agent_windows": [
+    { "release_for": "windows_x86_64", "target": "x86_64-pc-windows-msvc", "binary_name": "nodeget-agent-windows-x86_64.exe", "nightly": true },
+    { "release_for": "windows_aarch64", "target": "aarch64-pc-windows-msvc", "binary_name": "nodeget-agent-windows-aarch64.exe" }
+  ],
+  "server_macos": [
+    { "release_for": "macos_aarch64", "target": "aarch64-apple-darwin", "binary_name": "nodeget-server-macos-aarch64", "nightly": true }
+  ],
+  "agent_macos": [
+    { "release_for": "macos_aarch64", "target": "aarch64-apple-darwin", "binary_name": "nodeget-agent-macos-aarch64", "nightly": true }
+  ]
+}

@@ -74,6 +74,33 @@ bash <(curl -sL https://install.nodeget.com) install-server
 bash <(curl -sL https://install.nodeget.com) install-agent
 ```
 
+## 安装预发布版和 nightly
+
+NodeGet 有三档发布，不指定版本时脚本只会安装**正式版**：
+
+| 档位 | 版本号示例 | 说明 |
+|---|---|---|
+| 正式版 | `v0.6.1` | 默认，普通用户只使用这一档 |
+| 预发布 | `v0.6.1-beta.1`、`v0.6.1-rc.1` | 正式发布前给愿意试用的用户，beta 功能可能还在变化，rc 已冻结功能、只修阻塞问题 |
+| nightly | `nightly` | 每天从开发分支自动构建，滚动更新，包含最新改动 |
+
+预发布版和 nightly **不保证稳定**，请不要用于生产环境。
+
+用环境变量 `releases_tag` 指定要安装的版本，`install-*` 和 `update-*` 命令都支持：
+
+```shell
+# 安装 / 升级到 nightly
+releases_tag=nightly bash <(curl -sL https://install.nodeget.com) install-server
+releases_tag=nightly bash <(curl -sL https://install.nodeget.com) update-agent
+
+# 安装 / 升级到某个预发布版本
+releases_tag=v0.6.1-rc.1 bash <(curl -sL https://install.nodeget.com) update-server
+```
+
+想回到正式版，不带 `releases_tag` 重新执行 `update-server` / `update-agent` 即可。
+
+nightly 每次构建的版本号不变，所以每次执行 `update-*` 都会重新下载并重启。Docker 用户请见 [Docker 安装](./docker.md)。
+
 ## 自动化安装脚本的详细用法
 
 自动化安装脚本支持交互式和非交互式运行，当提供了所有参数后会非交互式运行。

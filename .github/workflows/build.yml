@@ -1,0 +1,251 @@
+name: build
+
+# 可复用的构建流程：构建 agent 的全平台二进制，以及 Windows / macOS 的 server 二进制，并上传为 artifact。
+# Linux server 单独放在 build-server-linux.yml（Docker 镜像只依赖它）。
+# 由 release.yml（全部 target）和 nightly.yml（只构建 nightly 标记的 target）调用。
+# target 列表见 .github/build-matrix.json。
+
+on:
+  workflow_call:
+    inputs:
+      nightly:
+        description: "只构建 build-matrix.json 中标记了 nightly 的 target"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    name: Plan build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      agent_linux: ${{ steps.plan.outputs.agent_linux }}
+      server_windows: ${{ steps.plan.outputs.server_windows }}
+      agent_windows: ${{ steps.plan.outputs.agent_windows }}
+      server_macos: ${{ steps.plan.outputs.server_macos }}
+      agent_macos: ${{ steps.plan.outputs.agent_macos }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve build matrix
+        id: plan
+        shell: bash
+        env:
+          NIGHTLY: ${{ inputs.nightly }}
+        run: |
+          for group in agent_linux server_windows agent_windows server_macos agent_macos; do
+            matrix=$(jq -c --arg group "${group}" --argjson nightly "${NIGHTLY}" '
+              {platform: (.[$group] | if $nightly then map(select(.nightly == true)) else . end)}
+            ' .github/build-matrix.json)
+            echo "${group}=${matrix}" >> "${GITHUB_OUTPUT}"
+            echo "${group}: $(jq '.platform | length' <<< "${matrix}") target(s)"
+          done
+
+  build-linux-agent:
+    name: Build Agent - ${{ matrix.platform.release_for }}
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.agent_linux) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-shared-key: release-agent-linux-${{ matrix.platform.target }}
+
+      - name: Install cross
+        env:
+          CROSS_VERSION: v0.2.5
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${HOME}/.local/bin"
+          gh release download "${CROSS_VERSION}" \
+            --repo cross-rs/cross \
+            --pattern cross-x86_64-unknown-linux-gnu.tar.gz \
+            -O - \
+            | tar -xz -C "${HOME}/.local/bin"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+
+      - name: Install nightly toolchain for build-std
+        if: ${{ matrix.platform.build_std }}
+        run: rustup install nightly && rustup component add rust-src --toolchain nightly
+
+      # 清除 CI 缓存中残留的预编译 target std，防止与 -Z build-std 冲突
+      # 产生 "duplicate lang item in crate 'core'" 错误
+      - name: Clean cached target std for build-std
+        if: ${{ matrix.platform.build_std }}
+        run: rustup target remove --toolchain nightly ${{ matrix.platform.target }} 2>/dev/null || true
+
+      - name: Build binary (stable)
+        if: ${{ !matrix.platform.build_std }}
+        run: cross build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32
+        env:
+          CROSS_NO_WARNINGS: 0
+
+      # cross v0.2.5 的 Cross.toml build-std 只支持布尔值（true），
+      # 不支持字符串 "std,panic_abort"，因此 -Z build-std=std,panic_abort
+      # 必须在命令行显式传递以包含 panic_abort。
+      # Cross.toml 中的 build-std = true 让 cross 跳过 rustup target add。
+      - name: Build binary (nightly, build-std)
+        if: ${{ matrix.platform.build_std }}
+        run: cross +nightly build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32 -Z build-std=std,panic_abort
+        env:
+          CROSS_NO_WARNINGS: 0
+
+      - name: Compress binary
+        if: ${{ !matrix.platform.no_upx }}
+        run: upx -9 ./target/${{ matrix.platform.target }}/minimal/nodeget-agent
+
+      - name: Rename binary
+        run: cp target/${{ matrix.platform.target }}/minimal/nodeget-agent target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.platform.target }}
+          path: target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+          if-no-files-found: error
+          retention-days: 14
+
+  build-windows-server:
+    name: Build Server - ${{ matrix.platform.release_for }}
+    needs: plan
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.server_windows) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.platform.target }}
+          cache-shared-key: release-windows-${{ matrix.platform.target }}
+
+      - name: Build binary
+        run: cargo build --package nodeget-server --target ${{ matrix.platform.target }} --profile minimal --jobs 32
+        env:
+          CROSS_NO_WARNINGS: 0
+
+      - name: Rename binary
+        run: copy target\${{ matrix.platform.target }}\minimal\nodeget-server.exe target\${{ matrix.platform.target }}\minimal\${{ matrix.platform.binary_name }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.platform.target }}
+          path: target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+          if-no-files-found: error
+          retention-days: 14
+
+  build-windows-agent:
+    name: Build Agent - ${{ matrix.platform.release_for }}
+    needs: plan
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.agent_windows) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.platform.target }}
+          cache-shared-key: release-agent-windows-${{ matrix.platform.target }}
+
+      - name: Build binary
+        run: cargo build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32
+        env:
+          CROSS_NO_WARNINGS: 0
+
+      - name: Rename binary
+        run: copy target\${{ matrix.platform.target }}\minimal\nodeget-agent.exe target\${{ matrix.platform.target }}\minimal\${{ matrix.platform.binary_name }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.platform.target }}
+          path: target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+          if-no-files-found: error
+          retention-days: 14
+
+  build-macos-server:
+    name: Build Server - ${{ matrix.platform.release_for }}
+    needs: plan
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.server_macos) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.platform.target }}
+          cache-shared-key: release-macos-${{ matrix.platform.target }}
+
+      - name: Build binary
+        run: cargo build --package nodeget-server --target ${{ matrix.platform.target }} --profile minimal --jobs 32
+        env:
+          CROSS_NO_WARNINGS: 0
+
+      - name: Rename binary
+        run: cp target/${{ matrix.platform.target }}/minimal/nodeget-server target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.platform.target }}
+          path: target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+          if-no-files-found: error
+          retention-days: 14
+
+  build-macos-agent:
+    name: Build Agent - ${{ matrix.platform.release_for }}
+    needs: plan
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.agent_macos) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.platform.target }}
+          cache-shared-key: release-agent-macos-${{ matrix.platform.target }}
+
+      - name: Build binary
+        run: cargo build --package nodeget-agent --target ${{ matrix.platform.target }} --profile minimal --jobs 32
+        env:
+          CROSS_NO_WARNINGS: 0
+
+      - name: Rename binary
+        run: cp target/${{ matrix.platform.target }}/minimal/nodeget-agent target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.platform.target }}
+          path: target/${{ matrix.platform.target }}/minimal/${{ matrix.platform.binary_name }}
+          if-no-files-found: error
+          retention-days: 14
