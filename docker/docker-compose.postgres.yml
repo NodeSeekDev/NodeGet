@@ -17,7 +17,7 @@ services:
       retries: 20
 
   nodeget:
-    image: genshinmc/nodeget:latest
+    image: nodeget/nodeget:latest
     restart: unless-stopped
     depends_on:
       postgres:

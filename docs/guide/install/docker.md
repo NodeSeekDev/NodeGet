@@ -2,11 +2,13 @@
 
 官方 Docker 镜像由 CI 从源码编译并推送到 Docker Hub：
 
-- `genshinmc/nodeget:latest`：最新**正式版**镜像
-- `genshinmc/nodeget:vX.Y.Z`：Release tag 镜像，预发布版本为 `vX.Y.Z-beta.N` / `vX.Y.Z-rc.N`
-- `genshinmc/nodeget:nightly`：每天从开发分支自动构建的镜像
+- `nodeget/nodeget:latest`：最新**正式版**镜像
+- `nodeget/nodeget:vX.Y.Z`：Release tag 镜像，预发布版本为 `vX.Y.Z-beta.N` / `vX.Y.Z-rc.N`
+- `nodeget/nodeget:nightly`：每天从开发分支自动构建的镜像
 
 预发布版和 nightly 不保证稳定，请不要用于生产环境。`latest` 不会指向它们。
+
+> 镜像仓库已从 `genshinmc/nodeget` 迁移到 `nodeget/nodeget`。旧仓库不再更新，请把镜像地址改为新的。
 
 ## 一键
 
@@ -15,7 +17,7 @@ docker run -d \
   --name nodeget \
   -p 2211:2211 \
   -v /your/host/path:/nodeget \
-  genshinmc/nodeget:latest
+  nodeget/nodeget:latest
 ```
 
 该命令默认使用 `sqlite:///nodeget/nodeget.db?mode=rwc` 为数据库
@@ -41,7 +43,7 @@ docker run -d \
   -p 2211:2211 \
   -v /your/host/path:/nodeget \
   -e NODEGET_DATABASE_URL="postgresql://user:password@host:port/dbname" \
-  genshinmc/nodeget:latest
+  nodeget/nodeget:latest
 ```
 
 ## Docker Compose
