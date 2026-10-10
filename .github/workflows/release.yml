@@ -26,6 +26,7 @@ jobs:
     outputs:
       publish: ${{ steps.release.outputs.publish }}
       tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -56,8 +57,16 @@ jobs:
             fi
           fi
 
+          # tag 带 pre-release 后缀（如 v0.6.1-rc.1、v0.6.1-beta.1）即为预发布：
+          # 不标记为 Latest，也不覆盖 Docker 的 latest 标签
+          prerelease="false"
+          if [[ "${tag}" =~ ^v[0-9.]+- ]]; then
+            prerelease="true"
+          fi
+
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
 
   build-linux-server:
     name: Build Server - ${{ matrix.platform.release_for }}
@@ -514,7 +523,9 @@ jobs:
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: NodeGet ${{ needs.prepare.outputs.tag }}
-          make_latest: true
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.prepare.outputs.prerelease != 'true' }}
           files: dist/*
 
   publish-docker-server:
@@ -577,7 +588,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.prerelease != 'true' }}
             type=raw,value=${{ needs.prepare.outputs.tag }}
 
       - name: Build and push
