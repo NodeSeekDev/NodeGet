@@ -1,0 +1,140 @@
+name: nightly
+
+# 每日构建：从开发分支（默认 dev）构建 nightly 版本，滚动更新名为 `nightly` 的预发布，
+# 并推送 Docker 镜像的 `nightly` 标签。nightly 不保证稳定，普通用户请使用正式版。
+#
+# 注意：定时任务只会运行默认分支（main）上的 workflow 文件，
+# 但构建的内容始终来自开发分支，见下方 DEV_BRANCH。
+
+on:
+  schedule:
+    # UTC 18:00，即北京时间次日 02:00
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "要构建的分支（留空使用 dev）"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DEV_BRANCH: dev
+
+jobs:
+  check:
+    name: Check for new commits
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - name: Resolve commit and decide whether to build
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ inputs.branch || env.DEV_BRANCH }}
+        run: |
+          sha=$(gh api "repos/${REPO}/commits/${BRANCH}" --jq .sha)
+          last=$(gh api "repos/${REPO}/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
+
+          # 定时触发时，分支自上次 nightly 以来没有新提交就跳过；手动触发总是构建
+          build="true"
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" && "${sha}" == "${last}" ]]; then
+            build="false"
+            echo "No new commits on ${BRANCH} since the last nightly (${sha}), skipping."
+          fi
+
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+          echo "build=${build}" >> "${GITHUB_OUTPUT}"
+
+  # 只构建 .github/build-matrix.json 中标记了 nightly 的 target
+  build:
+    name: Build
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      nightly: true
+      ref: ${{ needs.check.outputs.sha }}
+
+  # Linux server 单独构建，nightly 镜像只依赖它
+  build-server-linux:
+    name: Build Linux server
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    uses: ./.github/workflows/build-server-linux.yml
+    with:
+      nightly: true
+      ref: ${{ needs.check.outputs.sha }}
+
+  publish-release:
+    name: Publish nightly Release
+    needs:
+      - check
+      - build-server-linux
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # 把 nightly tag 移动到本次构建的提交，否则 tag 会停留在上一次的提交上
+      - name: Move nightly tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          if gh api "repos/${REPO}/git/ref/tags/nightly" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/${REPO}/git/refs/tags/nightly" -f sha="${SHA}" -F force=true
+          else
+            gh api -X POST "repos/${REPO}/git/refs" -f ref="refs/tags/nightly" -f sha="${SHA}"
+          fi
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nightly
+          name: NodeGet Nightly
+          target_commitish: ${{ needs.check.outputs.sha }}
+          prerelease: true
+          make_latest: false
+          body: |
+            自动构建的 nightly 版本，来自开发分支提交 `${{ needs.check.outputs.sha }}`。
+            **不保证稳定，普通用户请使用正式版。**
+
+            安装 / 升级方式见文档「自动化脚本安装」中的预发布与 nightly 一节。
+          files: dist/*
+
+  # 只等 Linux server 构建，不受其他平台构建结果影响，也不影响 nightly Release 的发布；不更新 latest
+  publish-docker-server:
+    name: Publish Docker image
+    needs:
+      - check
+      - build-server-linux
+    permissions:
+      actions: write
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker.yml
+    with:
+      tag: nightly
+      latest: false
+      ref: ${{ needs.check.outputs.sha }}
+    secrets: inherit
