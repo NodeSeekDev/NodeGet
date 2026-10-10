@@ -15,7 +15,7 @@ use jsonrpsee::core::RpcResult;
 use ng_core::error::NodegetError;
 use ng_core::permission::data_structure::{DynamicMonitoring, Permission, Scope};
 use ng_core::permission::token_auth::TokenOrAuth;
-use ng_core::utils::get_local_timestamp_ms_i64;
+use ng_core::utils::{DEFAULT_MONITORING_QUERY_LIMIT, get_local_timestamp_ms_i64};
 use ng_db::entity::{traffic_current_total, traffic_possible_data_loss, traffic_snapshot};
 use ng_infra::server::{RpcHelper, to_rpc_error};
 use ng_token::get::check_token_limit;
@@ -277,6 +277,23 @@ async fn query_range(
         .collect())
 }
 
+/// 判断 `start` 到 `end` 的跨度是否非负且不超过 `max_range_ms`。
+///
+/// - `start`: 开始时间（毫秒时间戳）
+/// - `end`: 结束时间（毫秒时间戳）
+/// - `max_range_ms`: 允许的最长跨度（毫秒）
+/// - 返回: 跨度非负且不超过 `max_range_ms` 时为 `true`
+///
+/// 用 `checked_sub` 而不是裸减法：`start = i64::MIN`、`end = i64::MAX` 这类极端取值会让
+/// `end - start` 溢出。dev 构建直接 panic，release/minimal 构建（`overflow-checks = false`）
+/// 会回绕成负数，使 `> max_range_ms` 的判断失效并被绕过，退化成该 Agent 的全表扫描。
+const fn range_within_limit(start: i64, end: i64, max_range_ms: i64) -> bool {
+    match end.checked_sub(start) {
+        Some(range) => range >= 0 && range <= max_range_ms,
+        None => false,
+    }
+}
+
 /// 查询时间段内的所有总流量快照。
 ///
 /// - `db`: 数据库连接
@@ -285,8 +302,10 @@ async fn query_range(
 /// - `end_time`: 结束时间（毫秒），`None` 表示到现在
 /// - 返回: 开始时间到结束时间（含两端）之间的快照，按网卡名、快照时间排序
 ///
-/// 1. 时间范围超过 `MAX_DETAIL_RANGE_MS` 时返回错误，未填的一端按最早快照时间、当前时间计算
-/// 2. 查询范围内的快照
+/// 1. 时间范围不合法或超过 `MAX_DETAIL_RANGE_MS` 时返回错误，未填的一端按最早快照时间、
+///    当前时间计算；跨度用 `range_within_limit` 做溢出安全比较
+/// 2. 查询范围内的快照，按网卡名、快照时间排序，最多返回 `DEFAULT_MONITORING_QUERY_LIMIT` 行，
+///    与 `dynamic` / `static` / `dynamic_summary` 查询一致（超出部分截断，不报错）
 async fn query_detail(
     db: &DatabaseConnection,
     uuid_id: i16,
@@ -311,7 +330,7 @@ async fn query_detail(
         Some(end_time) => end_time,
         None => get_local_timestamp_ms_i64()?,
     };
-    if range_end - range_start > MAX_DETAIL_RANGE_MS {
+    if !range_within_limit(range_start, range_end, MAX_DETAIL_RANGE_MS) {
         return Err(NodegetError::InvalidInput(
             "detail time range must not exceed 92 days".to_owned(),
         )
@@ -324,6 +343,7 @@ async fn query_detail(
         .filter(traffic_snapshot::Column::SnapshotTime.lte(range_end))
         .order_by_asc(traffic_snapshot::Column::InterfaceName)
         .order_by_asc(traffic_snapshot::Column::SnapshotTime)
+        .limit(DEFAULT_MONITORING_QUERY_LIMIT)
         .all(db)
         .await
         .map_err(|e| database_error(&e))?;
@@ -566,10 +586,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn detail_is_clamped_to_default_monitoring_query_limit() {
+        let db = seeded_db().await;
+        // 额外插入超过上限的快照，确认 detail 与兄弟查询一样截断，而不是把整段范围全部返回
+        let base = at(100);
+        let total_rows = DEFAULT_MONITORING_QUERY_LIMIT + 5;
+        let rows: Vec<_> = (0..total_rows)
+            .map(|i| traffic_snapshot::ActiveModel {
+                id: ActiveValue::default(),
+                uuid_id: Set(1),
+                interface_name: Set("eth2".to_owned()),
+                snapshot_time: Set(base + i.cast_signed()),
+                total_received: Set(0),
+                total_transmitted: Set(0),
+            })
+            .collect();
+        // SQLite 单条 SQL 最多绑定 999 个参数，按行分批插入
+        for chunk in rows.chunks(100) {
+            traffic_snapshot::Entity::insert_many(chunk.to_vec())
+                .exec(&db)
+                .await
+                .unwrap();
+        }
+
+        let snapshots = query_detail(&db, 1, Some(base), Some(base + total_rows.cast_signed()))
+            .await
+            .unwrap();
+        assert_eq!(snapshots.len(), DEFAULT_MONITORING_QUERY_LIMIT as usize);
+    }
+
+    /// 断言查询返回 `NodegetError::InvalidInput`。
+    ///
+    /// `query_detail` 的 `Ok` 类型 `Vec<TrafficSnapshotItem>` 没有实现 `Debug`，
+    /// 不能用 `unwrap_err`，只能先取 `Err`。
+    fn assert_invalid_input(result: anyhow::Result<Vec<TrafficSnapshotItem>>) {
+        let error = result.err().expect("expected an error");
+        assert!(matches!(
+            error.downcast_ref::<NodegetError>(),
+            Some(NodegetError::InvalidInput(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn detail_rejects_range_longer_than_limit() {
         let db = seeded_db().await;
-        let result = query_detail(&db, 1, Some(at(0)), Some(at(0) + MAX_DETAIL_RANGE_MS + 1)).await;
-        assert!(result.is_err());
+        assert_invalid_input(
+            query_detail(&db, 1, Some(at(0)), Some(at(0) + MAX_DETAIL_RANGE_MS + 1)).await,
+        );
+    }
+
+    #[tokio::test]
+    async fn detail_rejects_min_start_and_max_end_without_overflow() {
+        let db = seeded_db().await;
+        // i64::MIN 到 i64::MAX 的跨度减法会溢出：不能 panic，也不能回绕成负数绕过校验
+        assert_invalid_input(query_detail(&db, 1, Some(i64::MIN), Some(i64::MAX)).await);
+    }
+
+    #[tokio::test]
+    async fn detail_rejects_min_start_with_default_end() {
+        let db = seeded_db().await;
+        // 未填结束时间时按当前时间计算，i64::MIN 到现在的跨度同样会溢出
+        assert_invalid_input(query_detail(&db, 1, Some(i64::MIN), None).await);
+    }
+
+    #[tokio::test]
+    async fn detail_rejects_max_end_with_default_start() {
+        let db = seeded_db().await;
+        // 未填开始时间时按最早快照时间计算，到 i64::MAX 的跨度同样会溢出
+        assert_invalid_input(query_detail(&db, 1, None, Some(i64::MAX)).await);
     }
 
     #[tokio::test]

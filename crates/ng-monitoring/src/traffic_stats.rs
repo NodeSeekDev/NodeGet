@@ -26,6 +26,11 @@ use tracing::{debug, error, info, warn};
 
 /// 判定可能丢失数据的最短间隔（毫秒），10 分钟
 const POSSIBLE_DATA_LOSS_THRESHOLD_MS: i64 = 10 * 60 * 1000;
+/// 判定非重置的静默缺口是否可能丢失数据的最短间隔（毫秒），30 分钟
+///
+/// 动态上报间隔默认 1 秒（可配置，静态上报默认 5 分钟），30 分钟远超正常上报间隔，
+/// 只会在 Agent 长时间停机/断网、期间完全没有上报而网卡计数器仍在增长时触发，避免误报。
+const STALE_GAP_POSSIBLE_DATA_LOSS_THRESHOLD_MS: i64 = 30 * 60 * 1000;
 /// 定时写库间隔（毫秒）
 const FLUSH_INTERVAL_MS: u64 = 60 * 1000;
 /// `flush_and_shutdown` 等待最后一次写库的最长时间
@@ -125,8 +130,10 @@ impl State {
     /// 1. 有网卡缺少 `is_outlet`（老版本 Agent）时直接跳过
     /// 2. 逐块处理 `is_outlet` 为真的网卡：
     ///    1. 用本次上报组成本次读数，取出上一次的读数；Agent 采集时间早于上一次的直接丢弃
-    ///    2. 判断是否重置（`is_counter_reset`），算出本次流量增量（`compute_traffic_increase`），加到总流量
-    ///    3. 发生重置时判断是否可能丢失数据（`detect_possible_data_loss`），同一台设备同一时间段只记一次
+    ///    2. 按方向判断是否重置（`detect_counter_reset`），算出本次流量增量
+    ///       （`compute_traffic_increase`），加到总流量
+    ///    3. 发生重置或距上次读数超过静默阈值时判断是否可能丢失数据（`detect_possible_data_loss`），
+    ///       同一台设备同一时间段只记一次
     ///    4. 用本次读数替换上一次的读数
     fn apply_report(&mut self, uuid_id: i16, data: &DynamicMonitoringData, received_at: i64) {
         let interfaces = &data.network.interfaces;
@@ -163,7 +170,9 @@ impl State {
             };
             let total = self.totals.get(&key).copied().unwrap_or_default();
 
-            let reset = prev_reading.is_some_and(|prev| is_counter_reset(prev, &current_reading));
+            let reset = prev_reading.map_or(CounterReset::NONE, |prev| {
+                detect_counter_reset(prev, &current_reading)
+            });
             let increase = compute_traffic_increase(prev_reading, &current_reading, reset);
             self.totals.insert(
                 key.clone(),
@@ -173,16 +182,22 @@ impl State {
                 },
             );
 
-            if reset
-                && !possible_data_loss_recorded
-                && let Some(prev) = prev_reading
-            {
-                let reset_at = if is_boot_id_changed(prev, &current_reading) {
-                    boot_at
+            if !possible_data_loss_recorded && let Some(prev) = prev_reading {
+                // 重置：终点取重置时刻（能推算开机时刻时用开机时刻），沿用原有阈值
+                // 非重置：本次与上次读数的间隔超过静默阈值说明这段窗口没有上报，终点取本次收到时间
+                let (loss_end_at, threshold_ms) = if reset.any() {
+                    let reset_at = if is_boot_id_changed(prev, &current_reading) {
+                        boot_at
+                    } else {
+                        received_at
+                    };
+                    (reset_at, POSSIBLE_DATA_LOSS_THRESHOLD_MS)
                 } else {
-                    received_at
+                    (received_at, STALE_GAP_POSSIBLE_DATA_LOSS_THRESHOLD_MS)
                 };
-                if let Some(loss) = detect_possible_data_loss(uuid_id, prev, reset_at) {
+                if let Some(loss) =
+                    detect_possible_data_loss(uuid_id, prev, loss_end_at, threshold_ms)
+                {
                     self.pending_possible_data_losses.push(loss);
                     possible_data_loss_recorded = true;
                 }
@@ -489,27 +504,85 @@ fn current_total_model(
     }
 }
 
-/// 判断网卡计数器是否重置。
+/// 网卡计数器重置的方向。
+///
+/// 开机标识或网卡编号变化说明整机/整卡重置，两个方向都按重置处理；
+/// 只有一个方向的计数器变小（回绕或清零）时只重置该方向，
+/// 另一个方向仍按正常差值累加，避免把健康方向的值当成重置后的全量重复计入。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CounterReset {
+    /// 接收方向按重置处理
+    received: bool,
+    /// 发送方向按重置处理
+    transmitted: bool,
+}
+
+impl CounterReset {
+    /// 两个方向都不重置
+    const NONE: Self = Self {
+        received: false,
+        transmitted: false,
+    };
+
+    /// 两个方向都按重置处理
+    const BOTH: Self = Self {
+        received: true,
+        transmitted: true,
+    };
+
+    /// 是否至少有一个方向发生重置
+    const fn any(self) -> bool {
+        self.received || self.transmitted
+    }
+}
+
+/// 判断网卡编号是否变化。
 ///
 /// - `prev_reading`: 上一次的读数
 /// - `current_reading`: 本次读数
-/// - 返回: 满足任一条件时为 `true`：
-///   1. 开机标识变化（两次都有值时才比较）
-///   2. 网卡编号变化（两次都有值时才比较）
-///   3. 计数器的累计接收量或累计发送量变小
-fn is_counter_reset(
+/// - 返回: 两次都有值且不相同时为 `true`
+const fn is_ifindex_changed(
     prev_reading: &NetworkInterfaceReading,
     current_reading: &NetworkInterfaceReading,
 ) -> bool {
-    let boot_id_changed = is_boot_id_changed(prev_reading, current_reading);
-    let ifindex_changed = matches!(
+    matches!(
         (prev_reading.ifindex, current_reading.ifindex),
         (Some(prev), Some(current)) if prev != current
-    );
-    let counter_decreased = current_reading.counter_received < prev_reading.counter_received
-        || current_reading.counter_transmitted < prev_reading.counter_transmitted;
+    )
+}
 
-    boot_id_changed || ifindex_changed || counter_decreased
+/// 判断是否整机/整卡重置，即开机标识或网卡编号变化。
+///
+/// - `prev_reading`: 上一次的读数
+/// - `current_reading`: 本次读数
+/// - 返回: 开机标识或网卡编号任一变化时为 `true`，此时两个方向都应重置
+fn is_full_reset(
+    prev_reading: &NetworkInterfaceReading,
+    current_reading: &NetworkInterfaceReading,
+) -> bool {
+    is_boot_id_changed(prev_reading, current_reading)
+        || is_ifindex_changed(prev_reading, current_reading)
+}
+
+/// 按方向判断网卡计数器是否重置。
+///
+/// - `prev_reading`: 上一次的读数
+/// - `current_reading`: 本次读数
+/// - 返回: 每个方向是否按重置处理：
+///   1. 开机标识或网卡编号变化时两个方向都按重置处理
+///   2. 否则只有累计量变小的方向按重置处理
+fn detect_counter_reset(
+    prev_reading: &NetworkInterfaceReading,
+    current_reading: &NetworkInterfaceReading,
+) -> CounterReset {
+    if is_full_reset(prev_reading, current_reading) {
+        return CounterReset::BOTH;
+    }
+
+    CounterReset {
+        received: current_reading.counter_received < prev_reading.counter_received,
+        transmitted: current_reading.counter_transmitted < prev_reading.counter_transmitted,
+    }
 }
 
 /// 判断开机标识是否变化，即 VPS 是否重启过。
@@ -527,52 +600,68 @@ fn is_boot_id_changed(
     )
 }
 
+/// 计算单个方向的流量增量。
+///
+/// - `prev`: 上一次的累计值
+/// - `current`: 本次累计值
+/// - `reset`: 该方向是否按重置处理
+/// - 返回: 重置时取本次累计值，否则取差值（未重置时不会变小，`saturating_sub` 仅作防御）
+const fn increase_for_direction(prev: u64, current: u64, reset: bool) -> u64 {
+    if reset {
+        current
+    } else {
+        current.saturating_sub(prev)
+    }
+}
+
 /// 计算本次流量增量。
 ///
 /// - `prev_reading`: 上一次的读数，首次见到该网卡时为 `None`
 /// - `current_reading`: 本次读数
-/// - `reset`: 是否发生重置
-/// - 返回: 首次见到时为 0，发生重置时为本次计数器值，否则为本次与上一次计数器值的差
+/// - `reset`: 每个方向是否按重置处理
+/// - 返回: 首次见到时为 0；某个方向发生重置时该方向取本次计数器值，否则取本次与上一次的差
 ///
 /// 首次见到时计数器里是开始统计之前的流量（如开机以来），不计入，从这一刻开始统计
 const fn compute_traffic_increase(
     prev_reading: Option<&NetworkInterfaceReading>,
     current_reading: &NetworkInterfaceReading,
-    reset: bool,
+    reset: CounterReset,
 ) -> Traffic {
     match prev_reading {
         None => Traffic {
             received: 0,
             transmitted: 0,
         },
-        Some(_) if reset => Traffic {
-            received: current_reading.counter_received,
-            transmitted: current_reading.counter_transmitted,
-        },
-        // 未重置时计数器不会变小，saturating_sub 仅作防御
         Some(prev) => Traffic {
-            received: current_reading
-                .counter_received
-                .saturating_sub(prev.counter_received),
-            transmitted: current_reading
-                .counter_transmitted
-                .saturating_sub(prev.counter_transmitted),
+            received: increase_for_direction(
+                prev.counter_received,
+                current_reading.counter_received,
+                reset.received,
+            ),
+            transmitted: increase_for_direction(
+                prev.counter_transmitted,
+                current_reading.counter_transmitted,
+                reset.transmitted,
+            ),
         },
     }
 }
 
-/// 判断重置前是否可能丢失数据。
+/// 判断一段时间是否可能丢失数据。
 ///
 /// - `uuid_id`: 设备编号
-/// - `prev_reading`: 重置前上一次的读数
-/// - `reset_at`: 重置时刻（毫秒时间戳）；重启时为开机时间（收到时间 − 已开机时长），其他情况为收到时间
-/// - 返回: `prev_reading.updated_at` 到 `reset_at` 超过 `POSSIBLE_DATA_LOSS_THRESHOLD_MS` 时返回该时间段
+/// - `prev_reading`: 上一次的读数
+/// - `loss_end_at`: 该时间段的结束时刻（毫秒时间戳）；重置时为重置时刻（重启时为开机时间，
+///   即收到时间 − 已开机时长），非重置的静默缺口时为本次收到时间
+/// - `threshold_ms`: 触发记录的最短间隔（毫秒）
+/// - 返回: `prev_reading.updated_at` 到 `loss_end_at` 的间隔超过 `threshold_ms` 时返回该时间段
 fn detect_possible_data_loss(
     uuid_id: i16,
     prev_reading: &NetworkInterfaceReading,
-    reset_at: i64,
+    loss_end_at: i64,
+    threshold_ms: i64,
 ) -> Option<traffic_possible_data_loss::ActiveModel> {
-    if reset_at - prev_reading.updated_at <= POSSIBLE_DATA_LOSS_THRESHOLD_MS {
+    if loss_end_at - prev_reading.updated_at <= threshold_ms {
         return None;
     }
 
@@ -580,7 +669,7 @@ fn detect_possible_data_loss(
         id: ActiveValue::default(),
         uuid_id: Set(uuid_id),
         start_time: Set(prev_reading.updated_at),
-        end_time: Set(reset_at),
+        end_time: Set(loss_end_at),
     })
 }
 
@@ -636,6 +725,24 @@ mod tests {
             transmit_speed: 0,
             ifindex: Some(2),
             is_outlet,
+        }
+    }
+
+    /// 构造一块网卡的上报数据，接收和发送计数器都给全
+    fn interface_counters(
+        name: &str,
+        receiver: u64,
+        transmitted: u64,
+        ifindex: Option<u32>,
+    ) -> DynamicPerNetworkInterfaceData {
+        DynamicPerNetworkInterfaceData {
+            interface_name: name.to_owned(),
+            total_received: receiver,
+            total_transmitted: transmitted,
+            receive_speed: 0,
+            transmit_speed: 0,
+            ifindex,
+            is_outlet: Some(true),
         }
     }
 
@@ -871,7 +978,7 @@ mod tests {
     fn counter_not_reset_when_growing() {
         let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
         let current = reading(Some("a"), Some(2), 51 * GB, 10 * GB);
-        assert!(!is_counter_reset(&prev, &current));
+        assert_eq!(detect_counter_reset(&prev, &current), CounterReset::NONE);
     }
 
     #[test]
@@ -879,43 +986,111 @@ mod tests {
         // 重启后计数器涨回超过旧值，只能靠开机标识发现
         let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
         let current = reading(Some("b"), Some(2), 60 * GB, 20 * GB);
-        assert!(is_counter_reset(&prev, &current));
+        assert_eq!(detect_counter_reset(&prev, &current), CounterReset::BOTH);
     }
 
     #[test]
     fn counter_reset_when_ifindex_changes() {
         let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
         let current = reading(Some("a"), Some(5), 60 * GB, 20 * GB);
-        assert!(is_counter_reset(&prev, &current));
+        assert_eq!(detect_counter_reset(&prev, &current), CounterReset::BOTH);
     }
 
     #[test]
     fn counter_reset_when_received_or_transmitted_decreases() {
         let prev = reading(None, None, 50 * GB, 10 * GB);
-        assert!(is_counter_reset(&prev, &reading(None, None, GB, 20 * GB)));
-        assert!(is_counter_reset(&prev, &reading(None, None, 60 * GB, GB)));
+        // 只有接收方向变小：只重置接收方向
+        assert_eq!(
+            detect_counter_reset(&prev, &reading(None, None, GB, 20 * GB)),
+            CounterReset {
+                received: true,
+                transmitted: false,
+            }
+        );
+        // 只有发送方向变小：只重置发送方向
+        assert_eq!(
+            detect_counter_reset(&prev, &reading(None, None, 60 * GB, GB)),
+            CounterReset {
+                received: false,
+                transmitted: true,
+            }
+        );
+    }
+
+    #[test]
+    fn increase_resets_only_the_wrapped_direction() {
+        // 只有接收计数器回绕：接收取全量，发送仍取差值，不能把发送值当成重置后的全量
+        let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
+        let current = reading(Some("a"), Some(2), GB, 15 * GB);
+        let reset = detect_counter_reset(&prev, &current);
+        assert_eq!(
+            reset,
+            CounterReset {
+                received: true,
+                transmitted: false,
+            }
+        );
+        let increase = compute_traffic_increase(Some(&prev), &current, reset);
+        assert_eq!(increase.received, GB);
+        assert_eq!(increase.transmitted, 5 * GB);
+    }
+
+    #[test]
+    fn bidirectional_wrap_resets_both_directions() {
+        let prev = reading(None, None, 50 * GB, 10 * GB);
+        let current = reading(None, None, GB, 2 * GB);
+        let reset = detect_counter_reset(&prev, &current);
+        assert_eq!(reset, CounterReset::BOTH);
+        let increase = compute_traffic_increase(Some(&prev), &current, reset);
+        assert_eq!(increase.received, GB);
+        assert_eq!(increase.transmitted, 2 * GB);
+    }
+
+    #[test]
+    fn one_directional_reset_keeps_other_direction_accumulating() {
+        let mut state = State::default();
+        let at = |minutes| TEN_OCLOCK + minutes * MINUTE;
+        // 首次上报：接收 50GB、发送 10GB，不计入
+        let data = report(
+            at(0),
+            3600,
+            "a",
+            vec![interface_counters("eth0", 50 * GB, 10 * GB, Some(2))],
+        );
+        state.apply_report(1, &data, at(0));
+        // 接收计数器回绕到 1GB，发送正常涨到 15GB：只重置接收方向，发送仍按差值累加
+        let data = report(
+            at(1),
+            3600,
+            "a",
+            vec![interface_counters("eth0", GB, 15 * GB, Some(2))],
+        );
+        state.apply_report(1, &data, at(1));
+        assert_eq!(total_received(&state, "eth0"), GB);
+        assert_eq!(state.totals[&(1, "eth0".to_owned())].transmitted, 5 * GB);
+        assert!(state.pending_possible_data_losses.is_empty());
     }
 
     #[test]
     fn missing_boot_id_or_ifindex_is_not_compared() {
         // 一边为空时跳过该条，不能误判为重置
         let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
-        assert!(!is_counter_reset(
-            &prev,
-            &reading(None, None, 51 * GB, 10 * GB)
-        ));
+        assert_eq!(
+            detect_counter_reset(&prev, &reading(None, None, 51 * GB, 10 * GB)),
+            CounterReset::NONE
+        );
         let prev = reading(None, None, 50 * GB, 10 * GB);
-        assert!(!is_counter_reset(
-            &prev,
-            &reading(Some("a"), Some(2), 51 * GB, 10 * GB)
-        ));
+        assert_eq!(
+            detect_counter_reset(&prev, &reading(Some("a"), Some(2), 51 * GB, 10 * GB)),
+            CounterReset::NONE
+        );
     }
 
     #[test]
     fn increase_is_difference_when_not_reset() {
         let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
         let current = reading(Some("a"), Some(2), 53 * GB, 11 * GB);
-        let increase = compute_traffic_increase(Some(&prev), &current, false);
+        let increase = compute_traffic_increase(Some(&prev), &current, CounterReset::NONE);
         assert_eq!(increase.received, 3 * GB);
         assert_eq!(increase.transmitted, GB);
     }
@@ -924,7 +1099,7 @@ mod tests {
     fn increase_is_current_counter_when_reset() {
         let prev = reading(Some("a"), Some(2), 50 * GB, 10 * GB);
         let current = reading(Some("b"), Some(2), 2 * GB, GB);
-        let increase = compute_traffic_increase(Some(&prev), &current, true);
+        let increase = compute_traffic_increase(Some(&prev), &current, CounterReset::BOTH);
         assert_eq!(increase.received, 2 * GB);
         assert_eq!(increase.transmitted, GB);
     }
@@ -933,7 +1108,7 @@ mod tests {
     fn increase_is_zero_when_first_seen() {
         // 首次见到时计数器里是开始统计之前的流量，不计入
         let current = reading(Some("a"), Some(2), 30 * GB, 5 * GB);
-        let increase = compute_traffic_increase(None, &current, false);
+        let increase = compute_traffic_increase(None, &current, CounterReset::NONE);
         assert_eq!(increase.received, 0);
         assert_eq!(increase.transmitted, 0);
     }
@@ -951,7 +1126,7 @@ mod tests {
         let mut total = 0;
         let mut prev: Option<&NetworkInterfaceReading> = None;
         for current in &readings {
-            let reset = prev.is_some_and(|p| is_counter_reset(p, current));
+            let reset = prev.map_or(CounterReset::NONE, |p| detect_counter_reset(p, current));
             total += compute_traffic_increase(prev, current, reset).received;
             prev = Some(current);
         }
@@ -963,7 +1138,10 @@ mod tests {
         let mut prev = reading(Some("a"), Some(2), 0, 0);
         prev.updated_at = 1_000_000;
         let reset_at = prev.updated_at + POSSIBLE_DATA_LOSS_THRESHOLD_MS;
-        assert!(detect_possible_data_loss(1, &prev, reset_at).is_none());
+        assert!(
+            detect_possible_data_loss(1, &prev, reset_at, POSSIBLE_DATA_LOSS_THRESHOLD_MS)
+                .is_none()
+        );
     }
 
     #[test]
@@ -971,10 +1149,63 @@ mod tests {
         let mut prev = reading(Some("a"), Some(2), 0, 0);
         prev.updated_at = 1_000_000;
         let reset_at = prev.updated_at + POSSIBLE_DATA_LOSS_THRESHOLD_MS + 1;
-        let loss = detect_possible_data_loss(7, &prev, reset_at).expect("should record loss");
+        let loss = detect_possible_data_loss(7, &prev, reset_at, POSSIBLE_DATA_LOSS_THRESHOLD_MS)
+            .expect("should record loss");
         assert_eq!(loss.uuid_id, Set(7));
         assert_eq!(loss.start_time, Set(prev.updated_at));
         assert_eq!(loss.end_time, Set(reset_at));
+    }
+
+    #[test]
+    fn stale_gap_without_reset_records_possible_data_loss() {
+        let mut state = State::default();
+        let at = |minutes| TEN_OCLOCK + minutes * MINUTE;
+        let first = report(
+            at(0),
+            3600,
+            "a",
+            vec![interface_counters("eth0", 10 * GB, 20 * GB, Some(2))],
+        );
+        state.apply_report(1, &first, at(0));
+        // 计数器正常增长、未发生重置，但间隔超过静默阈值：这段窗口没有上报，也要记录
+        let received_at = at(0) + STALE_GAP_POSSIBLE_DATA_LOSS_THRESHOLD_MS + 1;
+        let second = report(
+            received_at,
+            3600,
+            "a",
+            vec![interface_counters("eth0", 20 * GB, 30 * GB, Some(2))],
+        );
+        state.apply_report(1, &second, received_at);
+        // 未重置时增量照常按差值累加
+        assert_eq!(total_received(&state, "eth0"), 10 * GB);
+        assert_eq!(state.pending_possible_data_losses.len(), 1);
+        let loss = &state.pending_possible_data_losses[0];
+        assert_eq!(loss.start_time, Set(at(0)));
+        assert_eq!(loss.end_time, Set(received_at));
+    }
+
+    #[test]
+    fn short_gap_without_reset_records_no_possible_data_loss() {
+        let mut state = State::default();
+        let at = |minutes| TEN_OCLOCK + minutes * MINUTE;
+        let first = report(
+            at(0),
+            3600,
+            "a",
+            vec![interface_counters("eth0", 10 * GB, 20 * GB, Some(2))],
+        );
+        state.apply_report(1, &first, at(0));
+        // 恰好等于静默阈值不记录（阈值是「超过」才记录）
+        let received_at = at(0) + STALE_GAP_POSSIBLE_DATA_LOSS_THRESHOLD_MS;
+        let second = report(
+            received_at,
+            3600,
+            "a",
+            vec![interface_counters("eth0", 20 * GB, 30 * GB, Some(2))],
+        );
+        state.apply_report(1, &second, received_at);
+        assert_eq!(total_received(&state, "eth0"), 10 * GB);
+        assert!(state.pending_possible_data_losses.is_empty());
     }
 
     #[tokio::test]
