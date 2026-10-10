@@ -100,9 +100,19 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download artifacts
+      # 只下载构建出的二进制（server-* / agent-*），不要把同一次运行里其他产物
+      # （比如 Docker 构建生成的 *.dockerbuild 记录）一起发布到 Release
+      - name: Download server binaries
         uses: actions/download-artifact@v8
         with:
+          pattern: server-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download agent binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: agent-*
           path: dist
           merge-multiple: true
 
