@@ -13,11 +13,6 @@ on:
         required: false
         default: false
         type: boolean
-      ref:
-        description: "要构建的 git ref（分支 / tag / commit）；留空则使用触发 workflow 的 ref"
-        required: false
-        default: ""
-        type: string
 
 permissions:
   contents: read
@@ -34,8 +29,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.ref }}
 
       - name: Resolve build matrix
         id: plan
@@ -59,8 +52,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.ref }}
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust

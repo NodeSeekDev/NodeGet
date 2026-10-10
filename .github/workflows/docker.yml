@@ -17,11 +17,6 @@ on:
         required: false
         default: false
         type: boolean
-      ref:
-        description: "构建镜像所用的 git ref（Dockerfile 等文件的来源）；留空则使用触发 workflow 的 ref"
-        required: false
-        default: ""
-        type: string
 
 jobs:
   publish-docker-server:
@@ -35,8 +30,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.ref }}
 
       - name: Check Docker Hub credentials
         shell: bash
