@@ -2,8 +2,11 @@
 
 官方 Docker 镜像由 CI 从源码编译并推送到 Docker Hub：
 
-- `genshinmc/nodeget:latest`：最新发布版本镜像
-- `genshinmc/nodeget:vX.Y.Z`：Release tag 镜像
+- `genshinmc/nodeget:latest`：最新**正式版**镜像
+- `genshinmc/nodeget:vX.Y.Z`：Release tag 镜像，预发布版本为 `vX.Y.Z-beta.N` / `vX.Y.Z-rc.N`
+- `genshinmc/nodeget:nightly`：每天从开发分支自动构建的镜像
+
+预发布版和 nightly 不保证稳定，请不要用于生产环境。`latest` 不会指向它们。
 
 ## 一键
 

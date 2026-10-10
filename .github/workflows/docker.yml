@@ -1,0 +1,95 @@
+name: docker
+
+# 可复用的 Docker 镜像发布流程：下载 build.yml 产出的 Linux musl server 二进制，
+# 构建 amd64 / arm64 镜像并推送到 Docker Hub。
+# 由 release.yml（正式版 / 预发布）和 nightly.yml 调用，只需等 Linux server 构建（build-server-linux.yml）完成，
+# 调用方需要传 `secrets: inherit`。
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "镜像版本标签，如 v0.6.1 或 nightly"
+        required: true
+        type: string
+      latest:
+        description: "是否同时更新 latest 标签（仅正式版应为 true）"
+        required: false
+        default: false
+        type: boolean
+      ref:
+        description: "构建镜像所用的 git ref（Dockerfile 等文件的来源）；留空则使用触发 workflow 的 ref"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  publish-docker-server:
+    name: Publish Docker image
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: docker.io
+      IMAGE_NAME: genshinmc/nodeget
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Check Docker Hub credentials
+        shell: bash
+        run: |
+          test -n "${DOCKERHUB_USERNAME}"
+          test -n "${DOCKERHUB_TOKEN}"
+
+      - name: Download Linux musl binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: server-*-musl
+          path: downloads
+          merge-multiple: true
+
+      - name: Prepare bin directory
+        shell: bash
+        run: |
+          mkdir -p bin
+          cp downloads/nodeget-server-linux-x86_64-musl bin/nodeget-server-amd64
+          cp downloads/nodeget-server-linux-aarch64-musl bin/nodeget-server-arm64
+          chmod 0755 bin/nodeget-server-amd64 bin/nodeget-server-arm64
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ inputs.latest }}
+            type=raw,value=${{ inputs.tag }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
