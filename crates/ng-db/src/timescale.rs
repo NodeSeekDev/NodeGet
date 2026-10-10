@@ -1,0 +1,639 @@
+//! `TimescaleDB` 时序优化初始化。
+//!
+//! `NodeGet` 的数据主体是每秒一条的监控时序数据（`dynamic_monitoring`、
+//! `dynamic_monitoring_summary`）。当主库是安装了 `timescaledb` 扩展的
+//! `PostgreSQL` 时，本模块把这些时序表转换为 `hypertable`，并按 `chunk`
+//! 配置列式压缩与自动保留策略：
+//!
+//! - **压缩**：对结束超过 `compress_after_hours` 小时的 `chunk` 启用列式压缩（`zstd`），
+//!   监控 JSON 数据通常可压缩 10 倍以上；
+//! - **保留**：当 `retention_days > 0` 时，超过该天数的 `chunk` 由后台 job
+//!   自动删除（`drop_chunks`），磁盘占用从此有上界；默认 `0` = 不启用，
+//!   避免误删历史数据（如从普通 `PostgreSQL` 迁移过来的存量）。
+//!
+//! 每次服务启动时由 [`crate::init_db_connection`] 调用，全部操作幂等：
+//! - 未安装 `timescaledb` 扩展 → 直接跳过（普通 `PostgreSQL` / `SQLite`
+//!   不受影响）；
+//! - 已是 `hypertable` / 已启用压缩 → 跳过对应转换步骤；
+//! - 压缩与保留策略每次启动按配置重新应用（先移除再注册），保证配置变更
+//!   在下次启动时生效。
+//!
+//! # 主键契约变化（重要）
+//!
+//! `hypertable` 要求所有唯一索引（含主键）包含分区列。因此把表转换为
+//! `hypertable` 时，主键从 `(id)` 调整为 **`(id, <该表的时间列>)`**（监控表为
+//! `timestamp`，流量快照为 `snapshot_time`），`id` 不再是唯一约束列
+//! （仍为自增 identity 且全局唯一）。
+//!
+//! - 现有代码（按 `id` 过滤的增删改查、无目标 `ON CONFLICT DO NOTHING`
+//!   批量写入）均不受影响；
+//! - 但**启用 `TimescaleDB` 后**，任何 `REFERENCES <table>(id)` 外键或
+//!   `ON CONFLICT (id)` 语句将不再合法，需要把目标列改为 `(id, <时间列>)`。
+//! - 该转换**不可逆**：普通 `PostgreSQL`（无 `timescaledb` 扩展）无法读取
+//!   已转换的表，降级前必须先 `untable`（官方迁移工具）或备份。
+//!
+//! # 失败处理
+//!
+//! 扩展检测或 now 函数创建失败会返回错误（阻断启动，提示环境问题）；
+//! 单表转换/策略失败仅记录 error 日志并继续（服务以普通表运行），但会输出
+//! 醒目的失败横幅，避免"以为启用了压缩/保留实际没有"的静默降级。
+//!
+//! # 为什么不在 migration 里做
+//!
+//! `create_hypertable(..., migrate_data => true)` 不能在事务块内执行，
+//! 而 `SeaORM` migration 默认在事务中运行。因此本模块放在 `Migrator::up`
+//! 之后的非事务初始化阶段，与 `SQLite` `PRAGMA` 优化属于同一层。
+
+use anyhow::Context;
+use ng_core::config::TimescaleConfig;
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
+use tracing::{debug, error, info};
+
+/// 需要转换为 `hypertable` 的时序表。
+struct TimescaleTable {
+    /// 表名
+    name: &'static str,
+    /// 默认主键约束名（`<table>_pkey`，由 `SeaORM` 建表时生成）
+    pk_name: &'static str,
+    /// 时间列（分区列）。各表不同：监控表是 `timestamp`，流量快照是 `snapshot_time`。
+    time_column: &'static str,
+    /// 压缩时的 `segmentby` 列（按 agent 分片，同一 agent 的连续行压在一起）
+    segment_by: &'static str,
+}
+
+/// 一小时 / 一天的毫秒数，`chunk` 间隔与策略时长按整数时间列（毫秒 epoch）计算。
+const MS_PER_HOUR: u64 = 3_600_000;
+const MS_PER_DAY: u64 = 86_400_000;
+
+/// 毫秒 epoch 的 `now()` 函数名，供 `set_integer_now_func` 注册。
+const NOW_FUNC: &str = "ng_epoch_ms_now";
+
+/// 参与时序优化的表清单。
+const TIMESCALE_TABLES: &[TimescaleTable] = &[
+    TimescaleTable {
+        name: "dynamic_monitoring",
+        pk_name: "dynamic_monitoring_pkey",
+        time_column: "timestamp",
+        segment_by: "uuid_id",
+    },
+    TimescaleTable {
+        name: "dynamic_monitoring_summary",
+        pk_name: "dynamic_monitoring_summary_pkey",
+        time_column: "timestamp",
+        segment_by: "uuid_id",
+    },
+    // 流量快照：由 traffic-snapshot-worker 每 traffic_snapshot_interval（默认 15 分钟）
+    // 写入一行/网卡，行数与监控表同级（长期增长），且查询均为"某 agent 某时间段"扫描，
+    // 因此同样纳入 hypertable/压缩。注意它的时间列是 snapshot_time。
+    // traffic_current_total（每网卡一行原地 upsert）与 traffic_possible_data_loss
+    // （低写入量的区间标记）是热点小表，不转换。
+    TimescaleTable {
+        name: "traffic_snapshot",
+        pk_name: "traffic_snapshot_pkey",
+        time_column: "snapshot_time",
+        segment_by: "uuid_id",
+    },
+];
+
+/// 时长 → 毫秒（`unit_ms` 为该单位的毫秒数）。
+///
+/// 溢出（超过 `i64::MAX` 毫秒，即 `SQL` `BIGINT` 上限）时返回错误，
+/// 由调用方走失败横幅路径——配置错误应显式暴露，而不是 debug panic
+/// 或 release 回绕成错误的小数值。
+fn duration_to_ms(value: u64, unit_ms: u64, unit: &str) -> anyhow::Result<u64> {
+    let ms = value.checked_mul(unit_ms).ok_or_else(|| {
+        anyhow::anyhow!("timescale 时长配置过大（{value} {unit}），超出 SQL BIGINT 毫秒上限")
+    })?;
+    if i64::try_from(ms).is_err() {
+        return Err(anyhow::anyhow!(
+            "timescale 时长配置过大（{value} {unit}），超出 SQL BIGINT 毫秒上限"
+        ));
+    }
+    Ok(ms)
+}
+
+/// 小时 → 毫秒（`chunk` 间隔与压缩延迟按小时配置）。
+fn hours_to_ms(hours: u64) -> anyhow::Result<u64> {
+    duration_to_ms(hours, MS_PER_HOUR, "小时")
+}
+
+/// 天 → 毫秒（保留期 `retention_days` 仍以天为单位）。
+fn days_to_ms(days: u64) -> anyhow::Result<u64> {
+    duration_to_ms(days, MS_PER_DAY, "天")
+}
+
+/// 压缩策略的调度间隔（毫秒）：优先跟随 hypertable 的**实际** chunk 间隔。
+///
+/// 压缩的工作单元是 chunk。调度与 chunk 间隔一致时每轮最多只压一个新
+/// chunk；若用 `TimescaleDB` 默认的 1 天调度而 chunk 是小时级，一天内到期的
+/// 多个 chunk 会堆在一次 job 里压缩，形成磁盘 I/O 尖峰（生产库实测：一次
+/// 5.1 GB / 335 s）。
+///
+/// 之所以读实际值而不是配置：chunk 间隔只在 `create_hypertable` 时由配置
+/// 决定，之后可用 `set_chunk_time_interval()` 手工调整（生产库把
+/// `dynamic_monitoring` 调成 6 小时摊薄 I/O），此时配置值与之不一致，按配置
+/// 回写会把手工调整覆盖掉。
+///
+/// 读不到或读到非法值（`NULL` / 非正数）时回落到配置换算出的毫秒数。
+const fn compression_schedule_ms(actual_chunk_ms: Option<i64>, fallback_ms: u64) -> u64 {
+    match actual_chunk_ms {
+        Some(ms) if ms > 0 => ms as u64,
+        _ => fallback_ms,
+    }
+}
+
+/// 把毫秒间隔渲染成 SQL `interval` 表达式（供
+/// `add_compression_policy(..., schedule_interval => ...)` 使用）。
+///
+/// 入参只可能来自查询到的整数或 `days_to_ms`，故拼接安全。
+fn interval_ms_literal(ms: u64) -> String {
+    format!("{ms} * INTERVAL '1 millisecond'")
+}
+
+/// 为 SQL 标识符加双引号并转义内嵌双引号（防注入）。
+///
+/// 当前所有入参均为编译期常量，此函数是防御性措施，同时保证 `schema`
+/// 限定名拼装正确。
+fn quote_ident(s: &str) -> String {
+    format!("\"{}\"", s.replace('"', "\"\""))
+}
+
+/// 构造 Timescale 的 `regclass` 文本参数：`'"schema"."name"'`。
+///
+/// 与 `quote_ident` 一致对标识符加双引号并转义，使含大写/特殊字符的
+/// `schema`（`current_schema()` 为运行时值）也能被 `PostgreSQL` 正确解析，
+/// 文本内的单引号转义为 `''`。
+fn regclass_literal(schema: &str, name: &str) -> String {
+    let qualified = format!("{}.{}", quote_ident(schema), quote_ident(name));
+    format!("'{}'", qualified.replace('\'', "''"))
+}
+
+/// 初始化 `TimescaleDB` 时序优化（幂等）。
+///
+/// 仅在 `PostgreSQL` 且安装 `timescaledb` 扩展时执行；否则静默跳过，
+/// 保证普通部署不受任何影响。
+///
+/// # Errors
+///
+/// 当扩展检测或 now 函数创建失败时返回错误（阻断启动，提示环境问题）；
+/// 单表转换/策略失败仅记录 error 日志并继续，不影响服务启动。
+pub async fn setup_timescale_if_available(
+    db: &DatabaseConnection,
+    config: Option<&TimescaleConfig>,
+) -> anyhow::Result<()> {
+    if db.get_database_backend() != DatabaseBackend::Postgres {
+        return Ok(());
+    }
+    if !has_timescale_extension(db).await? {
+        debug!(target: "db", "timescaledb extension not installed; skipping timescale setup");
+        return Ok(());
+    }
+
+    let config = config.cloned().unwrap_or_default();
+    info!(
+        target: "db",
+        chunk_interval_hours = config.effective_chunk_interval_hours(),
+        compress_after_hours = config.effective_compress_after_hours(),
+        retention_days = config.retention_days,
+        "timescaledb detected; applying hypertable setup"
+    );
+
+    // 当前连接的默认 schema（search_path 第一个）。所有 DDL / 查询都显式
+    // 限定该 schema，消除对 search_path 的隐式依赖。
+    let schema = current_schema(db).await?;
+    let func_ref = format!("{}.{}", quote_ident(&schema), quote_ident(NOW_FUNC));
+
+    // 创建毫秒 epoch now() 函数（幂等，固定建在当前 schema）。
+    // STABLE：事务内返回值一致，满足 TimescaleDB 对 now 函数的要求。
+    db.execute_unprepared(&format!(
+        "CREATE OR REPLACE FUNCTION {func_ref}() RETURNS BIGINT \
+         LANGUAGE SQL STABLE PARALLEL SAFE \
+         AS $$ SELECT (extract(epoch FROM now()) * 1000)::BIGINT $$;",
+    ))
+    .await
+    .context("failed to create timescale now() function")?;
+
+    let mut failures = 0;
+    for table in TIMESCALE_TABLES {
+        if let Err(e) = setup_table(db, table, &config, &schema).await {
+            failures += 1;
+            error!(target: "db", table = table.name, error = %e, "timescale setup failed for table");
+        }
+    }
+    if failures > 0 {
+        // 醒目失败横幅：单表失败不阻断启动（普通表仍可用），但必须让
+        // 运维明确知道压缩/保留策略可能未生效，避免静默降级。
+        error!(
+            target: "db",
+            failed = failures,
+            total = TIMESCALE_TABLES.len(),
+            "TimescaleDB 初始化存在失败：服务将以普通表继续运行，压缩/保留策略可能未生效。\
+             请检查上方 error 日志修复后重启；若确认无需 TimescaleDB，可忽略。"
+        );
+    } else {
+        info!(target: "db", "timescale setup completed");
+    }
+    Ok(())
+}
+
+/// 把表转换为 `hypertable` 所需的三条 DDL（纯字符串生成，便于单测覆盖时间列接线）。
+///
+/// 返回顺序：NULL 时间列防御检查、主键加宽、`create_hypertable`。
+/// 时间列由 [`TimescaleTable`] 提供——各表不同（监控表是 `timestamp`，流量快照是
+/// `snapshot_time`）。任何一处漏接都会让 `TimescaleDB` 报"列不存在"，使该表退化
+/// 为普通表（启动横幅报错但不阻断服务），因此这里集中生成并由单测守住。
+fn conversion_sql(
+    table: &TimescaleTable,
+    table_ref: &str,
+    pk_ref: &str,
+    table_regclass: &str,
+    chunk_ms: u64,
+) -> (String, String, String) {
+    // 时间列是编译期常量，作为标识符内插（quote_ident 保证大小写/特殊字符正确）；
+    // create_hypertable 的第二个参数是 text 参数，用带引号的字面量。
+    let time = quote_ident(table.time_column);
+    let null_check = format!("SELECT 1 FROM {table_ref} WHERE {time} IS NULL LIMIT 1");
+    let pk_widen = format!(
+        "ALTER TABLE {table_ref} DROP CONSTRAINT IF EXISTS {pk_ref}; \
+         ALTER TABLE {table_ref} ADD PRIMARY KEY (id, {time});"
+    );
+    let create = format!(
+        "SELECT create_hypertable({table_regclass}, '{time_col}', \
+         chunk_time_interval => {chunk_ms}, migrate_data => true);",
+        time_col = table.time_column,
+    );
+    (null_check, pk_widen, create)
+}
+
+/// 启用压缩的 DDL。
+///
+/// `compress_orderby` 必须是该表的时间列；`compress_segmentby` 接收列名的
+/// 字符串字面量（而非标识符），列名为编译期常量。
+fn compression_enable_sql(table: &TimescaleTable, table_ref: &str) -> String {
+    format!(
+        "ALTER TABLE {table_ref} SET (timescaledb.compress, \
+         timescaledb.compress_segmentby = '{segment_by}', \
+         timescaledb.compress_orderby = '{time_column} DESC');",
+        segment_by = table.segment_by,
+        time_column = table.time_column,
+    )
+}
+
+/// 对单个表执行幂等的 `hypertable` 转换与策略配置。
+async fn setup_table(
+    db: &DatabaseConnection,
+    table: &TimescaleTable,
+    config: &TimescaleConfig,
+    schema: &str,
+) -> anyhow::Result<()> {
+    let table_ref = format!("{}.{}", quote_ident(schema), quote_ident(table.name));
+    let pk_ref = quote_ident(table.pk_name);
+    // Timescale 的 regclass 文本参数（create_hypertable / 策略函数），
+    // 用 quote_ident 限定 schema（含大写/特殊字符的 schema 也能正确解析）。
+    let table_regclass = regclass_literal(schema, table.name);
+    let now_regclass = regclass_literal(schema, NOW_FUNC);
+
+    if !is_hypertable(db, table.name).await? {
+        let (null_check_sql, pk_widen_sql, create_hypertable_sql) = conversion_sql(
+            table,
+            &table_ref,
+            &pk_ref,
+            &table_regclass,
+            hours_to_ms(config.effective_chunk_interval_hours())?,
+        );
+
+        // 防御性检查：时间列在迁移定义中为 NOT NULL，正常情况下不存在 NULL；
+        // 一旦旧库/脏数据出现 NULL，ADD PRIMARY KEY (id, <时间列>) 会永久失败
+        // 且每次启动重复报错。此处提前检查并给出明确错误。
+        let has_null_ts = db
+            .query_one_raw(Statement::from_string(
+                DatabaseBackend::Postgres,
+                null_check_sql,
+            ))
+            .await?;
+        if has_null_ts.is_some() {
+            anyhow::bail!(
+                "table {} contains rows with NULL {}; cannot convert to hypertable \
+                 (primary key (id, {}) requires a non-null time column)",
+                table.name,
+                table.time_column,
+                table.time_column
+            );
+        }
+
+        // hypertable 要求所有唯一索引（含主键）包含分区列（即该表的时间列），
+        // 因此先把主键从 (id) 调整为 (id, <时间列>)。
+        // id 仍为自增 identity 且全局唯一，SeaORM 的按 id 删除不受影响。
+        // 注意：pk_name 依赖 SeaORM 建表时生成的默认约束名 `<table>_pkey`；
+        // 若主键约束曾被手工改名，此 DROP 不命中、下方 ADD PRIMARY KEY 会
+        // 因主键已存在而失败（错误信息会提示，需按实际约束名调整）。
+        // 注意：此 DDL 与下方 create_hypertable 分属两个隐式事务，进程
+        // 间隙被杀时表会短暂无主键（下次启动可自愈，因为再跑会先检查
+        // is_hypertable 再重建主键）。
+        db.execute_unprepared(&pk_widen_sql).await?;
+
+        // migrate_data => true：把表内已有数据迁入 hypertable。
+        // 必须在非事务上下文执行，见模块文档。
+        // 首次转换会随存量数据量拉长启动时间（一次性成本）。
+        db.execute_unprepared(&create_hypertable_sql).await?;
+        info!(target: "db", table = table.name, "converted to hypertable");
+    }
+
+    // 注册整数时间 now() 函数（幂等：已设置则跳过；重复注册会报错）。
+    if !has_integer_now_func(db, table.name).await? {
+        db.execute_unprepared(&format!(
+            "SELECT set_integer_now_func({table_regclass}, {now_regclass});",
+        ))
+        .await?;
+        info!(target: "db", table = table.name, now_func = %NOW_FUNC, "integer_now_func registered");
+    }
+
+    // 压缩设置（仅首次开启；开启后 segmentby/orderby 不可随意变更）。
+    if !is_compression_enabled(db, table.name).await? {
+        db.execute_unprepared(&compression_enable_sql(table, &table_ref))
+            .await?;
+        info!(target: "db", table = table.name, "compression enabled");
+    }
+
+    // 压缩策略：先移除再注册，使配置变更在下次启动时生效（幂等）。
+    // compress_after_hours = 0 表示已结束的 chunk 立即可压缩。
+    // schedule_interval 与 chunk 间隔对齐（见 compression_schedule_ms），
+    // 否则重启后策略会被重建为默认的 1 天调度，把多个到期 chunk 堆到一次。
+    let chunk_ms = hours_to_ms(config.effective_chunk_interval_hours())?;
+    let schedule_ms = compression_schedule_ms(chunk_interval_ms(db, table.name).await?, chunk_ms);
+    let compress_after_ms = hours_to_ms(config.effective_compress_after_hours())?;
+    db.execute_unprepared(&format!(
+        "SELECT remove_compression_policy({table_regclass}, if_exists => true); \
+         SELECT add_compression_policy({table_regclass}, compress_after => {ms}, \
+         schedule_interval => {schedule});",
+        ms = compress_after_ms,
+        schedule = interval_ms_literal(schedule_ms),
+    ))
+    .await?;
+    info!(target: "db", table = table.name,
+          compress_after_hours = config.effective_compress_after_hours(),
+          compress_after_ms = compress_after_ms, schedule_interval_ms = schedule_ms,
+          "compression policy applied");
+
+    if config.retention_days > 0 {
+        db.execute_unprepared(&format!(
+            "SELECT remove_retention_policy({table_regclass}, if_exists => true); \
+             SELECT add_retention_policy({table_regclass}, drop_after => {ms});",
+            ms = days_to_ms(config.retention_days)?,
+        ))
+        .await?;
+        info!(target: "db", table = table.name, retention_days = config.retention_days, "retention policy applied");
+    } else {
+        // 显式关闭：确保不留残留策略（例如从 >0 改回 0）。
+        db.execute_unprepared(&format!(
+            "SELECT remove_retention_policy({table_regclass}, if_exists => true);",
+        ))
+        .await?;
+        debug!(target: "db", table = table.name, "retention disabled (retention_days = 0)");
+    }
+
+    Ok(())
+}
+
+/// 是否已安装 `timescaledb` 扩展。
+async fn has_timescale_extension(db: &DatabaseConnection) -> anyhow::Result<bool> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT 1 FROM pg_extension WHERE extname = 'timescaledb' LIMIT 1".to_owned(),
+        ))
+        .await?;
+    Ok(row.is_some())
+}
+
+/// 当前连接的默认 schema（`search_path` 第一个，且已存在的 schema）。
+async fn current_schema(db: &DatabaseConnection) -> anyhow::Result<String> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT current_schema() AS schema".to_owned(),
+        ))
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("failed to query current_schema()"))?;
+    row.try_get::<Option<String>>("", "schema")
+        .map_err(anyhow::Error::from)?
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("current_schema() returned NULL/empty"))
+}
+
+/// 表是否已是 `hypertable`（限定当前 schema，避免多 schema 同名表误判）。
+async fn is_hypertable(db: &DatabaseConnection, table: &str) -> anyhow::Result<bool> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            format!(
+                "SELECT 1 FROM timescaledb_information.hypertables \
+                 WHERE hypertable_name = '{table}' \
+                   AND hypertable_schema = current_schema() LIMIT 1"
+            ),
+        ))
+        .await?;
+    Ok(row.is_some())
+}
+
+/// 表是否已启用压缩（限定当前 schema）。
+async fn is_compression_enabled(db: &DatabaseConnection, table: &str) -> anyhow::Result<bool> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            format!(
+                "SELECT 1 FROM timescaledb_information.hypertables \
+                 WHERE hypertable_name = '{table}' \
+                   AND hypertable_schema = current_schema() \
+                   AND compression_enabled LIMIT 1"
+            ),
+        ))
+        .await?;
+    Ok(row.is_some())
+}
+
+/// 时间维度是否已注册 `integer_now_func`（限定当前 schema）。
+async fn has_integer_now_func(db: &DatabaseConnection, table: &str) -> anyhow::Result<bool> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            format!(
+                "SELECT 1 FROM timescaledb_information.dimensions \
+                 WHERE hypertable_name = '{table}' \
+                   AND hypertable_schema = current_schema() \
+                   AND integer_now_func IS NOT NULL LIMIT 1"
+            ),
+        ))
+        .await?;
+    Ok(row.is_some())
+}
+
+/// hypertable 时间维度的**实际** chunk 间隔（毫秒）。
+///
+/// 整数时间列取 `integer_interval`；时间戳列回落到 `time_interval`（秒）。
+/// 限定当前 schema，避免多 schema 同名表误判。
+async fn chunk_interval_ms(db: &DatabaseConnection, table: &str) -> anyhow::Result<Option<i64>> {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            format!(
+                "SELECT COALESCE(integer_interval, \
+                        (extract(epoch FROM time_interval) * 1000))::BIGINT AS ms \
+                 FROM timescaledb_information.dimensions \
+                 WHERE hypertable_name = '{table}' \
+                   AND hypertable_schema = current_schema() \
+                 ORDER BY dimension_number LIMIT 1"
+            ),
+        ))
+        .await?;
+    let ms = row
+        .map(|row| row.try_get::<Option<i64>>("", "ms"))
+        .transpose()?
+        .flatten();
+    Ok(ms)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::Database;
+
+    #[test]
+    fn days_to_ms_rejects_overflow() {
+        // 正常值与零值
+        assert_eq!(days_to_ms(0).unwrap(), 0);
+        assert_eq!(days_to_ms(1).unwrap(), 86_400_000);
+        assert_eq!(days_to_ms(7).unwrap(), 604_800_000);
+        // 刚好压线（i64::MAX 毫秒）应通过
+        let max_days = i64::MAX as u64 / MS_PER_DAY;
+        assert!(days_to_ms(max_days).is_ok());
+        // 超过 SQL BIGINT 上限（或乘法溢出）应显式报错，而不是回绕/panic
+        assert!(days_to_ms(max_days + 1).is_err());
+        assert!(days_to_ms(u64::MAX).is_err());
+    }
+
+    #[test]
+    fn hours_to_ms_rejects_overflow() {
+        assert_eq!(hours_to_ms(0).unwrap(), 0);
+        assert_eq!(hours_to_ms(6).unwrap(), 21_600_000);
+        assert_eq!(hours_to_ms(24).unwrap(), MS_PER_DAY);
+        // 刚好压线（i64::MAX 毫秒）应通过，超过则显式报错
+        let max_hours = i64::MAX as u64 / MS_PER_HOUR;
+        assert!(hours_to_ms(max_hours).is_ok());
+        assert!(hours_to_ms(max_hours + 1).is_err());
+        assert!(hours_to_ms(u64::MAX).is_err());
+    }
+
+    #[test]
+    fn compression_schedule_follows_chunk_interval() {
+        // 实际 chunk 间隔优先（生产库把 dynamic_monitoring 设为 6 小时）
+        assert_eq!(
+            compression_schedule_ms(Some(21_600_000), 86_400_000),
+            21_600_000
+        );
+        // 读不到 / 非正值 → 回落到配置换算出的毫秒数，而不是 0 或 panic
+        assert_eq!(compression_schedule_ms(None, 21_600_000), 21_600_000);
+        assert_eq!(compression_schedule_ms(Some(0), 172_800_000), 172_800_000);
+        assert_eq!(compression_schedule_ms(Some(-1), 86_400_000), 86_400_000);
+        // 渲染成 SQL interval 表达式
+        assert_eq!(
+            interval_ms_literal(21_600_000),
+            "21600000 * INTERVAL '1 millisecond'"
+        );
+    }
+
+    /// 每张纳入时序管理的表都必须用**自己的**时间列生成 DDL。
+    /// 这是流量快照（`snapshot_time`）能被正确转换的唯一保障：漏接会变成
+    /// "列不存在" → 该表初始化失败，退化为普通表。
+    #[test]
+    fn timeseries_tables_use_their_own_time_column() {
+        let snapshot = TIMESCALE_TABLES
+            .iter()
+            .find(|t| t.name == "traffic_snapshot")
+            .expect("traffic_snapshot 必须纳入时序管理");
+        assert_eq!(snapshot.time_column, "snapshot_time");
+        assert_eq!(snapshot.pk_name, "traffic_snapshot_pkey");
+        assert_eq!(snapshot.segment_by, "uuid_id");
+
+        for table in TIMESCALE_TABLES {
+            let (null_check, pk_widen, create) = conversion_sql(
+                table,
+                "\"public\".\"t\"",
+                "\"t_pkey\"",
+                "'\"public\".\"t\"'",
+                21_600_000,
+            );
+            let time = quote_ident(table.time_column);
+            assert!(
+                null_check.contains(&format!("WHERE {time} IS NULL")),
+                "{}: {null_check}",
+                table.name
+            );
+            assert!(
+                pk_widen.contains(&format!("ADD PRIMARY KEY (id, {time})")),
+                "{}: {pk_widen}",
+                table.name
+            );
+            assert!(
+                create.contains(&format!("'{}'", table.time_column))
+                    && create.contains("migrate_data => true"),
+                "{}: {create}",
+                table.name
+            );
+            let compress = compression_enable_sql(table, "\"public\".\"t\"");
+            assert!(
+                compress.contains(&format!("compress_segmentby = '{}'", table.segment_by))
+                    && compress
+                        .contains(&format!("compress_orderby = '{} DESC'", table.time_column)),
+                "{}: {compress}",
+                table.name
+            );
+        }
+    }
+
+    /// 按唯一键原地 upsert 的热点小表不纳入 hypertable：
+    /// 行数少、写入模式是原地更新，分区与压缩没有收益。
+    #[test]
+    fn upsert_tables_stay_plain() {
+        for name in ["traffic_current_total", "traffic_possible_data_loss"] {
+            assert!(
+                !TIMESCALE_TABLES.iter().any(|t| t.name == name),
+                "{name} 不应被转换为 hypertable"
+            );
+        }
+    }
+
+    #[test]
+    fn quote_ident_quotes_and_escapes() {
+        assert_eq!(quote_ident("dynamic_monitoring"), "\"dynamic_monitoring\"");
+        assert_eq!(quote_ident("a\"b"), "\"a\"\"b\"");
+        assert_eq!(quote_ident(""), "\"\"");
+    }
+
+    #[test]
+    fn regclass_literal_quotes_schema_and_escapes() {
+        // 普通 schema：双引号包裹后 PG 解析等价
+        assert_eq!(
+            regclass_literal("public", "dynamic_monitoring"),
+            "'\"public\".\"dynamic_monitoring\"'"
+        );
+        // 含大写/空格/特殊字符的 schema（current_schema() 运行时值）必须被正确解析
+        assert_eq!(
+            regclass_literal("My Schema", "Tbl"),
+            "'\"My Schema\".\"Tbl\"'"
+        );
+        // 单引号转义为 ''
+        assert_eq!(regclass_literal("a'b", "t"), "'\"a''b\".\"t\"'");
+    }
+
+    #[tokio::test]
+    async fn setup_skips_non_postgres_silently() {
+        // SQLite（内存）不是 PostgreSQL，应直接跳过且不报错，
+        // 保证普通部署完全不受影响。
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let res = setup_timescale_if_available(&db, None).await;
+        assert!(res.is_ok(), "non-postgres must be skipped: {res:?}");
+        let res = setup_timescale_if_available(&db, Some(&TimescaleConfig::default())).await;
+        assert!(res.is_ok(), "non-postgres must be skipped: {res:?}");
+    }
+}

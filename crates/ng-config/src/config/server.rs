@@ -118,6 +118,8 @@ pub struct DatabaseConfig {
     pub max_lifetime_ms: Option<u64>,
     /// 最大连接数
     pub max_connections: Option<u32>,
+    /// TimescaleDB 时序优化配置（可选，仅对安装了 timescaledb 扩展的 PostgreSQL 生效）
+    pub timescale: Option<ng_core::config::TimescaleConfig>,
 }
 
 impl ServerConfig {

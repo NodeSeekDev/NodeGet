@@ -24,3 +24,6 @@ libc = { version = "0.2.175", default-features = false, optional = true }
 default = []
 for-server = ["dep:libc"]
 for-agent = ["dep:libc"]
+
+[dev-dependencies]
+toml = { workspace = true }
