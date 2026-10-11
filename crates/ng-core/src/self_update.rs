@@ -146,6 +146,17 @@ fn parse_version_body(body: impl AsRef<str>) -> Option<(u32, u32, u32)> {
     Some((x, y, z))
 }
 
+/// 解析当前程序的版本号，允许带预发布后缀（如 `0.6.1-rc.1`、`0.6.0-nightly.20261011`）。
+///
+/// - `body`：不带 `v` 前缀的版本号
+/// - 返回 ((major, minor, patch), 是否带后缀) 或 None
+fn parse_current_version(body: &str) -> Option<((u32, u32, u32), bool)> {
+    match body.split_once(['-', '+']) {
+        Some((core, _)) => Some((parse_version_body(core)?, true)),
+        None => Some((parse_version_body(body)?, false)),
+    }
+}
+
 /// 判断是否需要更新：目标版本与当前版本不同时返回 true。
 fn should_update(target: (u32, u32, u32), current: (u32, u32, u32)) -> bool {
     target != current
@@ -167,10 +178,18 @@ pub fn canonical_exe_path() -> Option<std::path::PathBuf> {
 
 /// 检查是否需要更新，比较目标版本与当前版本。
 ///
-/// - `tag`：目标版本标签（如 `v0.5.2`）
+/// - `tag`：目标版本标签（如 `v0.5.2`），必须是不带后缀的正式版
 /// - 返回 (当前版本, 目标版本, 是否需要更新)
 ///   版本解析失败时对应版本为 (0,0,0) 且不需要更新
+///
+/// 当前版本带预发布后缀（rc、beta、nightly）时，即使数字部分与目标相同也视为需要更新，
+/// 这样预发布版和 nightly 可以回到同号的正式版。
 pub fn check_if_update_needed(tag: &str) -> ((u32, u32, u32), (u32, u32, u32), bool) {
+    check_update(&NodeGetVersion::get().cargo_version, tag)
+}
+
+/// `check_if_update_needed` 的实际逻辑，当前版本号由参数传入。
+fn check_update(current: &str, tag: &str) -> ((u32, u32, u32), (u32, u32, u32), bool) {
     let target_version = match parse_version(tag) {
         None => {
             return ((0, 0, 0), (0, 0, 0), false);
@@ -178,7 +197,7 @@ pub fn check_if_update_needed(tag: &str) -> ((u32, u32, u32), (u32, u32, u32), b
         Some(v) => v,
     };
 
-    let current_version = match parse_version_body(NodeGetVersion::get().cargo_version.clone()) {
+    let (current_version, current_is_prerelease) = match parse_current_version(current) {
         None => {
             return ((0, 0, 0), target_version, false);
         }
@@ -188,7 +207,7 @@ pub fn check_if_update_needed(tag: &str) -> ((u32, u32, u32), (u32, u32, u32), b
     (
         current_version,
         target_version,
-        should_update(target_version, current_version),
+        current_is_prerelease || should_update(target_version, current_version),
     )
 }
 
@@ -360,7 +379,10 @@ pub fn restart_process_with_exec_v() -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_if_update_needed, parse_version, parse_version_body, should_update};
+    use super::{
+        check_if_update_needed, check_update, parse_current_version, parse_version,
+        parse_version_body, should_update,
+    };
 
     // ── parse_version ───────────────────────────────────────────────
 
@@ -485,5 +507,91 @@ mod tests {
         assert_eq!(current, (0, 0, 0));
         assert_eq!(target, (0, 0, 0));
         assert!(!needed);
+    }
+
+    // ── parse_current_version ────────────────────────────────────────
+
+    #[test]
+    fn parse_current_version_stable() {
+        assert_eq!(parse_current_version("0.6.0"), Some(((0, 6, 0), false)));
+    }
+
+    #[test]
+    fn parse_current_version_rc() {
+        assert_eq!(parse_current_version("0.6.1-rc.1"), Some(((0, 6, 1), true)));
+    }
+
+    #[test]
+    fn parse_current_version_nightly() {
+        assert_eq!(
+            parse_current_version("0.6.0-nightly.20261011"),
+            Some(((0, 6, 0), true))
+        );
+    }
+
+    #[test]
+    fn parse_current_version_build_metadata() {
+        assert_eq!(
+            parse_current_version("0.6.0+build5"),
+            Some(((0, 6, 0), true))
+        );
+    }
+
+    #[test]
+    fn parse_current_version_invalid() {
+        assert_eq!(parse_current_version(""), None);
+        assert_eq!(parse_current_version("0.6"), None);
+        assert_eq!(parse_current_version("-rc.1"), None);
+    }
+
+    // ── check_update：预发布版 / nightly 回到正式版 ────────────────────
+
+    #[test]
+    fn check_update_stable_same_version_no_update() {
+        assert_eq!(
+            check_update("0.6.0", "v0.6.0"),
+            ((0, 6, 0), (0, 6, 0), false)
+        );
+    }
+
+    #[test]
+    fn check_update_stable_to_newer_stable() {
+        assert!(check_update("0.6.0", "v0.6.1").2);
+    }
+
+    #[test]
+    fn check_update_rc_to_same_stable() {
+        assert_eq!(
+            check_update("0.6.1-rc.1", "v0.6.1"),
+            ((0, 6, 1), (0, 6, 1), true)
+        );
+    }
+
+    #[test]
+    fn check_update_nightly_to_same_stable() {
+        assert!(check_update("0.6.0-nightly.20261011", "v0.6.0").2);
+    }
+
+    #[test]
+    fn check_update_nightly_to_older_stable() {
+        // 允许降级到正式版，与稳定版之间的行为一致
+        assert!(check_update("0.6.1-nightly.20261011", "v0.6.0").2);
+    }
+
+    #[test]
+    fn check_update_prerelease_tag_rejected() {
+        // 目标必须是正式版，带后缀的标签仍然被拒绝
+        assert_eq!(
+            check_update("0.6.0", "v0.6.1-rc.1"),
+            ((0, 0, 0), (0, 0, 0), false)
+        );
+    }
+
+    #[test]
+    fn check_update_unparsable_current_no_update() {
+        assert_eq!(
+            check_update("garbage", "v0.6.0"),
+            ((0, 0, 0), (0, 6, 0), false)
+        );
     }
 }
