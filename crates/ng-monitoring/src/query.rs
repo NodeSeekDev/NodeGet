@@ -287,29 +287,26 @@ pub struct DynamicSummaryResponseItem {
     pub receive_speed: Option<Value>,
 }
 
-/// 流量查询的返回方式。
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub enum TrafficGranularity {
-    /// 只返回时间段内的流量合计
-    Total,
-    /// 返回时间段内的每一条总流量快照
-    Detail,
-    /// 返回每块网卡有快照数据的时间范围，忽略 `start_time` 和 `end_time`
-    Range,
-}
-
-/// 流量查询结构体。
+/// 总流量查询结构体。
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrafficQuery {
+pub struct TrafficTotalQuery {
     /// 设备 UUID
     pub uuid: uuid::Uuid,
     /// 开始时间（毫秒），不填表示从最早开始
     pub start_time: Option<i64>,
     /// 结束时间（毫秒），不填表示到现在
     pub end_time: Option<i64>,
-    /// 返回方式
-    pub granularity: TrafficGranularity,
+}
+
+/// 流量明细查询结构体。
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrafficDetailQuery {
+    /// 设备 UUID
+    pub uuid: uuid::Uuid,
+    /// 开始时间（毫秒），不填表示从最早开始
+    pub start_time: Option<i64>,
+    /// 结束时间（毫秒），不填表示到现在
+    pub end_time: Option<i64>,
 }
 
 /// 单块网卡在时间段内的流量。
@@ -345,7 +342,7 @@ pub struct PossibleDataLossItem {
     pub end_time: i64,
 }
 
-/// 流量查询响应（`granularity` 为 `total`）。
+/// 总流量查询响应。
 #[derive(Serialize)]
 pub struct TrafficTotalResponse {
     /// 设备 UUID
@@ -364,7 +361,7 @@ pub struct TrafficTotalResponse {
     pub possible_data_losses: Vec<PossibleDataLossItem>,
 }
 
-/// 流量查询响应（`granularity` 为 `detail`）。
+/// 流量明细查询响应。
 #[derive(Serialize)]
 pub struct TrafficDetailResponse {
     /// 设备 UUID
@@ -390,7 +387,7 @@ pub struct InterfaceSnapshotRangeItem {
     pub last_snapshot_time: i64,
 }
 
-/// 流量查询响应（`granularity` 为 `range`）。
+/// 快照时间范围查询响应。
 #[derive(Serialize)]
 pub struct TrafficRangeResponse {
     /// 设备 UUID
