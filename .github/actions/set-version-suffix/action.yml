@@ -1,0 +1,29 @@
+name: set-version-suffix
+description: 给 Cargo.toml 的 workspace 版本号追加预发布后缀（只改本次检出，不会提交）
+inputs:
+  suffix:
+    description: 版本号后缀，如 nightly.20261011，最终版本号为 0.6.0-nightly.20261011；留空则不改动
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Append version suffix
+      if: inputs.suffix != ''
+      shell: bash
+      env:
+        SUFFIX: ${{ inputs.suffix }}
+      run: |
+        # 只改 [workspace.package] 里的 version，server 和 agent 都继承这个版本号
+        awk -v suffix="${SUFFIX}" '
+          /^\[workspace\.package\]/ { in_section = 1 }
+          in_section && /^version[[:space:]]*=/ { sub(/"[[:space:]]*$/, "-" suffix "\""); in_section = 0 }
+          { print }
+        ' Cargo.toml > Cargo.toml.tmp
+        mv Cargo.toml.tmp Cargo.toml
+
+        if ! grep -q -- "-${SUFFIX}\"" Cargo.toml; then
+          echo "failed to append version suffix to Cargo.toml" >&2
+          exit 1
+        fi
+        awk '/^\[workspace\.package\]/{f=1} f && /^version/{print "version set to: " $0; exit}' Cargo.toml

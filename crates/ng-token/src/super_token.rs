@@ -10,7 +10,10 @@ use ng_core::error::NodegetError;
 use ng_core::permission::token_auth::TokenOrAuth;
 use ng_core::utils::generate_random_string;
 use ng_db::entity::token;
-use sea_orm::{EntityTrait, Set, TransactionTrait};
+use sea_orm::sea_query::{Expr, Func, Query, SelectStatement, SimpleExpr, SubQueryStatement};
+use sea_orm::{
+    ConnectionTrait, DatabaseBackend, EntityName, EntityTrait, IdenStatic, Set, TransactionTrait,
+};
 use subtle::ConstantTimeEq;
 use tracing::debug;
 
@@ -18,9 +21,51 @@ use crate::cache::TokenCache;
 use crate::hash_string;
 use crate::hash_to_bytes;
 
+/// 构造把 `token.id` 序列设为 `MAX(id)` 的查询，即
+/// `SELECT setval(pg_get_serial_sequence('token', 'id'), (SELECT MAX(id) FROM token))`。
+///
+/// `setval` 与 `pg_get_serial_sequence` 是 PostgreSQL 专有函数，用 `Func::cust` 引入；
+/// 表名、列名取自实体定义，不写死字符串。
+fn build_sync_sequence_statement() -> SelectStatement {
+    let max_id = Query::select()
+        .expr(Func::max(Expr::col(token::Column::Id)))
+        .from(token::Entity)
+        .to_owned();
+    let sequence = Func::cust("pg_get_serial_sequence")
+        .arg(Expr::val(token::Entity.table_name()))
+        .arg(Expr::val(token::Column::Id.as_str()));
+
+    Query::select()
+        .expr(Func::cust("setval").arg(sequence).arg(SimpleExpr::SubQuery(
+            None,
+            Box::new(SubQueryStatement::SelectStatement(max_id)),
+        )))
+        .to_owned()
+}
+
+/// 将 PostgreSQL 的 `token.id` 自增序列推进到当前最大 ID。
+///
+/// 超级令牌以显式 ID=1 插入，不会消耗序列；全新部署时序列仍停在起点，
+/// 之后第一次创建令牌会再分到 ID=1，撞上 `token_pkey` 主键冲突。
+/// 插入后把序列设为 `MAX(id)`，下一个令牌即从 2 开始。
+/// SQLite 的自增取自当前最大 rowid，无需处理，直接跳过。
+///
+/// 失败只记录日志、不向上返回错误：此时超级令牌已写入数据库，
+/// 若因此让初始化报错，用户将拿不到刚生成的凭据。
+async fn sync_token_id_sequence(db: &sea_orm::DatabaseConnection) {
+    if db.get_database_backend() != DatabaseBackend::Postgres {
+        return;
+    }
+
+    if let Err(e) = db.execute(&build_sync_sequence_statement()).await {
+        tracing::error!(target: "token", error = %e, "Failed to advance token id sequence after inserting super token");
+    }
+}
+
 /// 向数据库插入一条新的超级令牌记录。
 ///
 /// 固定 ID 为 1，username 为 "root"，token_limit 为空数组（超级令牌不受 Limit 约束）。
+/// 插入成功后在 PostgreSQL 上同步推进 `token.id` 序列，避免后续创建令牌时主键冲突。
 ///
 /// - `db`：数据库连接
 /// - 返回：`(full_token, raw_password)` 元组，full_token 格式为 `key:secret`
@@ -51,6 +96,7 @@ async fn insert_new_super_token(
     };
 
     token::Entity::insert(super_token_model).exec(db).await?;
+    sync_token_id_sequence(db).await;
 
     debug!(target: "token", "Super token inserted into database");
     Ok((full_token, raw_password))
@@ -206,5 +252,19 @@ pub async fn check_super_token(token_or_auth: &TokenOrAuth) -> anyhow::Result<bo
             debug!(target: "token", is_super = hash_match, "Super token check completed (basic auth)");
             Ok(hash_match)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_sync_sequence_statement;
+    use sea_orm::sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn sync_sequence_statement_matches_expected_postgres_sql() {
+        assert_eq!(
+            build_sync_sequence_statement().to_string(PostgresQueryBuilder),
+            r#"SELECT setval(pg_get_serial_sequence('token', 'id'), (SELECT MAX("id") FROM "token"))"#
+        );
     }
 }
