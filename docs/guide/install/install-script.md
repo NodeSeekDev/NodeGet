@@ -84,7 +84,10 @@ NodeGet 有三档发布，不指定版本时脚本只会安装**正式版**：
 | 预发布 | `v0.6.1-beta.1`、`v0.6.1-rc.1` | 正式发布前给愿意试用的用户，beta 功能可能还在变化，rc 已冻结功能、只修阻塞问题 |
 | nightly | `nightly` | 每天从开发分支自动构建，滚动更新，包含最新改动 |
 
-预发布版和 nightly **不保证稳定**，请不要用于生产环境。
+预发布版和 nightly **不保证稳定**，请不要用于生产环境，建议先在测试环境试用。
+主控和被控尽量使用同一档的版本，预发布版、nightly 与正式版混用不保证兼容。
+
+### 用脚本安装（Linux）
 
 用环境变量 `releases_tag` 指定要安装的版本，`install-*` 和 `update-*` 命令都支持：
 
@@ -97,9 +100,27 @@ releases_tag=nightly bash <(curl -sL https://install.nodeget.com) update-agent
 releases_tag=v0.6.1-rc.1 bash <(curl -sL https://install.nodeget.com) update-server
 ```
 
-想回到正式版，不带 `releases_tag` 重新执行 `update-server` / `update-agent` 即可。
+脚本会按机器的 CPU 架构和系统库自动选择要下载的文件，nightly 和预发布版支持的平台与正式版一致。
+脚本升级不比较版本号，每次执行 `update-*` 都会重新下载并重启，所以 nightly 每天都可以重新执行来更新。
 
-nightly 每次构建的版本号不变，所以每次执行 `update-*` 都会重新下载并重启。Docker 用户请见 [Docker 安装](./docker.md)。
+### 用 Docker 安装
+
+使用对应的镜像标签，详见 [Docker 安装](./docker.md)：
+
+```shell
+docker pull nodeget/nodeget:nightly
+docker pull nodeget/nodeget:v0.6.1-rc.1
+```
+
+### Windows 和 macOS
+
+安装脚本只支持 Linux。请到 [GitHub Releases](https://github.com/NodeSeekDev/NodeGet/releases) 页面，
+在对应的预发布条目（nightly 的条目名为 `NodeGet Nightly`）下载适合自己系统的文件。
+
+### 回到正式版
+
+- 脚本：不带 `releases_tag` 重新执行 `update-server` / `update-agent`。
+- Docker：使用 `nodeget/nodeget:latest` 或具体的正式版标签。
 
 ## 自动化安装脚本的详细用法
 

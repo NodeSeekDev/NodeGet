@@ -1,19 +1,19 @@
 {
-  "_comment": "构建矩阵。release.yml 构建全部；nightly.yml 只构建带 \"nightly\": true 的条目。新增 target 时在对应分组里加一行即可。",
+  "_comment": "构建矩阵。release.yml 和 nightly.yml 都构建这里的全部 target。新增 target 时在对应分组里加一行即可。",
   "server_linux": [
-    { "release_for": "linux_x86_64_musl", "target": "x86_64-unknown-linux-musl", "binary_name": "nodeget-server-linux-x86_64-musl", "nightly": true },
-    { "release_for": "linux_x86_64_gnu", "target": "x86_64-unknown-linux-gnu", "binary_name": "nodeget-server-linux-x86_64-gnu", "nightly": true },
+    { "release_for": "linux_x86_64_musl", "target": "x86_64-unknown-linux-musl", "binary_name": "nodeget-server-linux-x86_64-musl" },
+    { "release_for": "linux_x86_64_gnu", "target": "x86_64-unknown-linux-gnu", "binary_name": "nodeget-server-linux-x86_64-gnu" },
     { "release_for": "linux_aarch64_gnu", "target": "aarch64-unknown-linux-gnu", "binary_name": "nodeget-server-linux-aarch64-gnu" },
-    { "release_for": "linux_aarch64_musl", "target": "aarch64-unknown-linux-musl", "binary_name": "nodeget-server-linux-aarch64-musl", "nightly": true },
+    { "release_for": "linux_aarch64_musl", "target": "aarch64-unknown-linux-musl", "binary_name": "nodeget-server-linux-aarch64-musl" },
     { "release_for": "linux_armv7_gnueabihf", "target": "armv7-unknown-linux-gnueabihf", "binary_name": "nodeget-server-linux-armv7-gnueabihf" }
   ],
   "agent_linux": [
-    { "release_for": "linux_x86_64_musl", "target": "x86_64-unknown-linux-musl", "binary_name": "nodeget-agent-linux-x86_64-musl", "nightly": true },
-    { "release_for": "linux_x86_64_gnu", "target": "x86_64-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-x86_64-gnu", "nightly": true },
+    { "release_for": "linux_x86_64_musl", "target": "x86_64-unknown-linux-musl", "binary_name": "nodeget-agent-linux-x86_64-musl" },
+    { "release_for": "linux_x86_64_gnu", "target": "x86_64-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-x86_64-gnu" },
     { "release_for": "linux_i686_gnu", "target": "i686-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-i686-gnu" },
     { "release_for": "linux_i686_musl", "target": "i686-unknown-linux-musl", "binary_name": "nodeget-agent-linux-i686-musl" },
     { "release_for": "linux_aarch64_gnu", "target": "aarch64-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-aarch64-gnu" },
-    { "release_for": "linux_aarch64_musl", "target": "aarch64-unknown-linux-musl", "binary_name": "nodeget-agent-linux-aarch64-musl", "nightly": true },
+    { "release_for": "linux_aarch64_musl", "target": "aarch64-unknown-linux-musl", "binary_name": "nodeget-agent-linux-aarch64-musl" },
     { "release_for": "linux_arm_gnueabi", "target": "arm-unknown-linux-gnueabi", "binary_name": "nodeget-agent-linux-arm-gnueabi" },
     { "release_for": "linux_arm_gnueabihf", "target": "arm-unknown-linux-gnueabihf", "binary_name": "nodeget-agent-linux-arm-gnueabihf" },
     { "release_for": "linux_arm_musleabi", "target": "arm-unknown-linux-musleabi", "binary_name": "nodeget-agent-linux-arm-musleabi" },
@@ -43,17 +43,17 @@
     { "release_for": "linux_riscv64gc_gnu", "target": "riscv64gc-unknown-linux-gnu", "binary_name": "nodeget-agent-linux-riscv64gc-gnu", "no_upx": true }
   ],
   "server_windows": [
-    { "release_for": "windows_x86_64", "target": "x86_64-pc-windows-msvc", "binary_name": "nodeget-server-windows-x86_64.exe", "nightly": true },
+    { "release_for": "windows_x86_64", "target": "x86_64-pc-windows-msvc", "binary_name": "nodeget-server-windows-x86_64.exe" },
     { "release_for": "windows_aarch64", "target": "aarch64-pc-windows-msvc", "binary_name": "nodeget-server-windows-aarch64.exe" }
   ],
   "agent_windows": [
-    { "release_for": "windows_x86_64", "target": "x86_64-pc-windows-msvc", "binary_name": "nodeget-agent-windows-x86_64.exe", "nightly": true },
+    { "release_for": "windows_x86_64", "target": "x86_64-pc-windows-msvc", "binary_name": "nodeget-agent-windows-x86_64.exe" },
     { "release_for": "windows_aarch64", "target": "aarch64-pc-windows-msvc", "binary_name": "nodeget-agent-windows-aarch64.exe" }
   ],
   "server_macos": [
-    { "release_for": "macos_aarch64", "target": "aarch64-apple-darwin", "binary_name": "nodeget-server-macos-aarch64", "nightly": true }
+    { "release_for": "macos_aarch64", "target": "aarch64-apple-darwin", "binary_name": "nodeget-server-macos-aarch64" }
   ],
   "agent_macos": [
-    { "release_for": "macos_aarch64", "target": "aarch64-apple-darwin", "binary_name": "nodeget-agent-macos-aarch64", "nightly": true }
+    { "release_for": "macos_aarch64", "target": "aarch64-apple-darwin", "binary_name": "nodeget-agent-macos-aarch64" }
   ]
 }
