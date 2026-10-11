@@ -9,7 +9,8 @@ use crate::data_structure::{
 };
 use crate::query::{
     DynamicDataQuery, DynamicDataQueryField, DynamicSummaryQuery, DynamicSummaryQueryField,
-    QueryCondition, StaticDataQuery, StaticDataQueryField, TrafficQuery, TrafficSnapshotWrite,
+    QueryCondition, StaticDataQuery, StaticDataQueryField, TrafficDetailQuery,
+    TrafficSnapshotWrite, TrafficTotalQuery,
 };
 use jsonrpsee::core::{RpcResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
@@ -31,8 +32,11 @@ pub mod query_dynamic_summary;
 mod query_dynamic_summary_multi_last;
 mod query_static;
 mod query_static_multi_last;
-mod query_traffic;
+mod query_traffic_common;
 mod query_traffic_current;
+mod query_traffic_detail;
+mod query_traffic_range;
+mod query_traffic_total;
 mod report_dynamic;
 mod report_dynamic_summary;
 mod report_static;
@@ -140,9 +144,25 @@ pub trait Rpc {
         conditions: Vec<QueryCondition>,
     ) -> RpcResult<Box<RawValue>>;
 
-    /// 查询流量统计
-    #[method(name = "query_traffic")]
-    async fn query_traffic(&self, token: String, query: TrafficQuery) -> RpcResult<Box<RawValue>>;
+    /// 查询一段时间内每块网卡的流量合计
+    #[method(name = "query_traffic_total")]
+    async fn query_traffic_total(
+        &self,
+        token: String,
+        query: TrafficTotalQuery,
+    ) -> RpcResult<Box<RawValue>>;
+
+    /// 查询一段时间内的每一条总流量快照
+    #[method(name = "query_traffic_detail")]
+    async fn query_traffic_detail(
+        &self,
+        token: String,
+        query: TrafficDetailQuery,
+    ) -> RpcResult<Box<RawValue>>;
+
+    /// 查询每块网卡有快照数据的时间范围
+    #[method(name = "query_traffic_range")]
+    async fn query_traffic_range(&self, token: String, uuid: Uuid) -> RpcResult<Box<RawValue>>;
 
     /// 查询设备当前的总流量，`uuids` 不填表示所有设备
     #[method(name = "query_traffic_current")]
@@ -344,10 +364,34 @@ impl RpcServer for AgentRpcImpl {
             .await
     }
 
-    async fn query_traffic(&self, token: String, query: TrafficQuery) -> RpcResult<Box<RawValue>> {
+    async fn query_traffic_total(
+        &self,
+        token: String,
+        query: TrafficTotalQuery,
+    ) -> RpcResult<Box<RawValue>> {
         let (tk, un) = token_identity(&token);
-        let span = tracing::info_span!(target: "monitoring", "agent::query_traffic", token_key = tk, username = un, query = ?query);
-        async { rpc_exec!(query_traffic::query_traffic(token, query).await) }
+        let span = tracing::info_span!(target: "monitoring", "agent::query_traffic_total", token_key = tk, username = un, query = ?query);
+        async { rpc_exec!(query_traffic_total::query_traffic_total(token, query).await) }
+            .instrument(span)
+            .await
+    }
+
+    async fn query_traffic_detail(
+        &self,
+        token: String,
+        query: TrafficDetailQuery,
+    ) -> RpcResult<Box<RawValue>> {
+        let (tk, un) = token_identity(&token);
+        let span = tracing::info_span!(target: "monitoring", "agent::query_traffic_detail", token_key = tk, username = un, query = ?query);
+        async { rpc_exec!(query_traffic_detail::query_traffic_detail(token, query).await) }
+            .instrument(span)
+            .await
+    }
+
+    async fn query_traffic_range(&self, token: String, uuid: Uuid) -> RpcResult<Box<RawValue>> {
+        let (tk, un) = token_identity(&token);
+        let span = tracing::info_span!(target: "monitoring", "agent::query_traffic_range", token_key = tk, username = un, uuid = ?uuid);
+        async { rpc_exec!(query_traffic_range::query_traffic_range(token, uuid).await) }
             .instrument(span)
             .await
     }
