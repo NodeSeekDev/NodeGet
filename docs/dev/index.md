@@ -6,6 +6,7 @@
 - [Worker 开发](./worker/index.md)
 - [扩展开发](./extension/index.md)
 - [Bootstrap](./bootstrap/index.md)
+- [发布流程](./release.md)
 
 ## GitHub Repo
 

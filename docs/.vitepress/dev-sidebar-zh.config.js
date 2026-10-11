@@ -57,6 +57,15 @@ export default [
         ]
     },
     {
+        text: '发布',
+        items: [
+            {
+                text: '发布流程',
+                link: '/dev/release.md'
+            },
+        ]
+    },
+    {
         text: '更新日志',
         items: [
             {
