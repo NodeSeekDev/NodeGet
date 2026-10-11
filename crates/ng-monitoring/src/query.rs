@@ -287,29 +287,41 @@ pub struct DynamicSummaryResponseItem {
     pub receive_speed: Option<Value>,
 }
 
-/// 流量查询的返回方式。
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub enum TrafficGranularity {
-    /// 只返回时间段内的流量合计
-    Total,
-    /// 返回时间段内的每一条总流量快照
-    Detail,
-    /// 返回每块网卡有快照数据的时间范围，忽略 `start_time` 和 `end_time`
-    Range,
-}
-
-/// 流量查询结构体。
+/// 总流量查询结构体。
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrafficQuery {
+pub struct TrafficTotalQuery {
     /// 设备 UUID
     pub uuid: uuid::Uuid,
     /// 开始时间（毫秒），不填表示从最早开始
     pub start_time: Option<i64>,
     /// 结束时间（毫秒），不填表示到现在
     pub end_time: Option<i64>,
-    /// 返回方式
-    pub granularity: TrafficGranularity,
+}
+
+/// 流量明细的翻页位置：已经返回的最后一条快照的位置。
+///
+/// 下一页从它后面开始，不包含它。客户端原样传回即可，不需要解析。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrafficCursor {
+    /// 已经返回的最后一条快照的网卡名
+    pub interface_name: String,
+    /// 已经返回的最后一条快照的时间（毫秒）
+    pub snapshot_time: i64,
+}
+
+/// 流量明细查询结构体。
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrafficDetailQuery {
+    /// 设备 UUID
+    pub uuid: uuid::Uuid,
+    /// 开始时间（毫秒），不填表示从最早开始
+    pub start_time: Option<i64>,
+    /// 结束时间（毫秒），不填表示到现在
+    pub end_time: Option<i64>,
+    /// 每页最多返回的条数，不填为 10000，超过 10000 按 10000 处理，不能为 0
+    pub limit: Option<u64>,
+    /// 翻页位置，第一页不填，后面的页原样填上一页返回的 `next_cursor`
+    pub cursor: Option<TrafficCursor>,
 }
 
 /// 单块网卡在时间段内的流量。
@@ -321,6 +333,10 @@ pub struct InterfaceTrafficItem {
     pub received: u64,
     /// 发送量（字节）
     pub transmitted: u64,
+    /// 计算用到的第一条快照的时间（毫秒）
+    pub first_snapshot_time: i64,
+    /// 计算用到的最后一条快照的时间（毫秒）
+    pub last_snapshot_time: i64,
 }
 
 /// 单块网卡的一条总流量快照。
@@ -345,7 +361,7 @@ pub struct PossibleDataLossItem {
     pub end_time: i64,
 }
 
-/// 流量查询响应（`granularity` 为 `total`）。
+/// 总流量查询响应。
 #[derive(Serialize)]
 pub struct TrafficTotalResponse {
     /// 设备 UUID
@@ -364,7 +380,7 @@ pub struct TrafficTotalResponse {
     pub possible_data_losses: Vec<PossibleDataLossItem>,
 }
 
-/// 流量查询响应（`granularity` 为 `detail`）。
+/// 流量明细查询响应。
 #[derive(Serialize)]
 pub struct TrafficDetailResponse {
     /// 设备 UUID
@@ -373,8 +389,10 @@ pub struct TrafficDetailResponse {
     pub start_time: Option<i64>,
     /// 请求的结束时间（毫秒），未填写时为 `null`
     pub end_time: Option<i64>,
-    /// 时间段内的总流量快照，按网卡名、快照时间排序
+    /// 这一页的总流量快照，按网卡名、快照时间排序
     pub snapshots: Vec<TrafficSnapshotItem>,
+    /// 下一页的翻页位置，没有下一页时为 `null`
+    pub next_cursor: Option<TrafficCursor>,
     /// 与时间段有重叠的可能丢失数据的时间段
     pub possible_data_losses: Vec<PossibleDataLossItem>,
 }
@@ -390,7 +408,7 @@ pub struct InterfaceSnapshotRangeItem {
     pub last_snapshot_time: i64,
 }
 
-/// 流量查询响应（`granularity` 为 `range`）。
+/// 快照时间范围查询响应。
 #[derive(Serialize)]
 pub struct TrafficRangeResponse {
     /// 设备 UUID

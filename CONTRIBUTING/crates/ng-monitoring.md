@@ -23,7 +23,10 @@ crates/ng-monitoring/src/
     │   ├── query_dynamic.rs        # 字段级权限、流式 JSON
     │   ├── query_dynamic_summary.rs
     │   ├── query_static.rs
-    │   ├── query_traffic.rs        # 按时间段查询流量（快照表 + 当前总量表，不经 TrafficStats）；total / detail / range
+    │   ├── query_traffic_total.rs  # 按时间段查询每块网卡的流量合计（区间内首尾快照相减，不经 TrafficStats）
+    │   ├── query_traffic_detail.rs # 按时间段分页查询逐条快照（游标分页）
+    │   ├── query_traffic_range.rs  # 查每块网卡有快照数据的时间范围
+    │   ├── query_traffic_common.rs # 三个流量查询共用：权限检查 + UUID 转换、时间顺序检查、可能丢失数据的时间段查询
     │   ├── query_traffic_current.rs   # 当前总流量（读 TrafficStats 内存）+ 每块网卡最晚快照时间，供 Worker 使用
     │   ├── write_traffic_snapshot.rs  # 批量写入总流量快照（Worker 调用），一个事务、重复忽略
     │   ├── delete_traffic_snapshot.rs # 分批删除过期快照和可能丢失数据记录（Worker 调用）
@@ -106,11 +109,12 @@ crates/ng-monitoring/src/
 | `DynamicSummaryQueryField::is_scaled` | `query.rs:198` | `pub fn -> bool`；成员判定 `SCALED_SUMMARY_COLUMNS`；测试断言其与 const 对每个 variant 一致（单一事实源不变量）。 |
 | `SCALED_SUMMARY_COLUMNS` | `query.rs:295` | `pub const &[&str] = ["cpu_usage","load_one","load_five","load_fifteen"]`；新增缩放列只需改此。 |
 | `apply_descaling_to_json_object` | `query.rs:308` | 对每个 `SCALED_SUMMARY_COLUMNS` 键：若为 Number，解析为 f64 并 `/10.0`；若结果可有限表示则替换，否则不变；Null/非 Number 不动；**必须每行恰好调用一次**。 |
-| `TrafficGranularity` | `query.rs:293` | `enum { Total, Detail, Range }`；`#[serde(rename_all="snake_case")]`；`Total` 只返回合计，`Detail` 返回逐条快照，`Range` 返回每块网卡有快照数据的时间范围（忽略 `start_time`/`end_time`）。 |
-| `TrafficQuery` | `query.rs:304` | `{ uuid:Uuid, start_time:Option<i64>, end_time:Option<i64>, granularity:TrafficGranularity }`；`agent.query_traffic` 的唯一参数，非从 ng-core 再导出（本 crate 自定义）。 |
-| `InterfaceTrafficItem` / `TrafficSnapshotItem` / `PossibleDataLossItem` | `query.rs:317` / `:328` / `:341` | 仅 Serialize；分别是「单网卡合计」「单条快照」「一段可能丢失数据的时间区间」。 |
-| `TrafficTotalResponse` / `TrafficDetailResponse` | `query.rs:350` / `:369` | `agent.query_traffic` 按 `granularity` 返回其一；两者都带 `uuid`/请求回显的 `start_time`/`end_time`/`possible_data_losses`。 |
-| `InterfaceSnapshotRangeItem` / `TrafficRangeResponse` | `query.rs:384` / `:395` | `granularity = range` 的返回：每块网卡的 `first_snapshot_time`/`last_snapshot_time`，按网卡名排序；没有 `possible_data_losses`；调用方自行取各网卡 `first_snapshot_time` 的最大值，得到所有网卡都能查到的最早时间。 |
+| `TrafficTotalQuery` | `query.rs:292` | `{ uuid:Uuid, start_time:Option<i64>, end_time:Option<i64> }`；`agent.query_traffic_total` 的参数，非从 ng-core 再导出（本 crate 自定义）。 |
+| `TrafficCursor` | `query.rs:305` | `{ interface_name:String, snapshot_time:i64 }`；明细的翻页位置：已经返回的最后一条快照，下一页从它后面开始（不包含它）。客户端原样传回，不解析。 |
+| `TrafficDetailQuery` | `query.rs:314` | `{ uuid, start_time, end_time, limit:Option<u64>, cursor:Option<TrafficCursor> }`；`agent.query_traffic_detail` 的参数。`agent.query_traffic_range` 只收 `uuid:Uuid`，没有专门的参数结构体。 |
+| `InterfaceTrafficItem` / `TrafficSnapshotItem` / `PossibleDataLossItem` | `query.rs:329` / `:344` / `:357` | 仅 Serialize；分别是「单网卡合计（带计算用到的首尾快照时间）」「单条快照」「一段可能丢失数据的时间区间」。 |
+| `TrafficTotalResponse` / `TrafficDetailResponse` | `query.rs:366` / `:385` | 两者都带 `uuid`/请求回显的 `start_time`/`end_time`/`possible_data_losses`；`Detail` 另带 `next_cursor`（没有下一页为 `null`）。 |
+| `InterfaceSnapshotRangeItem` / `TrafficRangeResponse` | `query.rs:402` / `:413` | `agent.query_traffic_range` 的返回：每块网卡的 `first_snapshot_time`/`last_snapshot_time`，按网卡名排序；没有 `possible_data_losses`；调用方自行取各网卡 `first_snapshot_time` 的最大值，得到所有网卡都能查到的最早时间。 |
 | `InterfaceCurrentTrafficItem` / `DeviceCurrentTraffic` | `query.rs:404` / `:419` | `agent.query_traffic_current` 的返回元素：网卡的 `total_received`/`total_transmitted`/`updated_at`，以及已存快照中最晚的 `last_snapshot_time`（无快照为 `null`）。 |
 | `TrafficSnapshotWrite` / `TrafficSnapshotWriteResponse` | `query.rs:428` / `:443` | `agent.write_traffic_snapshot` 的入参元素（`i64` 总流量，负数由接口校验为 `InvalidInput`）和返回 `{ inserted, ignored, skipped }`。 |
 | `TrafficSnapshotDeleteResponse` | `query.rs:454` | `agent.delete_traffic_snapshot` 的返回 `{ deleted_snapshots, deleted_possible_data_losses }`。 |
@@ -139,16 +143,19 @@ crates/ng-monitoring/src/
 | `detect_possible_data_loss` | `:570` | 仅在 `is_counter_reset` 为真时调用；间隔 `received_at - prev.updated_at` 超过 `POSSIBLE_DATA_LOSS_THRESHOLD_MS` 才记录；区间起点为上次更新时间，终点按「本次是否为重启」区分：能推出开机时刻（`received_at - system.uptime`）则用开机时刻，否则用收到时间——因此终点不总是等于 `received_at`。 |
 | `traffic_tables_on_sqlite`（测试专用） | `:591` | `#[cfg(test)] pub(crate) async fn`；用迁移在 SQLite 上的实际 DDL 建一个单连接内存库，供本文件与 `rpc/agent/` 下四个流量接口的测试共用，避免依赖 `ng-db-migration`。 |
 
-### 流量统计（`rpc/agent/query_traffic.rs`）
+### 流量统计（`rpc/agent/query_traffic_*.rs`）
 
-| 项 | 行 | 说明 |
+三个查询各一个文件，共用 `query_traffic_common.rs`。三者都**不读 `TrafficStats` 内存态**，只读数据库。
+
+| 项 | 位置 | 说明 |
 |---|---|---|
-| `query_traffic` | `:54` | 权限：`DynamicMonitoring::Read(Network)` + `Scope::AgentUuid(query.uuid)`（`check_token_limit`，与 `query_dynamic` 同一模式，非注入 checker）；`start_time > end_time` 报 `InvalidInput`；按 `granularity` 分派 `query_total`/`query_detail`/`query_range`，`total` 和 `detail` 附带 `query_possible_data_losses`，`range` 不查；**不读 `TrafficStats` 内存态**，只读数据库（落库前最近一分钟的总流量不可见，属已知的最终一致性窗口，见「注意事项与陷阱」）。 |
-| `query_total` | `:164` | 每块网卡独立计算：结束值取 `end_time` 之前最近一条快照，`end_time` 为 `None` 时改取 `traffic_current_total`（更新更及时）；`end_time` 之前没有快照的网卡不返回；开始值：`start_time` 为 `None` 时视为 0，否则取 `start_time` 之前最近一条快照，**找不到就整个查询返回 `NotFound`**（没有起点总量不能当 0，否则会把开始之前的流量全算进来）；两者相减即区间流量。 |
-| `latest_snapshot_at` | `:221` | 某网卡在某时刻（含）之前最近一条快照；无则 `None`。 |
-| `query_range` | `:243` | 按网卡分组取 `MIN`/`MAX(snapshot_time)`，按网卡名排序；没有快照返回空数组。 |
-| `query_detail` | `:290` | 未填的一端分别取「最早快照时间」/「当前时间」；区间跨度超过 `MAX_DETAIL_RANGE_MS`（92 天，`:29`）报 `InvalidInput`；返回区间内全部快照，按网卡名、快照时间排序。 |
-| `query_possible_data_losses` | `:349` | 与查询区间**有重叠**（而非完全落入）的记录都返回，按开始时间排序，提醒调用方这段时间统计可能不准。 |
+| `authorize_and_resolve` | `query_traffic_common.rs:27` | 权限：`DynamicMonitoring::Read(Network)` + `Scope::AgentUuid(uuid)`（`check_token_limit`，与 `query_dynamic` 同一模式，非注入 checker），再用 `MonitoringUuidCache` 把 UUID 转成 `uuid_id`。 |
+| `check_time_order` | `query_traffic_common.rs:63` | 开始时间晚于结束时间报 `InvalidInput`；`total` 和 `detail` 使用。 |
+| `query_possible_data_losses` | `query_traffic_common.rs:85` | 与查询区间**有重叠**（而非完全落入）的记录都返回，按开始时间排序，提醒调用方这段时间统计可能不准；`total` 和 `detail`（每一页）附带，`range` 不查。 |
+| `query_traffic_total` / `query_total` | `query_traffic_total.rs:39` / `:95` | 只用 `[start_time, end_time]` 内的快照，不往区间外找。一条按网卡分组的汇总查询，取条数、最早/最晚快照时间、总接收/发送量的最小/最大值；流量 = 最大值 − 最小值（总量只增不减，等于最后一条减第一条），同时返回首尾快照时间。区间内只有一条快照的网卡不返回；**没有一块网卡有至少两条快照时返回 `NotFound`**，不返回空结果，避免被当成 0 流量。不读 `traffic_current_total`。 |
+| `query_traffic_detail` / `query_detail` | `query_traffic_detail.rs:42` / `:114` | 游标分页：按（网卡名, 快照时间）排序，取排在 `cursor` 后面的快照，`LIMIT page_size + 1`，多出一条说明还有下一页，`next_cursor` 取返回的最后一条。没有时间跨度限制，单次数据量由 `page_size` 限制。 |
+| `resolve_page_size` | `query_traffic_detail.rs:91` | 每页条数：未填为 `DEFAULT_MONITORING_QUERY_LIMIT`（10000），超过 `MAX_QUERY_LIMIT`（10000）按上限处理，0 报 `InvalidInput`。 |
+| `query_traffic_range` / `query_range` | `query_traffic_range.rs:34` / `:58` | 按网卡分组取 `MIN`/`MAX(snapshot_time)`，按网卡名排序；没有快照返回空数组。 |
 
 ### 流量快照的读写（Worker 使用的三个接口）
 
@@ -231,9 +238,9 @@ crates/ng-monitoring/src/
 `report_*` RPC → `MonitoringUuidCache::get_or_insert`（UUID→i16）→ 构建 `ActiveModel` → `BufferSender::send`（`try_send`，非阻塞）→ mpsc → `flush_loop` 在 tick/容量触发时排空 → `do_flush` 分块 `insert_many`。同时 `report_*` 更新 `MonitoringLastCache`（static 额外更新 `StaticHashCache`），使 multi-last 查询优先命中内存。`report_dynamic` 额外**同步**调用 `TrafficStats::update_total_traffic`（不经过 buffer/mpsc，直接锁内存 `State` 更新），与写监控缓冲区互不影响。
 
 ### 流量统计的数据流与分工
-`TrafficStats` 维护的内存总流量按**每条上报**实时更新，由独立的 `flush_loop`（60 秒一 tick）把当前总流量和「可能丢失数据」的时间段批量写库；**服务端不生成快照**。快照由 JS Worker 定时执行：用 `agent.query_traffic_current` 读内存里的当前总流量和每块网卡最晚的快照时间，到了新的快照时间点就用 `agent.write_traffic_snapshot` 落库，并用 `agent.delete_traffic_snapshot` 清理过期数据。`agent.query_traffic` 只读数据库里的 `traffic_snapshot`/`traffic_current_total`/`traffic_possible_data_loss` 三张表，不碰 `TrafficStats` 的内存态。
+`TrafficStats` 维护的内存总流量按**每条上报**实时更新，由独立的 `flush_loop`（60 秒一 tick）把当前总流量和「可能丢失数据」的时间段批量写库；**服务端不生成快照**。快照由 JS Worker 定时执行：用 `agent.query_traffic_current` 读内存里的当前总流量和每块网卡最晚的快照时间，到了新的快照时间点就用 `agent.write_traffic_snapshot` 落库，并用 `agent.delete_traffic_snapshot` 清理过期数据。`agent.query_traffic_total` / `agent.query_traffic_detail` / `agent.query_traffic_range` 只读数据库里的 `traffic_snapshot`（`total` 和 `detail` 另读 `traffic_possible_data_loss`），不碰 `TrafficStats` 的内存态，也不读 `traffic_current_total`。
 
-因此没有安装并运行这个 Worker 时，`traffic_snapshot` 表是空的，按时间段查询（带 `start_time` 的 `total`）会因找不到起点快照返回 `NotFound`。`traffic_current_total` 是服务端自己维护的（上报秒级、写库 60 秒），重启或热重载时靠 `TrafficStats::init` 从它重建内存状态；重建后的第一条上报与落库的读数做差，服务端重启期间的流量增量会补上，只有同时遇到设备重启时才可能少算（计数器已清零，由「可能丢失数据」记录提示）。
+因此没有安装并运行这个 Worker 时，`traffic_snapshot` 表是空的，`query_traffic_total` 会因区间内没有至少两条快照返回 `NotFound`。`traffic_current_total` 是服务端自己维护的（上报秒级、写库 60 秒），重启或热重载时靠 `TrafficStats::init` 从它重建内存状态；重建后的第一条上报与落库的读数做差，服务端重启期间的流量增量会补上，只有同时遇到设备重启时才可能少算（计数器已清零，由「可能丢失数据」记录提示）。
 
 ### Multi-last 查询的部分命中合并
 对每个请求的 uuid：先查 `MonitoringLastCache`（all-fields 走 raw `Arc<str>` 快路径，否则过滤 `Value`）；未命中连同原始下标收集，构建单条 `UNION ALL` `Statement` 流式执行，按 index `zip` 回填结果向量；最后将 cache Raw 与 DB `Value` 序列化进同一 JSON 数组缓冲。`zip` 防御 DB 返回行少于未命中数（uuid 已注册但尚无数据）。
@@ -274,7 +281,9 @@ crates/ng-monitoring/src/
 | `query_dynamic` | `token:String, dynamic_data_query:DynamicDataQuery` | `DynamicMonitoring::Read` 按请求字段（空字段 = 任一 7 字段 any_allowed） | 构建 scopes（每 Uuid 条件一个 AgentUuid，否则 Global）；先经 cache 把 UUID 解析为 id（未知 NotFound）；`select_only` 含 uuid_id+timestamp+请求列；`execute_query` 流式构建 JSON 数组，含 uuid_id→uuid 翻译与 `rename_and_fix_json`；`capacity_hint` = clamp 或 5000，buffer = hint*200 字节。 |
 | `query_dynamic_summary` | `token:String, query:DynamicSummaryQuery` | `DynamicMonitoringSummary::Read`（单一，非按字段） | 空字段选全 23 列；否则 `field_to_column`；每行应用 `apply_descaling_to_json_object`；`capacity_hint` = clamp 或 5000。 |
 | `query_static` | `token:String, static_data_query:StaticDataQuery` | `StaticMonitoring::Read` 按字段（空 = 任一 cpu/system/gpu） | 3 字段；`capacity_hint` = clamp 或 100（static 数据小）。 |
-| `query_traffic` | `token:String, query:TrafficQuery` | `DynamicMonitoring::Read(Network)` 限 `Scope::AgentUuid(query.uuid)`（`check_token_limit`） | 按 `granularity` 返回区间流量合计、逐条快照或每块网卡的快照时间范围，见「关键类型与常量 › 流量统计（`rpc/agent/query_traffic.rs`）」；只读三张流量表，不经 `TrafficStats`。 |
+| `query_traffic_total` | `token:String, query:TrafficTotalQuery` | `DynamicMonitoring::Read(Network)` 限 `Scope::AgentUuid(query.uuid)`（`check_token_limit`） | 返回区间内每块网卡的流量合计（首尾快照相减）和可能丢失数据的时间段，见「关键类型与常量 › 流量统计（`rpc/agent/query_traffic_*.rs`）」；不经 `TrafficStats`。 |
+| `query_traffic_detail` | `token:String, query:TrafficDetailQuery` | 同 `query_traffic_total` | 游标分页返回区间内的逐条快照，附 `next_cursor` 和可能丢失数据的时间段；不经 `TrafficStats`。 |
+| `query_traffic_range` | `token:String, uuid:Uuid` | `DynamicMonitoring::Read(Network)` 限 `Scope::AgentUuid(uuid)` | 返回每块网卡有快照数据的时间范围；不经 `TrafficStats`。 |
 | `query_traffic_current` | `token:String, uuids:Option<Vec<Uuid>>` | `DynamicMonitoring::Read(Network)`；指定 `uuids` 时每个 UUID 一个 `AgentUuid`，不指定时 `Scope::Global`（`check_token_limit`） | 读 `TrafficStats` 内存里的当前总流量，附每块网卡最晚的快照时间，见「流量快照的读写」。 |
 | `write_traffic_snapshot` | `token:String, snapshots:Vec<TrafficSnapshotWrite>` | `DynamicMonitoring::Write`，请求里每个 UUID 一个 `AgentUuid`（`check_token_limit`） | 校验后在一个事务内批量写快照，重复忽略，返回 `{inserted, ignored, skipped}`。 |
 | `delete_traffic_snapshot` | `token:String, end_time:i64, uuid:Option<Uuid>` | `DynamicMonitoring::Delete`；指定 `uuid` 时 `AgentUuid`，否则 `Scope::Global`（`check_token_limit`） | 分批删除 `snapshot_time ≤ end_time` 的快照和整段早于它的可能丢失数据记录，返回 `{deleted_snapshots, deleted_possible_data_losses}`。 |
@@ -315,8 +324,8 @@ crates/ng-monitoring/src/
 | `static_monitoring` | `id`、`uuid_id`（i16，语义上指向 `monitoring_uuid.id`，无 DB 级 FK）、`timestamp`（i64 ms）、`storage_time`（Option<i64> ms）、`cpu_data`/`system_data`/`gpu_data`（JSON Value）、`data_hash`（`Vec<u8>`，16 字节） | 索引：`idx-static-uuid-timestamp`(`uuid_id`,`timestamp`)、唯一索引 `idx-static-uuid-data-hash`(`uuid_id`,`data_hash`)、`idx-static_monitoring-storage_time`(`storage_time`)；无实体 Relation | 8 列（SQLite 子批 999/8=124）；`report_static` 两级去重依赖唯一 `(uuid_id, data_hash)` 索引。 |
 | `dynamic_monitoring` | `id`、`uuid_id`（i16，语义上指向 `monitoring_uuid.id`，无 DB 级 FK）、`timestamp`、`storage_time`、`cpu_data`/`ram_data`/`load_data`/`system_data`/`disk_data`/`network_data`/`gpu_data`（JSON Value） | 索引：`idx-dynamic-uuid-timestamp`(`uuid_id`,`timestamp`)、`idx-dynamic_monitoring-storage_time`(`storage_time`)；无实体 Relation | 11 列（SQLite 子批 999/11=90）；经 `MonitoringBuffer` 的 `dynamic_mon` 发送端插入。 |
 | `dynamic_monitoring_summary` | `id`、`uuid_id`（i16，语义上指向 `monitoring_uuid.id`，无 DB 级 FK）、`timestamp`、`storage_time`、`cpu_usage`/`gpu_usage`（Option<i16>）、`used_swap`/`total_swap`/`used_memory`/`total_memory`/`available_memory`/`total_space`/`available_space`/`read_speed`/`write_speed`/`total_received`/`total_transmitted`/`transmit_speed`/`receive_speed`（Option<i64>）、`load_one`/`load_five`/`load_fifteen`（Option<i16> scaled）、`uptime`/`process_count`（Option<i32>）、`tcp_connections`/`udp_connections`（Option<i32>）、`boot_time`（Option<i64>） | 索引：`idx_dynamic_monitoring_summary_uuid_timestamp`(`uuid_id`,`timestamp`)、`idx-dynamic_monitoring_summary-storage_time`(`storage_time`)；无实体 Relation | 27 列（SQLite 子批 999/27=37）；`SCALED_SUMMARY_COLUMNS = cpu_usage/load_one/load_five/load_fifteen` 存为 ×10 的 i16；所有读路径经 `apply_descaling_to_json_object` `/10.0`。 |
-| `traffic_snapshot` | `id`、`uuid_id`（i16）、`interface_name`（String）、`snapshot_time`（i64 ms，由 Worker 决定对齐方式，默认 15 分钟整点）、`total_received`/`total_transmitted`（i64，跨重启累加总量） | 唯一索引 `idx-traffic_snapshot-uuid_id-interface_name-snapshot_time`(`uuid_id`,`interface_name`,`snapshot_time`)；无实体 Relation | 6 列；只由 `write_traffic_snapshot` 用 `insert_many(..).on_conflict_do_nothing_on([uuid_id,interface_name,snapshot_time])` 写入，重复快照静默丢弃（幂等）；由 `delete_traffic_snapshot` 分批清理；`query_traffic` 的 `query_total`/`query_detail`/`query_range`/`latest_snapshot_at` 和 `query_traffic_current` 的 `last_snapshot_times` 读这张表。 |
-| `traffic_current_total` | `id`、`uuid_id`（i16）、`interface_name`（String）、`boot_id`（Option<String>）、`ifindex`（Option<i32>）、`counter_received`/`counter_transmitted`（i64，Agent 上报的原始计数器值）、`report_time`（i64 ms）、`total_received`/`total_transmitted`（i64，跨重启累加总量）、`created_at`/`updated_at`（i64 ms） | 唯一索引 `idx-traffic_current_total-uuid_id-interface_name-unique`(`uuid_id`,`interface_name`)；无实体 Relation | 11 列；每设备每网卡恰好一行，`flush` 用 `OnConflict::columns([uuid_id,interface_name]).update_columns([..])` upsert；既是「不填 `end_time` 时查询」的数据源，也是 `TrafficStats::init` 重建内存态的数据源。 |
+| `traffic_snapshot` | `id`、`uuid_id`（i16）、`interface_name`（String）、`snapshot_time`（i64 ms，由 Worker 决定对齐方式，默认 15 分钟整点）、`total_received`/`total_transmitted`（i64，跨重启累加总量） | 唯一索引 `idx-traffic_snapshot-uuid_id-interface_name-snapshot_time`(`uuid_id`,`interface_name`,`snapshot_time`)；无实体 Relation | 6 列；只由 `write_traffic_snapshot` 用 `insert_many(..).on_conflict_do_nothing_on([uuid_id,interface_name,snapshot_time])` 写入，重复快照静默丢弃（幂等）；由 `delete_traffic_snapshot` 分批清理；`query_traffic_total`/`query_traffic_detail`/`query_traffic_range` 的 `query_total`/`query_detail`/`query_range` 和 `query_traffic_current` 的 `last_snapshot_times` 读这张表。 |
+| `traffic_current_total` | `id`、`uuid_id`（i16）、`interface_name`（String）、`boot_id`（Option<String>）、`ifindex`（Option<i32>）、`counter_received`/`counter_transmitted`（i64，Agent 上报的原始计数器值）、`report_time`（i64 ms）、`total_received`/`total_transmitted`（i64，跨重启累加总量）、`created_at`/`updated_at`（i64 ms） | 唯一索引 `idx-traffic_current_total-uuid_id-interface_name-unique`(`uuid_id`,`interface_name`)；无实体 Relation | 11 列；每设备每网卡恰好一行，`flush` 用 `OnConflict::columns([uuid_id,interface_name]).update_columns([..])` upsert；是 `TrafficStats::init` 重建内存态的数据源（流量查询接口不再读它）。 |
 | `traffic_possible_data_loss` | `id`、`uuid_id`（i16）、`start_time`/`end_time`（i64 ms） | 索引 `idx-traffic_possible_data_loss-uuid_id-start_time`(`uuid_id`,`start_time`)；无实体 Relation | 4 列；`detect_possible_data_loss` 判定成立时插入；每条上报每设备最多产生一条（不去重，理论上可能有相邻/重叠区间）；`query_possible_data_losses` 按「与查询区间有重叠」筛选。 |
 
 迁移由 `ng-db` 维护（本 crate 不直接持有迁移）；上述 3 张流量表由 `m20260927_000000_create_traffic_tables.rs` 一次迁移建立。三张实体均为手写（非 `sea-orm-codegen` 生成），但保留了生成器的文件头注释与格式，与其余实体保持视觉一致；原因见「Crate 内部约定」。
@@ -353,8 +362,8 @@ crates/ng-monitoring/src/
 - **`is_outlet` 缺失时整条上报都不进流量统计**（`traffic_stats.rs:135`）：不是只跳过缺字段的那块网卡，是这条上报的**所有网卡**都不更新。改动 `DynamicPerNetworkInterfaceData::is_outlet` 的默认值/序列化行为，或让某平台的 Agent 停止上报该字段，会让那些设备的流量统计整体停摆而不报错，只能通过 `agent.query_traffic_current` 里该设备的 `updated_at` 长期不更新、或没有这台设备的结果才能发现。
 - **流量三张实体手写，非 `sea-orm-codegen` 生成**（`crates/ng-db/src/entity/traffic_*.rs`）：`sea-orm-cli generate entity` 在 SQLite 上会把 `integer` 列推断成 `i64` 并带上不需要的 `unique_key` 属性，与迁移里实际的列类型/约束不符，因此改为手写，但保留了生成器风格的文件头注释与格式。**改了迁移的列定义后，必须手动同步这三个实体文件**，不能靠重新跑 codegen 覆盖。
 - **`detect_possible_data_loss` 的区间终点不总等于收到时间**（`traffic_stats.rs:570`）：终点按「本次上报是不是设备重启后的第一条」区分——能从 `received_at - uptime` 推出开机时刻就用开机时刻，推不出来就用 `received_at`。查这张表时不要假设 `end_time` 一定是数据恢复的那一刻。
-- **`query_traffic` 有约 60 秒的滞后**（`rpc/agent/query_traffic.rs:54`）：只读数据库，不读 `TrafficStats` 内存态；不填 `end_time` 时取的是 `traffic_current_total`，可能漏掉最近一次 `flush`（`FLUSH_INTERVAL_MS = 60_000`）之后还没落库的流量。这是设计上接受的最终一致性窗口，不是 bug；要最新总流量用 `query_traffic_current`（读内存）。
-- **没有 Worker 就没有可查询的数据**：快照只由 Worker 通过 `write_traffic_snapshot` 写入，服务端自己不生成。`traffic_snapshot` 为空时，带 `start_time` 的 `query_traffic(total)` 会对每块网卡找不到起点快照而返回 `NotFound`，这是有意的（见 `query_total`），不要为了「不报错」把缺失的起点当 0，那样会把开始之前的流量全算进来。
+- **`query_traffic_total` / `query_traffic_detail` 只反映已经写入的快照**（`rpc/agent/query_traffic_total.rs:95`）：只读 `traffic_snapshot`，不读 `TrafficStats` 内存态，最新的一条快照最多比实时晚一个快照间隔（Worker 默认 15 分钟）。这是设计上接受的，不是 bug；要最新总流量用 `query_traffic_current`（读内存）。
+- **没有 Worker 就没有可查询的数据**：快照只由 Worker 通过 `write_traffic_snapshot` 写入，服务端自己不生成。区间内没有至少两条快照时，`query_traffic_total` 返回 `NotFound`，这是有意的（见 `query_total`），不要为了「不报错」返回空结果或 0：那会让调用方分不清是「没流量」还是「没数据」。
 - **`write_traffic_snapshot` 的未来时间校验是承重的**（`write_traffic_snapshot.rs:145`）：Worker 靠 `query_traffic_current` 返回的 `last_snapshot_time` 判断某个时间段是否已存过快照，如果写进了一个很晚的未来时间，这块网卡之后的快照都会被认为「已存过」而一直不写。所以 `snapshot_time` 不能晚于服务端当前时间超过 `MAX_FUTURE_MS`，**切勿**去掉这个校验或放宽。
 - **`delete_traffic_snapshot` 不是原子的**（`delete_traffic_snapshot.rs:117`）：每批 `DELETE` 是独立语句，中途失败时已删的批次不会回滚，下次调用会从剩下的继续；`end_time` 是闭区间（`snapshot_time ≤ end_time`）。
 
