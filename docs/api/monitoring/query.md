@@ -272,15 +272,25 @@ pub struct DynamicDataQuery {
 
 ## Query Traffic
 
-查询一台设备在指定时间段内的流量。
+流量查询有三个方法：[Query Traffic Total](#query-traffic-total) 查一段时间内每块网卡的流量合计，
+[Query Traffic Detail](#query-traffic-detail) 查一段时间内的每一条总流量快照，
+[Query Traffic Range](#query-traffic-range) 查每块网卡从什么时候起有快照。三者用同一个权限。
 
-> 周期流量 = 结束时刻的总流量快照 − 开始时刻的总流量快照。**总流量快照由 JS Worker 定时写入**（见
-> [Write Traffic Snapshot](#write-traffic-snapshot)，NodeGet-Bootstrap 里的 `traffic-snapshot-worker` 就是做这件事的），
-> 服务端自己不生成快照。没有安装并运行这个 Worker 时，没有快照数据，查不到任何时间段的流量。
+> 流量数据来自**总流量快照**，由 JS Worker 定时写入（见 [Write Traffic Snapshot](#write-traffic-snapshot)，
+> NodeGet-Bootstrap 里的 `traffic-snapshot-worker` 就是做这件事的），服务端自己不生成快照。
+> 没有安装并运行这个 Worker 时，没有快照数据，查不到任何时间段的流量。
+
+流量统计只对**出口网卡**（真正连接外网的网卡）计数，容器、隧道等虚拟网卡不计入，避免重复统计。可以在 Agent 配置里通过
+`dynamic_summary_select_network_interface` 手动指定要统计哪些网卡；不指定时按内置规则自动识别，详见
+[Agent 配置](/guide/config/agent)。
+
+## Query Traffic Total
+
+查询一台设备在指定时间段内每块网卡的流量合计。
 
 ### 方法
 
-调用方法名为 `agent_query_traffic`，需要提供以下参数：
+调用方法名为 `agent_query_traffic_total`，需要提供以下参数：
 
 ```json
 {
@@ -288,8 +298,7 @@ pub struct DynamicDataQuery {
   "query": {
     "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
     "start_time": 1769344160000,
-    "end_time": 1769347760000,
-    "granularity": "total"
+    "end_time": 1769347760000
   }
 }
 ```
@@ -297,39 +306,26 @@ pub struct DynamicDataQuery {
 参数结构体：
 
 ```rust
-pub struct TrafficQuery {
+pub struct TrafficTotalQuery {
     pub uuid: uuid::Uuid,               // 设备 UUID
     pub start_time: Option<i64>,        // 开始时间（毫秒），不填表示从最早开始
     pub end_time: Option<i64>,          // 结束时间（毫秒），不填表示到现在
-    pub granularity: TrafficGranularity,
-}
-
-pub enum TrafficGranularity {
-    Total,   // 只返回时间段内的流量合计
-    Detail,  // 返回时间段内的每一条总流量快照
-    Range,   // 返回每块网卡有快照数据的时间范围
 }
 ```
 
 - `uuid`: 要查询的设备 UUID
-- `start_time` / `end_time`: 查询的时间范围（毫秒时间戳），任一不填表示不限制该端；`range` 会忽略这两个参数
-- `granularity`:
-  - `total`：按网卡返回时间段内的流量合计
-  - `detail`：返回时间段内的每一条总流量快照，最长时间跨度 92 天
-  - `range`：返回每块网卡最早和最晚的快照时间，用来判断从哪个时间起能查到数据
+- `start_time` / `end_time`: 查询的时间范围（毫秒时间戳），任一不填表示不限制该端；开始时间不能晚于结束时间
 
-`total` 填了 `start_time` 时，每块网卡都必须有一条不晚于 `start_time` 的快照，否则返回 `NotFound`（没有开始时的总流量，不能当 0
-算，否则会把开始之前的流量都算进去）。常见原因：
+计算方式：只用 `start_time` 到 `end_time`（含两端）之间的快照，不会往时间段外找，也不会对齐到别的时间点。每块网卡分别计算，
+流量 = 时间段内最后一条快照的总流量 − 第一条快照的总流量，返回里同时给出这两条快照的时间。
 
-- 没有安装或没有运行流量统计 Worker
-- 设备在 `start_time` 之后才开始统计（安装 Agent 之前的流量不会被统计）
+- 时间段内只有一条快照的网卡没法相减，不返回
+- 时间段内没有任何一块网卡有至少两条快照时，返回 `NotFound`，不会返回 0。常见原因：没有安装或没有运行流量统计 Worker、设备在这段时间里离线、
+  时间段比快照间隔还短。可以用 [Query Traffic Range](#query-traffic-range) 查出从哪个时间起有数据，或者用
+  [Query Traffic Detail](#query-traffic-detail) 看这段时间附近有哪些快照
 
-遇到这种情况可以先用 `range` 查出每块网卡最早的快照时间，把 `start_time` 改到所有网卡都有数据之后再查。不填 `start_time` 时不受影响，
-从开始统计起算。
-
-流量统计只对**出口网卡**（真正连接外网的网卡）计数，容器、隧道等虚拟网卡不计入，避免重复统计。可以在 Agent 配置里通过
-`dynamic_summary_select_network_interface` 手动指定要统计哪些网卡；不指定时按内置规则自动识别，详见
-[Agent 配置](/guide/config/agent)。
+返回里的快照时间可能比查询的时间范围窄：比如查整个 10 月，但快照只有 10 月 2 日到 15 日，结果就只是这段时间的流量。
+调用方可以用 `first_snapshot_time` / `last_snapshot_time` 判断实际覆盖了哪段时间。
 
 ### 权限要求
 
@@ -351,15 +347,19 @@ pub enum TrafficGranularity {
 
 ### 返回值
 
-`granularity` 为 `total` 时，返回每块网卡的流量合计：
-
 ```json
 {
   "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
   "start_time": 1769344160000,
   "end_time": 1769347760000,
   "interfaces": [
-    { "interface_name": "eth0", "received": 1048576, "transmitted": 524288 }
+    {
+      "interface_name": "eth0",
+      "received": 1048576,
+      "transmitted": 524288,
+      "first_snapshot_time": 1769344200000,
+      "last_snapshot_time": 1769347500000
+    }
   ],
   "received": 1048576,
   "transmitted": 524288,
@@ -367,48 +367,15 @@ pub enum TrafficGranularity {
 }
 ```
 
-`granularity` 为 `detail` 时，返回时间段内的每一条总流量快照：
-
-```json
-{
-  "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
-  "start_time": 1769344160000,
-  "end_time": 1769347760000,
-  "snapshots": [
-    {
-      "interface_name": "eth0",
-      "snapshot_time": 1769344200000,
-      "total_received": 10485760,
-      "total_transmitted": 5242880
-    }
-  ],
-  "possible_data_losses": []
-}
-```
-
-`total` 和 `detail` 的返回都带有 `possible_data_losses`：与查询时间段有重叠的"可能丢失数据"时间段（比如网卡计数器重置、设备离线超过 10
-分钟），提醒这段时间内的流量统计可能不准：
+- `interfaces`: 每块网卡的流量，按网卡名排序；`first_snapshot_time` / `last_snapshot_time` 是计算用到的第一条和最后一条快照的时间
+- `received` / `transmitted`: 所有网卡的合计
+- `possible_data_losses`: 与查询时间段有重叠的"可能丢失数据"时间段，只重叠一部分的也会返回。设备离线超过 10 分钟后网卡计数器被重置时，
+  重置之前这段时间的流量可能没有统计到，提醒这段时间内的流量统计可能不准
 
 ```json
 [
   { "start_time": 1769344000000, "end_time": 1769344500000 }
 ]
-```
-
-`granularity` 为 `range` 时，返回每块网卡有快照数据的时间范围，按网卡名排序；设备还没有任何快照时 `interfaces` 为空数组。没有
-`possible_data_losses`：
-
-```json
-{
-  "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
-  "interfaces": [
-    {
-      "interface_name": "eth0",
-      "first_snapshot_time": 1769000000000,
-      "last_snapshot_time": 1769344200000
-    }
-  ]
-}
 ```
 
 ### 完整示例
@@ -418,14 +385,13 @@ pub enum TrafficGranularity {
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "agent_query_traffic",
+  "method": "agent_query_traffic_total",
   "params": {
     "token": "demo_key:demo_secret",
     "query": {
       "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
       "start_time": 1769344160000,
-      "end_time": 1769347760000,
-      "granularity": "total"
+      "end_time": 1769347760000
     }
   },
   "id": 1
@@ -443,12 +409,193 @@ pub enum TrafficGranularity {
     "start_time": 1769344160000,
     "end_time": 1769347760000,
     "interfaces": [
-      { "interface_name": "eth0", "received": 1048576, "transmitted": 524288 }
+      {
+        "interface_name": "eth0",
+        "received": 1048576,
+        "transmitted": 524288,
+        "first_snapshot_time": 1769344200000,
+        "last_snapshot_time": 1769347500000
+      }
     ],
     "received": 1048576,
     "transmitted": 524288,
     "possible_data_losses": []
   }
+}
+```
+
+## Query Traffic Detail
+
+查询一台设备在指定时间段内的每一条总流量快照，分页返回。
+
+### 方法
+
+调用方法名为 `agent_query_traffic_detail`，需要提供以下参数：
+
+```json
+{
+  "token": "demo_token",
+  "query": {
+    "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+    "start_time": 1769344160000,
+    "end_time": 1769347760000,
+    "limit": 10000,
+    "cursor": null
+  }
+}
+```
+
+参数结构体：
+
+```rust
+pub struct TrafficDetailQuery {
+    pub uuid: uuid::Uuid,               // 设备 UUID
+    pub start_time: Option<i64>,        // 开始时间（毫秒），不填表示从最早开始
+    pub end_time: Option<i64>,          // 结束时间（毫秒），不填表示到现在
+    pub limit: Option<u64>,             // 每页最多返回的条数
+    pub cursor: Option<TrafficCursor>,  // 翻页位置，第一页不填
+}
+
+pub struct TrafficCursor {
+    pub interface_name: String,         // 已经返回的最后一条快照的网卡名
+    pub snapshot_time: i64,             // 已经返回的最后一条快照的时间（毫秒）
+}
+```
+
+- `uuid`: 要查询的设备 UUID
+- `start_time` / `end_time`: 查询的时间范围（毫秒时间戳），任一不填表示不限制该端；开始时间不能晚于结束时间；时间范围没有长度限制，单次请求的数据量由 `limit` 限制
+- `limit`: 每页最多返回的条数，不填为 10000，超过 10000 按 10000 处理，不能为 0
+- `cursor`: 翻页位置，第一页不填，后面的页原样填上一页返回的 `next_cursor`，不需要解析它
+
+快照按网卡名、再按快照时间排序。时间范围内的快照超过一页时，响应里会带 `next_cursor`，用它取下一页，一直取到 `next_cursor` 为 `null`，
+就取完了。下一页从翻页位置后面开始，不包含它，所以不会重复；翻页期间有新快照写入，也不会造成重复或遗漏。
+
+### 权限要求
+
+与 [Query Traffic Total](#query-traffic-total) 相同：`Scope::AgentUuid` 需覆盖 `query.uuid`，
+`Permission` 为 `DynamicMonitoring::Read(Network)`。
+
+### 返回值
+
+```json
+{
+  "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+  "start_time": 1769344160000,
+  "end_time": 1769347760000,
+  "snapshots": [
+    {
+      "interface_name": "eth0",
+      "snapshot_time": 1769344200000,
+      "total_received": 10485760,
+      "total_transmitted": 5242880
+    }
+  ],
+  "next_cursor": null,
+  "possible_data_losses": []
+}
+```
+
+- `snapshots`: 这一页的快照
+- `next_cursor`: 下一页的翻页位置，没有下一页时为 `null`
+- `possible_data_losses`: 含义同 [Query Traffic Total](#query-traffic-total)，每一页都会返回
+
+### 完整示例
+
+取第一页：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent_query_traffic_detail",
+  "params": {
+    "token": "demo_key:demo_secret",
+    "query": {
+      "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+      "start_time": 1769344160000,
+      "end_time": 1769347760000,
+      "limit": 2
+    }
+  },
+  "id": 1
+}
+```
+
+响应：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+    "start_time": 1769344160000,
+    "end_time": 1769347760000,
+    "snapshots": [
+      { "interface_name": "eth0", "snapshot_time": 1769344200000, "total_received": 10485760, "total_transmitted": 5242880 },
+      { "interface_name": "eth0", "snapshot_time": 1769345100000, "total_received": 11534336, "total_transmitted": 5767168 }
+    ],
+    "next_cursor": { "interface_name": "eth0", "snapshot_time": 1769345100000 },
+    "possible_data_losses": []
+  }
+}
+```
+
+取下一页，把 `next_cursor` 原样填进 `cursor`：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent_query_traffic_detail",
+  "params": {
+    "token": "demo_key:demo_secret",
+    "query": {
+      "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+      "start_time": 1769344160000,
+      "end_time": 1769347760000,
+      "limit": 2,
+      "cursor": { "interface_name": "eth0", "snapshot_time": 1769345100000 }
+    }
+  },
+  "id": 2
+}
+```
+
+## Query Traffic Range
+
+查询一台设备每块网卡有快照数据的时间范围，用来判断从哪个时间起能查到数据。
+
+### 方法
+
+调用方法名为 `agent_query_traffic_range`，需要提供以下参数：
+
+```json
+{
+  "token": "demo_token",
+  "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd"
+}
+```
+
+- `uuid`: 要查询的设备 UUID
+
+### 权限要求
+
+与 [Query Traffic Total](#query-traffic-total) 相同：`Scope::AgentUuid` 需覆盖 `uuid`，
+`Permission` 为 `DynamicMonitoring::Read(Network)`。
+
+### 返回值
+
+按网卡名排序；设备还没有任何快照时 `interfaces` 为空数组。没有 `possible_data_losses`：
+
+```json
+{
+  "uuid": "e8583352-39e8-5a5b-b66c-e450689088fd",
+  "interfaces": [
+    {
+      "interface_name": "eth0",
+      "first_snapshot_time": 1769000000000,
+      "last_snapshot_time": 1769344200000
+    }
+  ]
 }
 ```
 

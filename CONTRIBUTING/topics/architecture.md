@@ -95,7 +95,7 @@ agent_report_dynamic 额外同步分支（不经 mpsc）：
   Worker → agent.query_traffic_current（读 TrafficStats 内存里的总流量 + 每块网卡最晚的快照时间）
          → agent.write_traffic_snapshot → DB (traffic_snapshot)
          → agent.delete_traffic_snapshot（清理过期快照和可能丢失数据记录）
-  → agent.query_traffic 只读数据库三张表，按时间段返回流量合计、逐条快照或快照时间范围
+  → agent.query_traffic_total / query_traffic_detail / query_traffic_range 只读数据库，按时间段返回流量合计、分页的逐条快照或快照时间范围
 ```
 
 查询走多层缓存以减少打 DB：`MonitoringUuidCache`（全量 DB 加载）、`MonitoringLastCache`（派生最近值，手写 OnceLock）、`StaticHashCache`（`data_hash -> static_monitoring::Model` 的哈希去重缓存）。周期流量统计（`TrafficStats`）是独立于以上三张监控表的另一套内存态 + 落库节奏，详见 [`crates/ng-monitoring.md`](../crates/ng-monitoring.md) 的「流量统计」小节。
