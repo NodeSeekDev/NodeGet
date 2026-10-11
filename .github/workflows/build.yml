@@ -2,17 +2,10 @@ name: build
 
 # 可复用的构建流程：构建 agent 的全平台二进制，以及 Windows / macOS 的 server 二进制，并上传为 artifact。
 # Linux server 单独放在 build-server-linux.yml（Docker 镜像只依赖它）。
-# 由 release.yml（全部 target）和 nightly.yml（只构建 nightly 标记的 target）调用。
-# target 列表见 .github/build-matrix.json。
+# 由 release.yml 和 nightly.yml 调用，构建 build-matrix.json 中的全部 target。
 
 on:
   workflow_call:
-    inputs:
-      nightly:
-        description: "只构建 build-matrix.json 中标记了 nightly 的 target"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -37,13 +30,9 @@ jobs:
       - name: Resolve build matrix
         id: plan
         shell: bash
-        env:
-          NIGHTLY: ${{ inputs.nightly }}
         run: |
           for group in agent_linux server_windows agent_windows server_macos agent_macos; do
-            matrix=$(jq -c --arg group "${group}" --argjson nightly "${NIGHTLY}" '
-              {platform: (.[$group] | if $nightly then map(select(.nightly == true)) else . end)}
-            ' .github/build-matrix.json)
+            matrix=$(jq -c --arg group "${group}" '{platform: .[$group]}' .github/build-matrix.json)
             echo "${group}=${matrix}" >> "${GITHUB_OUTPUT}"
             echo "${group}: $(jq '.platform | length' <<< "${matrix}") target(s)"
           done
