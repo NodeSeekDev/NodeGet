@@ -72,14 +72,12 @@ jobs:
 
           echo "build=${build}" >> "${GITHUB_OUTPUT}"
 
-  # 只构建 .github/build-matrix.json 中标记了 nightly 的 target
+  # 构建 .github/build-matrix.json 中的全部平台，和正式发布一致，这样脚本在所有平台都能安装 nightly
   build:
     name: Build
     needs: check
     if: needs.check.outputs.build == 'true'
     uses: ./.github/workflows/build.yml
-    with:
-      nightly: true
 
   # Linux server 单独构建，nightly 镜像只依赖它
   build-server-linux:
@@ -87,8 +85,6 @@ jobs:
     needs: check
     if: needs.check.outputs.build == 'true'
     uses: ./.github/workflows/build-server-linux.yml
-    with:
-      nightly: true
 
   publish-release:
     name: Publish nightly Release
