@@ -298,6 +298,17 @@ pub struct TrafficTotalQuery {
     pub end_time: Option<i64>,
 }
 
+/// 流量明细的翻页位置：已经返回的最后一条快照的位置。
+///
+/// 下一页从它后面开始，不包含它。客户端原样传回即可，不需要解析。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrafficCursor {
+    /// 已经返回的最后一条快照的网卡名
+    pub interface_name: String,
+    /// 已经返回的最后一条快照的时间（毫秒）
+    pub snapshot_time: i64,
+}
+
 /// 流量明细查询结构体。
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrafficDetailQuery {
@@ -307,6 +318,10 @@ pub struct TrafficDetailQuery {
     pub start_time: Option<i64>,
     /// 结束时间（毫秒），不填表示到现在
     pub end_time: Option<i64>,
+    /// 每页最多返回的条数，不填为 10000，超过 10000 按 10000 处理，不能为 0
+    pub limit: Option<u64>,
+    /// 翻页位置，第一页不填，后面的页原样填上一页返回的 `next_cursor`
+    pub cursor: Option<TrafficCursor>,
 }
 
 /// 单块网卡在时间段内的流量。
@@ -374,8 +389,10 @@ pub struct TrafficDetailResponse {
     pub start_time: Option<i64>,
     /// 请求的结束时间（毫秒），未填写时为 `null`
     pub end_time: Option<i64>,
-    /// 时间段内的总流量快照，按网卡名、快照时间排序
+    /// 这一页的总流量快照，按网卡名、快照时间排序
     pub snapshots: Vec<TrafficSnapshotItem>,
+    /// 下一页的翻页位置，没有下一页时为 `null`
+    pub next_cursor: Option<TrafficCursor>,
     /// 与时间段有重叠的可能丢失数据的时间段
     pub possible_data_losses: Vec<PossibleDataLossItem>,
 }
