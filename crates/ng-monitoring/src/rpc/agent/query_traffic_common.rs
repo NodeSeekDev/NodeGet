@@ -124,7 +124,7 @@ pub(super) fn database_error(e: &DbErr) -> NodegetError {
 #[cfg(test)]
 pub(super) mod test_support {
     use crate::traffic_stats::traffic_tables_on_sqlite;
-    use ng_db::entity::{traffic_current_total, traffic_possible_data_loss, traffic_snapshot};
+    use ng_db::entity::{traffic_possible_data_loss, traffic_snapshot};
     use sea_orm::{ActiveValue, DatabaseConnection, EntityTrait, Set};
 
     pub const MINUTE: i64 = 60 * 1000;
@@ -137,8 +137,8 @@ pub(super) mod test_support {
     }
 
     /// 准备测试数据：
-    /// - eth0：10:00 快照 100，10:15 快照 150，10:30 快照 230，当前总流量 260
-    /// - eth1：10:15 快照 10，当前总流量 20
+    /// - eth0：10:00 快照 100，10:15 快照 150，10:30 快照 230
+    /// - eth1：10:15 快照 10
     /// - 可能丢失数据：10:20 到 10:40
     /// - 另一台设备（编号 2）的数据不应被查到
     pub async fn seeded_db() -> DatabaseConnection {
@@ -158,30 +158,6 @@ pub(super) mod test_support {
             snapshot(1, "eth0", 30, 230),
             snapshot(1, "eth1", 15, 10),
             snapshot(2, "eth0", 15, 9999),
-        ])
-        .exec(&db)
-        .await
-        .unwrap();
-
-        let current_total =
-            |uuid_id: i16, name: &str, total: i64| traffic_current_total::ActiveModel {
-                id: ActiveValue::default(),
-                uuid_id: Set(uuid_id),
-                interface_name: Set(name.to_owned()),
-                boot_id: Set(None),
-                ifindex: Set(None),
-                counter_received: Set(0),
-                counter_transmitted: Set(0),
-                report_time: Set(0),
-                total_received: Set(total),
-                total_transmitted: Set(total / 10),
-                created_at: Set(0),
-                updated_at: Set(0),
-            };
-        traffic_current_total::Entity::insert_many([
-            current_total(1, "eth0", 260),
-            current_total(1, "eth1", 20),
-            current_total(2, "eth0", 9999),
         ])
         .exec(&db)
         .await

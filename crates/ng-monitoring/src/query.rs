@@ -318,6 +318,10 @@ pub struct InterfaceTrafficItem {
     pub received: u64,
     /// 发送量（字节）
     pub transmitted: u64,
+    /// 计算用到的第一条快照的时间（毫秒）
+    pub first_snapshot_time: i64,
+    /// 计算用到的最后一条快照的时间（毫秒）
+    pub last_snapshot_time: i64,
 }
 
 /// 单块网卡的一条总流量快照。
