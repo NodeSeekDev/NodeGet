@@ -53,6 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.check.outputs.build }}
+      version_suffix: ${{ steps.check.outputs.version_suffix }}
     steps:
       - name: Decide whether to build
         id: check
@@ -71,6 +72,8 @@ jobs:
           fi
 
           echo "build=${build}" >> "${GITHUB_OUTPUT}"
+          # 版本号后缀带构建当天的日期（UTC），如 0.6.0-nightly.20261011
+          echo "version_suffix=nightly.$(date -u +%Y%m%d)" >> "${GITHUB_OUTPUT}"
 
   # 构建 .github/build-matrix.json 中的全部平台，和正式发布一致，这样脚本在所有平台都能安装 nightly
   build:
@@ -78,6 +81,8 @@ jobs:
     needs: check
     if: needs.check.outputs.build == 'true'
     uses: ./.github/workflows/build.yml
+    with:
+      version_suffix: ${{ needs.check.outputs.version_suffix }}
 
   # Linux server 单独构建，nightly 镜像只依赖它
   build-server-linux:
@@ -85,6 +90,8 @@ jobs:
     needs: check
     if: needs.check.outputs.build == 'true'
     uses: ./.github/workflows/build-server-linux.yml
+    with:
+      version_suffix: ${{ needs.check.outputs.version_suffix }}
 
   publish-release:
     name: Publish nightly Release

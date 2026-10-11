@@ -4,9 +4,16 @@ name: build-server-linux
 # 拆出来的原因：Docker 镜像只用到这里产出的 Linux musl server 二进制，
 # 调用方可以让 Docker 发布只依赖这一步，不必等 agent、Windows、macOS 的构建。
 # 其余平台见 build.yml；target 列表见 .github/build-matrix.json 的 server_linux。
+# version_suffix 的含义见 build.yml。
 
 on:
   workflow_call:
+    inputs:
+      version_suffix:
+        description: "追加到 Cargo.toml 版本号后的预发布后缀，留空则不追加"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -42,6 +49,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Set version suffix
+        uses: ./.github/actions/set-version-suffix
+        with:
+          suffix: ${{ inputs.version_suffix }}
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
