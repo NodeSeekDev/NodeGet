@@ -137,7 +137,7 @@ pub async fn run(config: &ServerConfig) {
                 .build(),
         )
         .to_service_builder()
-        .build(rpc_module, stop_handle.clone());
+        .build(rpc_module, stop_handle);
     let landing_html = render_root_html(&config.server_uuid.to_string(), env!("CARGO_PKG_VERSION"));
 
     // `/` 与 `/nodeget/rpc` 行为完全一致，共用同一个路由
@@ -242,13 +242,13 @@ pub async fn run(config: &ServerConfig) {
             biased;
             result = &mut serve_future => {
                 result.unwrap();
-                graceful_shutdown(stop_handle, unix_server).await;
+                graceful_shutdown(unix_server).await;
             }
             () = get_reload_notify()
                 .expect("Reload notify not initialized")
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping TLS server...");
-                graceful_shutdown(stop_handle, unix_server).await;
+                graceful_shutdown(unix_server).await;
             }
         }
     } else {
@@ -269,13 +269,13 @@ pub async fn run(config: &ServerConfig) {
             biased;
             result = &mut serve_future => {
                 result.unwrap();
-                graceful_shutdown(stop_handle, unix_server).await;
+                graceful_shutdown(unix_server).await;
             }
             () = get_reload_notify()
                 .expect("Reload notify not initialized")
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping server for restart...");
-                graceful_shutdown(stop_handle, unix_server).await;
+                graceful_shutdown(unix_server).await;
             }
         }
     }
@@ -288,23 +288,15 @@ pub async fn run(config: &ServerConfig) {
 /// 内部步骤：
 /// 1. [`flush_pending_data`]：监控数据和流量统计写入数据库
 /// 2. [`shutdown_db_registry`]：停止数据库注册处的清理任务
-/// 3. 等待 JSON-RPC 服务停止，最多 5 秒
-/// 4. 停止 Unix Socket 服务并删除 socket 文件（未启用时跳过）
+/// 3. 停止 Unix Socket 服务并删除 socket 文件（未启用时跳过）
 ///
-/// - `stop_handle`：JSON-RPC 服务的停止句柄
+/// 这里不等待 JSON-RPC 服务的停止信号：该信号由 `run()` 里的 `_server_handle`
+/// 在 `run()` 返回、变量被丢弃时发出，在 `run()` 内部等它只会白等到超时。
+///
 /// - `unix_server`：Unix Socket 服务（未启用时为 `None`）
-async fn graceful_shutdown(
-    stop_handle: jsonrpsee::server::StopHandle,
-    unix_server: Option<UnixSocketServer>,
-) {
+async fn graceful_shutdown(unix_server: Option<UnixSocketServer>) {
     flush_pending_data().await;
     shutdown_db_registry().await;
-
-    // inline await stop_handle.shutdown()，而非 detached spawn。
-    // detached 会让旧 RPC handler 继续执行 ≤5s，与重新进入 run() 后重建的
-    // 全局缓存（TokenCache/MonitoringUuidCache/StaticCache 等）并发共享——
-    // inline 等待 drain 完成后再返回，消除该竞态窗口。
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
 
     if let Some(server) = unix_server {
         server.task.abort();
