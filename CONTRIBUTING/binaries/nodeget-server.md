@@ -81,7 +81,7 @@ loop {
 | `init`            | `run` `server/src/subcommands/init.rs:11` | 调用 `init_or_skip_super_token().await`，记录 `Initialization completed, exiting`（target `server`），随后进程随 `async_main` 返回退出。     |
 | `get_uuid`        | `run` `server/src/subcommands/get_uuid.rs:8` | 同步打印 `config.server_uuid`；不初始化 DB。                                                                                                |
 | `roll_super_token`| `run` `server/src/subcommands/roll_super_token.rs:17` | `prompt_yes_or_no`（`server/src/subcommands/roll_super_token.rs:45`，接受 `y/yes`/`n/no`，无效输入重试）；确认后调用 `ng_token::super_token::roll_super_token`，Ok 时 stdout 打印凭据，Err 时 `panic`。 |
-| `serve`           | `run` `server/src/subcommands/serve.rs:51` | 见下文「serve::run」。                                                                                                                       |
+| `serve`           | `run` `server/src/subcommands/serve.rs:52` | 见下文「serve::run」。                                                                                                                       |
 
 ### `init_or_skip_super_token()` — `server/src/subcommands/mod.rs:22`
 
@@ -90,7 +90,7 @@ loop {
 - `None` 时以 target `server` 记录 `Super Token already exists, skipped`。
 - **凭据绝不走 tracing**（见「注意事项」）。
 
-### `serve::run()` — `server/src/subcommands/serve.rs:51`
+### `serve::run()` — `server/src/subcommands/serve.rs:52`
 
 1. 安装 rustls `aws_lc_rs` default_provider。
 2. `init_or_skip_super_token`。
@@ -105,30 +105,36 @@ loop {
 
 | 路径                                       | 处理                                                                                                                                                                                                              |
 |--------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `/`、`/nodeget/rpc`（任意 method）         | WS upgrade → `rpc_service.call`；否则 GET → 若 `StaticCache.get_http_root` 启用则 `serve_static_file`，否则 `landing_html`，否则 rpc call                                                                            |
+| `/`、`/nodeget/rpc`（任意 method）         | 两个路径共用同一个路由 `handle_rpc_root`：WS upgrade → `call_rpc`；否则 GET → 若 `StaticCache.get_http_root` 启用则 `serve_static_file`，否则 `landing_html`；其余 method → `call_rpc`                                  |
 | （merge）                                  | `ng_static::router::router()`（静态文件 + WebDAV）                                                                                                                                                                 |
-| `/worker-route/...`、`/nodeget/worker-route/...` | 每个前缀 3 个变体（bare、trailing slash、`{*path}`）→ `handle_js_worker_route`                                                                                                                                       |
+| `/worker-route/...`、`/nodeget/worker-route/...` | `add_worker_routes` 为每个前缀注册 3 个变体（bare、trailing slash、`{*path}`），统一经 `worker_route` 取出 `route_name` → `handle_js_worker_route`                                                                    |
 | （merge）                                  | `ng_terminal::router()`                                                                                                                                                                                           |
-| `.fallback()`                              | WS upgrade → rpc；否则 `StaticCache.get_http_root` → `serve_static_file`，否则 rpc                                                                                                                                  |
+| `.fallback()`                              | WS upgrade → `call_rpc`；否则 `StaticCache.get_http_root` → `serve_static_file`，否则 `call_rpc`                                                                                                                    |
 
-所有 `rpc_service.call` 错误返回 500 + 记录日志（**不** `unwrap` panic）。
+所有对 jsonrpsee service 的调用都经 `call_rpc`：出错返回 500 + 记录日志（**不** `unwrap` panic）。
 
-#### select 循环与 shutdown — `server/src/subcommands/serve.rs:407`
+#### select 循环与 shutdown — `server/src/subcommands/serve.rs:229`
 
 - `tls_enabled = tls_cert.is_some() && tls_key.is_some()`。TLS 分支使用 `axum_server::bind_rustls` + `build_http1_only_tls_config`（加载失败 `panic`）。明文分支使用 `TcpListener::bind`（失败 `panic`）+ `axum::serve` 配合 `into_make_service_with_connect_info::<SocketAddr>`。
 - `tokio::select!` biased：
-  - `serve_future` 完成 → `monitoring_buffer::flush_and_shutdown` + `TrafficStats::flush_and_shutdown` + `DbRegistryManager.shutdown` + 5s 超时的 `stop_handle.shutdown` + abort unix task + 清理 socket 文件。
-  - `reload_notify` 触发 → 同样的 shutdown（含 `TrafficStats::flush_and_shutdown`），但 `stop_handle.shutdown` 改为**非阻塞 spawn**，使 `run()` 立即返回到 `main` 的热重载循环。
+  - `serve_future` 完成 → 先 `result.unwrap()`（见「注意事项」），再 `graceful_shutdown`。
+  - `reload_notify` 触发 → 记录日志后 `graceful_shutdown`；之后 `run()` 返回到 `main` 的热重载循环。
+- 两种情况共用 `graceful_shutdown(stop_handle, unix_server)`（`server/src/subcommands/serve.rs:296`），依次执行：
+  1. `flush_pending_data`（`monitoring_buffer::flush_and_shutdown` + `TrafficStats::flush_and_shutdown`）；
+  2. `shutdown_db_registry`（停止 `DbRegistryManager` 的清理循环，最多 5s）；
+  3. 等待 `stop_handle.shutdown()`，最多 5s。**原地 await**，而非 detached spawn：避免旧 RPC handler 与重新进入 `run()` 后重建的全局缓存并发共享；
+  4. abort Unix socket 任务并删除 socket 文件（未启用时跳过）。
+- 自更新重启（`rpc_nodeget.rs` 的 `self_update`）在 `execv` 前直接调用 `flush_pending_data` 与 `shutdown_db_registry`，不经过 `graceful_shutdown`。
 - 两个分支对 `serve_future` 的结果都 `unwrap()`（见「注意事项」）。
 
-#### Unix socket — `server/src/subcommands/serve.rs:379`
+#### Unix socket — `server/src/subcommands/serve.rs:198`
 
-- 仅当 `enable_unix_socket`（默认 `false`）开启；默认路径 `/var/lib/nodeget.sock`。
-- `bind_unix_listener`（`server/src/subcommands/serve.rs:1062`，创建父目录、移除已存在的 socket 文件、绑定 `UnixListener`）。
-- spawn axum serve；绑定失败仅记录日志，**不**阻止 TCP 服务。
-- shutdown 时通过 `cleanup_unix_socket_file`（`server/src/subcommands/serve.rs:1084`）移除 socket 文件。
+- 仅当 `enable_unix_socket`（默认 `false`）开启；默认路径 `/var/lib/nodeget.sock`。启动代码仅在非 Windows 上编译。
+- `bind_unix_listener`（`server/src/subcommands/serve.rs:1002`，创建父目录、移除已存在的 socket 文件、绑定 `UnixListener`）。
+- spawn axum serve，并把任务与路径封装为 `UnixSocketServer`（`server/src/subcommands/serve.rs:988`）；该类型在所有平台都存在，Windows 上对应的 `Option` 始终为 `None`。绑定失败仅记录日志，**不**阻止 TCP 服务。
+- shutdown 时由 `graceful_shutdown` abort 该任务，并通过 `cleanup_unix_socket_file`（`server/src/subcommands/serve.rs:1023`）移除 socket 文件。
 
-#### TLS / ALPN — `build_http1_only_tls_config` `server/src/subcommands/serve.rs:517`
+#### TLS / ALPN — `build_http1_only_tls_config` `server/src/subcommands/serve.rs:338`
 
 - 读取 cert/key PEM，用 rustls `pki_types` 解析，构建无客户端认证的 `rustls::ServerConfig` + `single_cert`，再包装为 `axum_server::tls_rustls::RustlsConfig` 返回。
 - **强制** `alpn_protocols = [b"http/1.1"]`，避免 HTTP/2 协商开销（文档注释中提到 samply 下 HTTP/2 协商消耗 14–33% 的 tokio worker time）。
@@ -199,12 +205,17 @@ loop {
 
 | 项                                            | 行号  | 说明                                                                                                                                                                                                                               |
 |-----------------------------------------------|-------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `render_root_html`                            | 547   | 硬编码 HTML landing page，插值 `serv_uuid` 与 `serv_version`（`env! CARGO_PKG_VERSION`）；链接 `dash.nodeget.com`、`nodeget.com`、`github.com/nodeseekdev/nodeget`。                                                                                  |
-| `is_websocket_upgrade`                        | 578   | 检查 `Upgrade: websocket`（大小写不敏感）**且** `Connection` 含 `upgrade` 段（大小写不敏感）；用于 `/`、`/nodeget/rpc`、fallback 分支。                                                                                                          |
-| `JsRouteHeader / JsRouteInput / JsRouteOutput / JsRouteOutputHeader` | 597   | JS Worker HTTP 路由桥的 Serde 结构；`JsRouteInput` 带 method/url/headers/body_base64；`JsRouteOutput` 带 status/headers/body_base64；body 经 base64 跨 JS 边界。                                                                                |
-| `handle_js_worker_route`                      | 653   | 见下「JS Worker HTTP 路由管线」。                                                                                                                                                                                                     |
-| `guess_mime_type`                             | 886   | 文件扩展名 → MIME 静态映射；默认 `application/octet-stream`。                                                                                                                                                                       |
-| `serve_static_file`                           | 916   | 仅 GET/HEAD（否则 405 + `ALLOW: GET, HEAD, OPTIONS`）；空/`/` 路径 → `index.html`；`resolve_safe_file_path`（traversal 错误 400）；NotFound 目录回退 `<resolved>/index.html`；ETag = `"\"{mtime_secs}-{len}\""`（weak）；处理 `If-None-Match`（`*` 或逗号分隔、去 `W/`）→ 304 不读文件；HEAD 空 body；可选 CORS `Access-Control-Allow-Origin: *`。 |
+| `render_root_html`                            | 368   | 硬编码 HTML landing page，插值 `serv_uuid` 与 `serv_version`（`env! CARGO_PKG_VERSION`）；链接 `dash.nodeget.com`、`nodeget.com`、`github.com/nodeseekdev/nodeget`。                                                                                  |
+| `is_websocket_upgrade`                        | 399   | 检查 `Upgrade: websocket`（大小写不敏感）**且** `Connection` 含 `upgrade` 段（大小写不敏感）；用于 `/`、`/nodeget/rpc`、fallback 分支。                                                                                                          |
+| `handle_rpc_root`                             | 427   | `/` 与 `/nodeget/rpc` 共用的入口：WS upgrade → `call_rpc`；GET → 静态根（已启用时）或 landing；其余 → `call_rpc`。                                                                                                                       |
+| `call_rpc`                                    | 476   | 把请求交给 jsonrpsee service；出错时记日志并返回 500，避免 handler task panic。日志说明文字由调用方传入。                                                                                                                              |
+| `add_worker_routes` / `worker_route`          | 546 / 559 | 前者在给定前缀下注册 bare、末尾斜杠、`{*path}` 三种路由；后者把所有路径参数收进 `HashMap`，只取 `route_name` 交给 `handle_js_worker_route`（`{*path}` 不使用）。                                                                    |
+| `graceful_shutdown`                           | 296   | 关闭与热重载共用的收尾，见上文「select 循环与 shutdown」。                                                                                                                                                                          |
+| `flush_pending_data` / `shutdown_db_registry` | 319 / 325 | 前者刷写监控 buffer 与流量统计；后者停止 `DbRegistryManager` 的清理循环。`self_update` 重启前也直接调用这两个。                                                                                                                        |
+| `JsRouteHeader / JsRouteInput / JsRouteOutput / JsRouteOutputHeader` | 499   | JS Worker HTTP 路由桥的 Serde 结构；`JsRouteInput` 带 method/url/headers/body_base64；`JsRouteOutput` 带 status/headers/body_base64；body 经 base64 跨 JS 边界。                                                                                |
+| `handle_js_worker_route`                      | 582   | 见下「JS Worker HTTP 路由管线」。                                                                                                                                                                                                     |
+| `guess_mime_type`                             | 815   | 文件扩展名 → MIME 静态映射；默认 `application/octet-stream`。                                                                                                                                                                       |
+| `serve_static_file`                           | 845   | 仅 GET/HEAD（否则 405 + `ALLOW: GET, HEAD, OPTIONS`）；空/`/` 路径 → `index.html`；`resolve_safe_file_path`（traversal 错误 400）；NotFound 目录回退 `<resolved>/index.html`；ETag = `"\"{mtime_secs}-{len}\""`（weak）；处理 `If-None-Match`（`*` 或逗号分隔、去 `W/`）→ 304 不读文件；HEAD 空 body；可选 CORS `Access-Control-Allow-Origin: *`。 |
 | `build_http_error / build_static_error`       | 1023  | `text/plain` 错误响应；后者可选加 CORS 头以让浏览器可读。                                                                                                                                                                            |
 | `bind_unix_listener`                          | 1062  | `#[cfg(not(target_os="windows"))]`：创建父目录、移除已存在 socket（忽略 NotFound）、绑定 `UnixListener`。                                                                                                                                  |
 | `cleanup_unix_socket_file`                    | 1084  | shutdown 时移除 socket 文件；忽略 NotFound，其他警告。                                                                                                                                                                                |
@@ -306,18 +317,18 @@ loop {
 - **切勿假设配置热重载解析失败会停服**：`server/src/main.rs:117`（及 `:126` 的 `set_server_config` 失败）失败时 `continue`，立即以**旧** config 再次 `serve::run`。若坏配置持续存在，会无延迟热循环。
 - **`server/src/rpc_nodeget.rs:356` 的 `self_update` 是远程代码执行路径**：URL 由用户提供的 `tag` 派生，下载并替换运行中的 server 可执行文件再 exec 新进程。虽 super-token 守卫，下载源（`ng_core::self_update::get_server_url`）与签名模型必须可信；release 源被攻破或下载链路上的 DNS/网络 MITM 即等于攻破 server。
 - **`server/src/rpc_nodeget.rs:485` 的 `exec_sql` 是完全信任 RPC**（trait 声明在 `:93`），在主 DB 上执行任意 SQL（委托 `ng_db::rpc::nodeget::exec_sql`）；SQLite 下 `ATTACH DATABASE` 升级为 server uid 下的任意 FS 读写。CLAUDE.md 文档化为**有意为之**；**切勿**放宽其权限，并在最小权限 uid 下运行 server。
-- **`server/src/subcommands/serve.rs:422`（TLS 分支）与 `:474`（明文分支）的 `select` 两侧都对 `serve_future` 结果 `unwrap()`**：若 `axum::serve` 中途返回 Err（如监听器失败），server 进程在 shutdown 期间 `panic`，外层 `main` 循环随后重启。属刻意 fail-fast，但确是硬 panic。
-- **`server/src/subcommands/serve.rs:121`：`RpcTimingMiddleware` 硬编码为 `tracing::Level::TRACE`**。RPC 计时日志在 TRACE 级别发出，运维若要看到须把 `rpc` target 设为 `trace`（或全局 `trace`），日志量很大，预期容易错位。
-- **`server/src/subcommands/serve.rs:402`：`config.ws_listener` 用 `parse().unwrap_or_else(panic)` 解析**。`config.toml` 中监听地址格式错误会在启动时直接 panic，无回退。
+- **`server/src/subcommands/serve.rs:244`（TLS 分支）与 `:271`（明文分支）的 `select` 两侧都对 `serve_future` 结果 `unwrap()`**：若 `axum::serve` 中途返回 Err（如监听器失败），server 进程在 shutdown 期间 `panic`，外层 `main` 循环随后重启。属刻意 fail-fast，但确是硬 panic。
+- **`server/src/subcommands/serve.rs:126`：`RpcTimingMiddleware` 硬编码为 `tracing::Level::TRACE`**。RPC 计时日志在 TRACE 级别发出，运维若要看到须把 `rpc` target 设为 `trace`（或全局 `trace`），日志量很大，预期容易错位。
+- **`server/src/subcommands/serve.rs:224`：`config.ws_listener` 用 `parse().unwrap_or_else(panic)` 解析**。`config.toml` 中监听地址格式错误会在启动时直接 panic，无回退。
 - **`server/src/logging/mod.rs:134`：`memory_log_capacity = 0` 会禁用内存日志层**（`MemoryLogLayer` 不安装），但 `MEMORY_LOG_CAPACITY` 仍被设为 0，`get_memory_logs()` 返回空。`nodeget-server_log` RPC 会静默返回 `[]`，**不**报错。
 - **`server/src/logging/mod.rs:768`：`StreamLogFilter` 必须作为 per-layer filter（`.with_filter`）使用，绝不可作为全局 subscriber filter**。在 Layered AND 逻辑下，全局 filter 在无订阅者时返回 false 会阻塞**所有**其他层（console、memory、json）。任何重构 subscriber init 的人都必须保留这一点。
-- **`server/src/subcommands/serve.rs:657`：JS Worker HTTP 路由请求 body 上限 `ROUTE_BODY_LIMIT_BYTES = 8 MiB`（超出 400），但响应 body 无上限**——返回超大 base64 body 的 JS worker 会完整缓冲进内存后才响应，可经此 OOM server。
-- **`server/src/subcommands/serve.rs:857`：`handle_js_worker_route` 只转发 `ALLOWED_RESPONSE_HEADERS` 白名单**。JS worker 设置的任何白名单外头部（自定义 `X-`、或被刻意阻断的 `Set-Cookie`/`Location`）会被静默丢弃，依赖这些头部的 worker 不会有清晰错误，看起来像是「坏掉」。
-- **`server/src/subcommands/serve.rs:1114`：`ServerPermissionChecker::check_token_limit` 返回的 future 借用调用方的 `TokenOrAuth`/scopes/permissions（lifetime `'a`）**。调用方必须把它们存活到 awaited future 完成（提前 drop 是编译期借用错误）。设计如此（避免 Vec clone），但约束了 `ng-db`/`ng-kv`/`ng-static` 等的调用模式。
+- **`server/src/subcommands/serve.rs:586`：JS Worker HTTP 路由请求 body 上限 `ROUTE_BODY_LIMIT_BYTES = 8 MiB`（超出 400），但响应 body 无上限**——返回超大 base64 body 的 JS worker 会完整缓冲进内存后才响应，可经此 OOM server。
+- **`server/src/subcommands/serve.rs:778`：`handle_js_worker_route` 只转发 `ALLOWED_RESPONSE_HEADERS` 白名单**。JS worker 设置的任何白名单外头部（自定义 `X-`、或被刻意阻断的 `Set-Cookie`/`Location`）会被静默丢弃，依赖这些头部的 worker 不会有清晰错误，看起来像是「坏掉」。
+- **`server/src/subcommands/serve.rs:1042`：`ServerPermissionChecker::check_token_limit` 返回的 future 借用调用方的 `TokenOrAuth`/scopes/permissions（lifetime `'a`）**。调用方必须把它们存活到 awaited future 完成（提前 drop 是编译期借用错误）。设计如此（避免 Vec clone），但约束了 `ng-db`/`ng-kv`/`ng-static` 等的调用模式。
 - **`server/src/rpc_nodeget.rs:517`：`get_modules()` 在进程级 `OnceLock` 缓存单个合并 `RpcModule` 并 clone**。该模块被共享（含 `JsWorkerServiceImpl` 的 JS→RPC 分发），**切勿**在 module context（类型为 `()`）里存每请求状态。缓存**永不**在热重载间失效——合并的命名空间只反映构建期链接的 crate。
 - **`server/src/main.rs:62`：`Version` 是特殊的提前返回子命令**，在 `async_main` 中于配置解析与日志初始化**之前**短路（`:65`）。新增到 Version 分支的代码不得依赖配置/日志就绪；`:145` 还有一个重复 arm（为完整性），但因提前返回而不可达。
 - **`server/src/subcommands/mod.rs:33`：`init_or_skip_super_token` 与 `roll_super_token` 把 Super Token + Root Password 打印到 stdout，正是为了避开 tracing**。任何对这些值做结构化 tracing 的人都会把凭据泄漏进可经 `nodeget-server_log` RPC 查询的内存日志缓冲与 JSON 日志文件。**绝不可** trace 凭据。
-- **`server/src/subcommands/serve.rs:407`：TLS 当且仅当 `tls_cert` 与 `tls_key` 同时为 `Some` 时启用**。只设置其一会**静默回退到明文 TCP**——一个会泄漏未加密流量的可能误配；仅设置一个时没有 warn。
+- **`server/src/subcommands/serve.rs:229`：TLS 当且仅当 `tls_cert` 与 `tls_key` 同时为 `Some` 时启用**。只设置其一会**静默回退到明文 TCP**——一个会泄漏未加密流量的可能误配；仅设置一个时没有 warn。
 - **`server/build.rs:8`：`build.rs` 仅在 `CARGO_CFG_TARGET_ARCH == "arm"` 时 emit `-latomic`**。其他同样缺 64-bit 原子的 32-bit 非 ARM 目标（如部分 RISC-V 或嵌入式）**不会**得到 `-latomic`，可能链接失败。该检查刻意狭窄，但交叉编译时值得知晓。
 - **`server/src/logging/mod.rs:873`：`StreamLogLayer.on_event` 用 `try_send`，订阅者 512-capacity `mpsc` 满时静默丢弃日志条目（`let _ = tx.try_send(...)`）**。慢的 `stream_log` 订阅者会无任何迹象地丢日志行；容量 **512** 在 `rpc_nodeget.rs::stream_log` 中设置。
 
