@@ -115,6 +115,8 @@ jobs:
           target_commitish: ${{ github.sha }}
           prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           make_latest: ${{ needs.prepare.outputs.prerelease != 'true' }}
+          # 让 GitHub 按上一个版本到本版本之间合并的 PR 自动生成发布日志
+          generate_release_notes: true
           files: dist/*
 
   # 只等 Linux server 构建，不受 agent / Windows / macOS 构建结果影响，也不影响 GitHub Release 的发布

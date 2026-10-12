@@ -133,6 +133,35 @@ jobs:
             gh api -X POST "repos/${REPO}/git/refs" -f ref="refs/tags/nightly" -f sha="${SHA}"
           fi
 
+      # 发布日志 = 固定说明 + 自上一个正式版以来合并的 PR 列表。
+      # nightly tag 每天移动、不是版本号，GitHub 找不到"上一个版本"，所以要明确指定起点：最新的正式版。
+      # 必须放在 "Move nightly tag" 之后，这样 nightly 才指向本次构建的提交。
+      # 生成失败（例如还没有正式版）不应该影响 nightly 发布，此时只保留固定说明。
+      - name: Generate release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          cat > release-notes.md <<EOF
+          自动构建的 nightly 版本，来自开发分支提交 \`${SHA}\`。
+          **不保证稳定，普通用户请使用正式版。**
+
+          安装 / 升级方式见文档「自动化脚本安装」中的预发布与 nightly 一节。
+          EOF
+
+          if previous=$(gh api "repos/${REPO}/releases/latest" --jq .tag_name) && [[ -n "${previous}" ]]; then
+            if notes=$(gh api -X POST "repos/${REPO}/releases/generate-notes" \
+              -f tag_name=nightly -f previous_tag_name="${previous}" --jq .body); then
+              printf '\n---\n\n**相对 %s 的变更**\n\n%s\n' "${previous}" "${notes}" >> release-notes.md
+            else
+              echo "Failed to generate release notes, keeping the fixed text only." >&2
+            fi
+          else
+            echo "No stable release found, keeping the fixed text only." >&2
+          fi
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v3
         with:
@@ -141,11 +170,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           prerelease: true
           make_latest: false
-          body: |
-            自动构建的 nightly 版本，来自开发分支提交 `${{ github.sha }}`。
-            **不保证稳定，普通用户请使用正式版。**
-
-            安装 / 升级方式见文档「自动化脚本安装」中的预发布与 nightly 一节。
+          body_path: release-notes.md
           files: dist/*
 
   # 只等 Linux server 构建，不受其他平台构建结果影响，也不影响 nightly Release 的发布；不更新 latest
