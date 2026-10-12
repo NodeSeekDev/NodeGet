@@ -12,6 +12,7 @@
 //! 通过 [`get_modules`] 合并为统一的 `RpcModule`。
 
 use crate::logging;
+use crate::subcommands::serve::{flush_pending_data, shutdown_db_registry};
 use jsonrpsee::core::{RpcResult, SubscriptionResult, async_trait};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::{PendingSubscriptionSink, SubscriptionMessage};
@@ -464,12 +465,8 @@ impl RpcServer for NodegetServerRpcImpl {
                     // 否则会丢失最近 ≤500ms 的 dynamic/summary 监控行（见 REVIEW M3），
                     // 以及最近 ≤60s 的流量统计快照。
                     // flush 必须在 execv 前同步 await 完成，不能 fire-and-forget。
-                    ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                    ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
-                    ng_db::DbRegistryManager::global()
-                        .expect("DbRegistryManager not initialized at restart")
-                        .shutdown()
-                        .await;
+                    flush_pending_data().await;
+                    shutdown_db_registry().await;
 
                     tracing::info!(target: "server", "Restarting server...");
                     #[cfg(target_os = "windows")]

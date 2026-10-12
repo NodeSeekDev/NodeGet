@@ -189,10 +189,10 @@ pub async fn run(config: &ServerConfig) {
     ng_crontab::init_crontab_worker();
     debug!(target: "server", "Crontab worker initialized");
 
-    #[cfg(not(target_os = "windows"))]
-    let mut unix_server_task: Option<tokio::task::JoinHandle<()>> = None;
-    #[cfg(not(target_os = "windows"))]
-    let mut unix_socket_path: Option<String> = None;
+    // Unix Socket 服务；未启用、绑定失败、或在 Windows 上时为 None
+    // Windows 上不会进入下面的启动代码，变量不会被赋值，故压掉 unused_mut
+    #[cfg_attr(target_os = "windows", allow(unused_mut))]
+    let mut unix_server: Option<UnixSocketServer> = None;
 
     #[cfg(not(target_os = "windows"))]
     if config.enable_unix_socket.unwrap_or(false) {
@@ -204,13 +204,16 @@ pub async fn run(config: &ServerConfig) {
         match bind_unix_listener(socket_path.as_str()).await {
             Ok(unix_listener) => {
                 let unix_app = app.clone();
-                unix_socket_path = Some(socket_path.clone());
-                unix_server_task = Some(tokio::spawn(async move {
+                let task = tokio::spawn(async move {
                     if let Err(e) = axum::serve(unix_listener, unix_app.into_make_service()).await {
                         tracing::error!(target: "server", error = %e, "Unix socket server stopped with error");
                     }
-                }));
+                });
                 info!(target: "server", socket_path = %socket_path, "Unix socket listener started");
+                unix_server = Some(UnixSocketServer {
+                    task,
+                    path: socket_path,
+                });
             }
             Err(e) => {
                 tracing::error!(target: "server", error = %e, "Failed to bind unix socket listener");
@@ -239,41 +242,13 @@ pub async fn run(config: &ServerConfig) {
             biased;
             result = &mut serve_future => {
                 result.unwrap();
-                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global()
-                    .expect("DbRegistryManager not initialized at shutdown")
-                    .shutdown()
-                    .await;
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
-                #[cfg(not(target_os = "windows"))]
-                if let Some(task) = unix_server_task.take() {
-                    task.abort();
-                }
-                #[cfg(not(target_os = "windows"))]
-                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+                graceful_shutdown(stop_handle, unix_server).await;
             }
             () = get_reload_notify()
                 .expect("Reload notify not initialized")
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping TLS server...");
-                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global()
-                    .expect("DbRegistryManager not initialized at shutdown")
-                    .shutdown()
-                    .await;
-                // inline await stop_handle.shutdown()（与 stop 分支一致），而非 detached spawn。
-                // detached 会让旧 RPC handler 继续执行 ≤5s，与重新进入 run() 后重建的
-                // 全局缓存（TokenCache/MonitoringUuidCache/StaticCache 等）并发共享——
-                // inline 等待 drain 完成后再返回，消除该竞态窗口。
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
-                #[cfg(not(target_os = "windows"))]
-                if let Some(task) = unix_server_task.take() {
-                    task.abort();
-                }
-                #[cfg(not(target_os = "windows"))]
-                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+                graceful_shutdown(stop_handle, unix_server).await;
             }
         }
     } else {
@@ -294,42 +269,64 @@ pub async fn run(config: &ServerConfig) {
             biased;
             result = &mut serve_future => {
                 result.unwrap();
-                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global()
-                    .expect("DbRegistryManager not initialized at shutdown")
-                    .shutdown()
-                    .await;
-                #[cfg(not(target_os = "windows"))]
-                if let Some(task) = unix_server_task.take() {
-                    task.abort();
-                }
-                #[cfg(not(target_os = "windows"))]
-                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+                graceful_shutdown(stop_handle, unix_server).await;
             }
             () = get_reload_notify()
                 .expect("Reload notify not initialized")
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping server for restart...");
-                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global()
-                    .expect("DbRegistryManager not initialized at shutdown")
-                    .shutdown()
-                    .await;
-                // inline await stop_handle.shutdown()（与 stop 分支一致），而非 detached spawn。
-                // detached 会让旧 RPC handler 继续执行 ≤5s，与重新进入 run() 后重建的
-                // 全局缓存并发共享——inline 等待 drain 完成后再返回，消除该竞态窗口。
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
-                #[cfg(not(target_os = "windows"))]
-                if let Some(task) = unix_server_task.take() {
-                    task.abort();
-                }
-                #[cfg(not(target_os = "windows"))]
-                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+                graceful_shutdown(stop_handle, unix_server).await;
             }
         }
     }
+}
+
+/// 优雅关闭：写完内存中的数据，再依次收拾各个监听
+///
+/// 服务自己停止、配置热重载两种情况共用这套收尾。
+///
+/// 内部步骤：
+/// 1. [`flush_pending_data`]：监控数据和流量统计写入数据库
+/// 2. [`shutdown_db_registry`]：停止数据库注册处的清理任务
+/// 3. 等待 JSON-RPC 服务停止，最多 5 秒
+/// 4. 停止 Unix Socket 服务并删除 socket 文件（未启用时跳过）
+///
+/// - `stop_handle`：JSON-RPC 服务的停止句柄
+/// - `unix_server`：Unix Socket 服务（未启用时为 `None`）
+async fn graceful_shutdown(
+    stop_handle: jsonrpsee::server::StopHandle,
+    unix_server: Option<UnixSocketServer>,
+) {
+    flush_pending_data().await;
+    shutdown_db_registry().await;
+
+    // inline await stop_handle.shutdown()，而非 detached spawn。
+    // detached 会让旧 RPC handler 继续执行 ≤5s，与重新进入 run() 后重建的
+    // 全局缓存（TokenCache/MonitoringUuidCache/StaticCache 等）并发共享——
+    // inline 等待 drain 完成后再返回，消除该竞态窗口。
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
+
+    if let Some(server) = unix_server {
+        server.task.abort();
+        cleanup_unix_socket_file(&server.path).await;
+    }
+}
+
+/// 把内存中尚未写库的监控数据和流量统计写入数据库
+///
+/// 服务关闭、配置热重载、自更新重启前都要调用：
+/// 进程重启或退出时内存中的数据不会保留。
+pub async fn flush_pending_data() {
+    ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
+    ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
+}
+
+/// 停止数据库注册处的后台清理任务（最多等待 5 秒）
+pub async fn shutdown_db_registry() {
+    ng_db::DbRegistryManager::global()
+        .expect("DbRegistryManager not initialized at shutdown")
+        .shutdown()
+        .await;
 }
 
 /// 构建 ALPN 仅广播 `http/1.1` 的 TLS 配置
@@ -984,6 +981,17 @@ fn build_static_error(
         .expect("Failed to build error response")
 }
 
+/// 已启动的 Unix Socket 服务
+///
+/// 类型在所有平台上都存在，但只有非 Windows 才会真正创建；
+/// Windows 上对应的 `Option` 始终为 `None`。
+struct UnixSocketServer {
+    /// 守着 socket 的后台任务
+    task: tokio::task::JoinHandle<()>,
+    /// socket 文件路径
+    path: String,
+}
+
 /// 绑定 Unix Socket 监听器
 ///
 /// 内部步骤：
@@ -1012,10 +1020,8 @@ async fn bind_unix_listener(path: &str) -> std::io::Result<tokio::net::UnixListe
 /// 清理 Unix Socket 文件
 ///
 /// 服务器关闭时调用，删除 socket 文件以避免残留。
-#[cfg(not(target_os = "windows"))]
-async fn cleanup_unix_socket_file(path: Option<&str>) {
+async fn cleanup_unix_socket_file(path: &str) {
     use std::io::ErrorKind;
-    let Some(path) = path else { return };
     match tokio::fs::remove_file(path).await {
         Ok(()) => {}
         Err(e) if e.kind() == ErrorKind::NotFound => {}
