@@ -162,16 +162,49 @@ jobs:
             echo "No stable release found, keeping the fixed text only." >&2
           fi
 
+      # 构建日期取自版本号后缀（如 nightly.20261012），和二进制里的版本号保持一致
+      - name: Resolve build date
+        id: date
+        shell: bash
+        env:
+          VERSION_SUFFIX: ${{ needs.check.outputs.version_suffix }}
+        run: |
+          d="${VERSION_SUFFIX#nightly.}"
+          echo "date=${d:0:4}-${d:4:2}-${d:6:2}" >> "${GITHUB_OUTPUT}"
+
       - name: Upload release assets
+        id: release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly
-          name: NodeGet Nightly
+          name: NodeGet Nightly ${{ steps.date.outputs.date }}
           target_commitish: ${{ github.sha }}
           prerelease: true
           make_latest: false
           body_path: release-notes.md
           files: dist/*
+
+      # nightly 每天更新的是同一个 Release，而 GitHub 的"发布时间"只在发布时记录一次，
+      # 页面上会一直显示第一次发布的日期。把 Release 先切成草稿再立刻发布回来，发布时间就会刷新为现在。
+      # tag 和文件都不受影响；草稿期间只有几秒钟按 tag 查不到这个 Release。
+      # 切成草稿失败时 Release 仍是发布状态，不用处理；但发布回来必须成功，否则 nightly 会一直是草稿，所以重试几次。
+      - name: Refresh release date
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ steps.release.outputs.id }}
+        run: |
+          gh api -X PATCH "repos/${REPO}/releases/${RELEASE_ID}" -F draft=true --silent
+          for attempt in 1 2 3 4 5; do
+            if gh api -X PATCH "repos/${REPO}/releases/${RELEASE_ID}" -F draft=false -F prerelease=true -f make_latest=false --silent; then
+              exit 0
+            fi
+            echo "Failed to publish the release again (attempt ${attempt}), retrying." >&2
+            sleep 5
+          done
+          echo "::error::The nightly release is stuck as a draft, publish it manually." >&2
+          exit 1
 
   # 只等 Linux server 构建，不受其他平台构建结果影响，也不影响 nightly Release 的发布；不更新 latest
   publish-docker-server:
