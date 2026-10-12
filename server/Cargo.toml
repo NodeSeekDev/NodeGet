@@ -24,7 +24,7 @@ ng-crontab = { workspace = true, features = ["server"] }
 ng-terminal = { workspace = true, features = ["server"] }
 
 # 基础运行时
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
 chrono = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
