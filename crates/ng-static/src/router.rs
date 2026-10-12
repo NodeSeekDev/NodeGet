@@ -552,10 +552,13 @@ fn build_static_error(
     message: impl Into<String>,
     cors: bool,
 ) -> axum::http::Response<jsonrpsee::server::HttpBody> {
-    let mut builder = axum::http::Response::builder().status(status).header(
-        axum::http::header::CONTENT_TYPE,
-        "text/plain; charset=utf-8",
-    ).header("X-Content-Type-Options", "nosniff");
+    let mut builder = axum::http::Response::builder()
+        .status(status)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )
+        .header("X-Content-Type-Options", "nosniff");
     if cors {
         builder = builder.header(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
     }

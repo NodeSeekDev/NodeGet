@@ -328,7 +328,10 @@ mod tests {
             vec![7_u64, 3, 12, 1, 9]
         );
         assert_eq!(
-            dispatch.iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>(),
+            dispatch
+                .iter()
+                .map(|(_, _, t)| t.as_str())
+                .collect::<Vec<_>>(),
             vec!["tok0", "tok1", "tok2", "tok3", "tok4"]
         );
     }
@@ -369,7 +372,9 @@ mod tests {
     async fn insert_many_exec_with_returning_works_on_sqlite() {
         use sea_orm::{ActiveValue, ConnectionTrait, Database, FromQueryResult, Set, Statement};
 
-        let db = Database::connect("sqlite::memory:").await.expect("connect in-memory sqlite");
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
 
         // 运行时 SQLite 版本必须 ≥ 3.35（RETURNING 子句最低要求）。
         // sqlx 的 `sqlite` feature 默认带 bundled，理论上捆绑 3.50.x；此处实跑确认，
@@ -441,10 +446,17 @@ mod tests {
         // 返回行数 == 插入数；id 由 DB 分配（连续与否不重要，关键是真实回读）
         assert_eq!(inserted.len() as i64, N, "RETURNING 应返回全部 {N} 行");
         let ids: Vec<i64> = inserted.iter().map(|m| m.id).collect();
-        assert_eq!(ids, (1..=N).collect::<Vec<_>>(), "SQLite 单条多值 INSERT rowid 连续递增");
+        assert_eq!(
+            ids,
+            (1..=N).collect::<Vec<_>>(),
+            "SQLite 单条多值 INSERT rowid 连续递增"
+        );
         // token 顺序与写入一致（dispatch[i] ↔ uuids[i] 配对正确性）
         assert_eq!(
-            inserted.iter().map(|m| m.token.as_str()).collect::<Vec<_>>(),
+            inserted
+                .iter()
+                .map(|m| m.token.as_str())
+                .collect::<Vec<_>>(),
             (0..N).map(|i| format!("tok{i}")).collect::<Vec<_>>()
         );
     }
