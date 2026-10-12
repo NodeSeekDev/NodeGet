@@ -28,6 +28,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::Service;
@@ -137,248 +138,61 @@ pub async fn run(config: &ServerConfig) {
         )
         .to_service_builder()
         .build(rpc_module, stop_handle.clone());
-    let jsonrpc_service_for_root = jsonrpc_service.clone();
     let landing_html = render_root_html(&config.server_uuid.to_string(), env!("CARGO_PKG_VERSION"));
 
-    let jsonrpc_service_for_rpc = jsonrpc_service_for_root.clone();
-    let landing_html_for_rpc = landing_html.clone();
+    // `/` 与 `/nodeget/rpc` 行为完全一致，共用同一个路由
+    let root_route = any({
+        let rpc_service = jsonrpc_service.clone();
+        move |req: axum::extract::Request| {
+            handle_rpc_root(rpc_service.clone(), landing_html.clone(), req)
+        }
+    });
 
     // 使用 ng-static::router::router() 提供静态文件和 WebDAV 路由
     let static_router = ng_static::router::router();
 
-    let app =
-        axum::Router::new()
-            .route(
-                "/",
-                any(move |req: axum::extract::Request| {
-                    let mut rpc_service = jsonrpc_service_for_root.clone();
-                    let landing_html = landing_html.clone();
-                    async move {
-                        if is_websocket_upgrade(req.headers()) {
-                            // 与下方非 WS 路径一致的错误兜底：upgrade/service 层抛错时
-                            // 返回 500 并记录日志，而非 unwrap() 致 handler task panic。
-                            return rpc_service.call(req).await.unwrap_or_else(|e| {
-                                tracing::error!(target: "server", error = %e, "RPC WebSocket upgrade call failed");
-                                axum::http::Response::builder()
-                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                                    .expect("Failed to build error response")
-                            });
-                        }
+    let app = axum::Router::new()
+        .route("/", root_route.clone())
+        .route("/nodeget/rpc", root_route)
+        // 合并 ng-static 的静态文件和 WebDAV 路由
+        .merge(static_router);
 
-                        if req.method() == axum::http::Method::GET {
-                            let Some(cache) = StaticCache::global() else {
-                                return axum::response::Response::builder()
-                                    .status(StatusCode::OK)
-                                    .header(
-                                        axum::http::header::CONTENT_TYPE,
-                                        "text/html; charset=utf-8",
-                                    )
-                                    .body(jsonrpsee::server::HttpBody::from(landing_html))
-                                    .expect("Failed to build HTML response");
-                            };
-                            if let Some(model) = cache.get_http_root()
-                                && model.enable
-                            {
-                                let path = req.uri().path().to_owned();
-                                let method = req.method().clone();
-                                let inm = req
-                                    .headers()
-                                    .get(axum::http::header::IF_NONE_MATCH)
-                                    .and_then(|v| v.to_str().ok());
-                                return serve_static_file(
-                                    &model.path,
-                                    &path,
-                                    model.cors,
-                                    &method,
-                                    inm,
-                                )
-                                .await;
-                            }
-                            return axum::response::Response::builder()
-                                .status(StatusCode::OK)
-                                .header(
-                                    axum::http::header::CONTENT_TYPE,
-                                    "text/html; charset=utf-8",
-                                )
-                                .body(jsonrpsee::server::HttpBody::from(landing_html))
-                                .expect("Failed to build HTML response");
-                        }
+    // 新的统一前缀 /nodeget/worker-route/*，与 /nodeget/static/* 保持一致。
+    // 旧的 /worker-route/* 保留用于过渡，后续版本将移除。
+    let app = add_worker_routes(app, "/worker-route");
+    let app = add_worker_routes(app, "/nodeget/worker-route");
 
-                        rpc_service.call(req).await.unwrap_or_else(|e| {
-                            tracing::error!(target: "server", error = %e, "RPC call failed");
-                            axum::http::Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                                .expect("Failed to build error response")
-                        })
-                    }
-                }),
-            )
-            .route(
-                "/nodeget/rpc",
-                any(move |req: axum::extract::Request| {
-                    let mut rpc_service = jsonrpc_service_for_rpc.clone();
-                    let landing_html = landing_html_for_rpc.clone();
-                    async move {
-                        if is_websocket_upgrade(req.headers()) {
-                            // 与下方非 WS 路径一致的错误兜底：upgrade/service 层抛错时
-                            // 返回 500 并记录日志，而非 unwrap() 致 handler task panic。
-                            return rpc_service.call(req).await.unwrap_or_else(|e| {
-                                tracing::error!(target: "server", error = %e, "RPC WebSocket upgrade call failed");
-                                axum::http::Response::builder()
-                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                                    .expect("Failed to build error response")
-                            });
-                        }
-
-                        if req.method() == axum::http::Method::GET {
-                            let Some(cache) = StaticCache::global() else {
-                                return axum::response::Response::builder()
-                                    .status(StatusCode::OK)
-                                    .header(
-                                        axum::http::header::CONTENT_TYPE,
-                                        "text/html; charset=utf-8",
-                                    )
-                                    .body(jsonrpsee::server::HttpBody::from(landing_html))
-                                    .expect("Failed to build HTML response");
-                            };
-                            if let Some(model) = cache.get_http_root()
-                                && model.enable
-                            {
-                                let path = req.uri().path().to_owned();
-                                let method = req.method().clone();
-                                let inm = req
-                                    .headers()
-                                    .get(axum::http::header::IF_NONE_MATCH)
-                                    .and_then(|v| v.to_str().ok());
-                                return serve_static_file(
-                                    &model.path,
-                                    &path,
-                                    model.cors,
-                                    &method,
-                                    inm,
-                                )
-                                .await;
-                            }
-                            return axum::response::Response::builder()
-                                .status(StatusCode::OK)
-                                .header(
-                                    axum::http::header::CONTENT_TYPE,
-                                    "text/html; charset=utf-8",
-                                )
-                                .body(jsonrpsee::server::HttpBody::from(landing_html))
-                                .expect("Failed to build HTML response");
-                        }
-
-                        rpc_service.call(req).await.unwrap_or_else(|e| {
-                            tracing::error!(target: "server", error = %e, "RPC call failed");
-                            axum::http::Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                                .expect("Failed to build error response")
-                        })
-                    }
-                }),
-            )
-            // 合并 ng-static 的静态文件和 WebDAV 路由
-            .merge(static_router)
-            .route(
-                "/worker-route/{route_name}",
-                any(
-                    |Path(route_name): Path<String>, req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            .route(
-                "/worker-route/{route_name}/",
-                any(
-                    |Path(route_name): Path<String>, req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            .route(
-                "/worker-route/{route_name}/{*path}",
-                any(
-                    |Path((route_name, _path)): Path<(String, String)>,
-                     req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            // 新的统一前缀 /nodeget/worker-route/*，与 /nodeget/static/* 保持一致。
-            // 旧的 /worker-route/* 保留用于过渡，后续版本将移除。
-            .route(
-                "/nodeget/worker-route/{route_name}",
-                any(
-                    |Path(route_name): Path<String>, req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            .route(
-                "/nodeget/worker-route/{route_name}/",
-                any(
-                    |Path(route_name): Path<String>, req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            .route(
-                "/nodeget/worker-route/{route_name}/{*path}",
-                any(
-                    |Path((route_name, _path)): Path<(String, String)>,
-                     req: axum::extract::Request| async move {
-                        handle_js_worker_route(route_name, req).await
-                    },
-                ),
-            )
-            // Terminal WebSocket 路由（独立 state）
-            .merge(ng_terminal::router())
-            .fallback(any(move |req: axum::extract::Request| {
-                let mut rpc_service = jsonrpc_service.clone();
-                async move {
-                    if is_websocket_upgrade(req.headers()) {
-                        return rpc_service.call(req).await.unwrap_or_else(|e| {
-                            tracing::error!(target: "server", error = %e, "RPC call failed");
-                            axum::http::Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                                .expect("Failed to build error response")
-                        });
-                    }
-                    if let Some(cache) = StaticCache::global()
-                        && let Some(model) = cache.get_http_root()
-                    {
-                        let path = req.uri().path().to_owned();
-                        let method = req.method().clone();
-                        let inm = req
-                            .headers()
-                            .get(axum::http::header::IF_NONE_MATCH)
-                            .and_then(|v| v.to_str().ok());
-                        return serve_static_file(&model.path, &path, model.cors, &method, inm)
-                            .await;
-                    }
-                    rpc_service.call(req).await.unwrap_or_else(|e| {
-                        tracing::error!(target: "server", error = %e, "RPC call failed");
-                        axum::http::Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
-                            .expect("Failed to build error response")
-                    })
+    let app = app
+        // Terminal WebSocket 路由（独立 state）
+        .merge(ng_terminal::router())
+        .fallback(any(move |req: axum::extract::Request| {
+            let mut rpc_service = jsonrpc_service.clone();
+            async move {
+                if is_websocket_upgrade(req.headers()) {
+                    return call_rpc(&mut rpc_service, req, "RPC call failed").await;
                 }
-            }));
+                if let Some(cache) = StaticCache::global()
+                    && let Some(model) = cache.get_http_root()
+                {
+                    let path = req.uri().path().to_owned();
+                    let method = req.method().clone();
+                    let inm = req
+                        .headers()
+                        .get(axum::http::header::IF_NONE_MATCH)
+                        .and_then(|v| v.to_str().ok());
+                    return serve_static_file(&model.path, &path, model.cors, &method, inm).await;
+                }
+                call_rpc(&mut rpc_service, req, "RPC call failed").await
+            }
+        }));
 
     ng_crontab::init_crontab_worker();
     debug!(target: "server", "Crontab worker initialized");
 
-    #[cfg(not(target_os = "windows"))]
-    let mut unix_server_task: Option<tokio::task::JoinHandle<()>> = None;
-    #[cfg(not(target_os = "windows"))]
-    let mut unix_socket_path: Option<String> = None;
+    // Unix Socket 服务；未启用、绑定失败、或在 Windows 上时为 None
+    // Windows 上不会进入下面的启动代码，变量不会被赋值，故压掉 unused_mut
+    #[cfg_attr(target_os = "windows", allow(unused_mut))]
+    let mut unix_server: Option<UnixSocketServer> = None;
 
     #[cfg(not(target_os = "windows"))]
     if config.enable_unix_socket.unwrap_or(false) {
@@ -390,13 +204,16 @@ pub async fn run(config: &ServerConfig) {
         match bind_unix_listener(socket_path.as_str()).await {
             Ok(unix_listener) => {
                 let unix_app = app.clone();
-                unix_socket_path = Some(socket_path.clone());
-                unix_server_task = Some(tokio::spawn(async move {
+                let task = tokio::spawn(async move {
                     if let Err(e) = axum::serve(unix_listener, unix_app.into_make_service()).await {
                         tracing::error!(target: "server", error = %e, "Unix socket server stopped with error");
                     }
-                }));
+                });
                 info!(target: "server", socket_path = %socket_path, "Unix socket listener started");
+                unix_server = Some(UnixSocketServer {
+                    task,
+                    path: socket_path,
+                });
             }
             Err(e) => {
                 tracing::error!(target: "server", error = %e, "Failed to bind unix socket listener");
@@ -425,41 +242,13 @@ pub async fn run(config: &ServerConfig) {
             biased;
             result = &mut serve_future => {
                 result.unwrap();
-                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global()
-                    .expect("DbRegistryManager not initialized at shutdown")
-                    .shutdown()
-                    .await;
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
-                #[cfg(not(target_os = "windows"))]
-                if let Some(task) = unix_server_task.take() {
-                    task.abort();
-                }
-                #[cfg(not(target_os = "windows"))]
-                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+                graceful_shutdown(stop_handle, unix_server).await;
             }
             () = get_reload_notify()
                 .expect("Reload notify not initialized")
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping TLS server...");
-                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global()
-                    .expect("DbRegistryManager not initialized at shutdown")
-                    .shutdown()
-                    .await;
-                // inline await stop_handle.shutdown()（与 stop 分支一致），而非 detached spawn。
-                // detached 会让旧 RPC handler 继续执行 ≤5s，与重新进入 run() 后重建的
-                // 全局缓存（TokenCache/MonitoringUuidCache/StaticCache 等）并发共享——
-                // inline 等待 drain 完成后再返回，消除该竞态窗口。
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
-                #[cfg(not(target_os = "windows"))]
-                if let Some(task) = unix_server_task.take() {
-                    task.abort();
-                }
-                #[cfg(not(target_os = "windows"))]
-                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+                graceful_shutdown(stop_handle, unix_server).await;
             }
         }
     } else {
@@ -480,42 +269,64 @@ pub async fn run(config: &ServerConfig) {
             biased;
             result = &mut serve_future => {
                 result.unwrap();
-                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global()
-                    .expect("DbRegistryManager not initialized at shutdown")
-                    .shutdown()
-                    .await;
-                #[cfg(not(target_os = "windows"))]
-                if let Some(task) = unix_server_task.take() {
-                    task.abort();
-                }
-                #[cfg(not(target_os = "windows"))]
-                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+                graceful_shutdown(stop_handle, unix_server).await;
             }
             () = get_reload_notify()
                 .expect("Reload notify not initialized")
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping server for restart...");
-                ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
-                ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
-                ng_db::DbRegistryManager::global()
-                    .expect("DbRegistryManager not initialized at shutdown")
-                    .shutdown()
-                    .await;
-                // inline await stop_handle.shutdown()（与 stop 分支一致），而非 detached spawn。
-                // detached 会让旧 RPC handler 继续执行 ≤5s，与重新进入 run() 后重建的
-                // 全局缓存并发共享——inline 等待 drain 完成后再返回，消除该竞态窗口。
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
-                #[cfg(not(target_os = "windows"))]
-                if let Some(task) = unix_server_task.take() {
-                    task.abort();
-                }
-                #[cfg(not(target_os = "windows"))]
-                cleanup_unix_socket_file(unix_socket_path.as_deref()).await;
+                graceful_shutdown(stop_handle, unix_server).await;
             }
         }
     }
+}
+
+/// 优雅关闭：写完内存中的数据，再依次收拾各个监听
+///
+/// 服务自己停止、配置热重载两种情况共用这套收尾。
+///
+/// 内部步骤：
+/// 1. [`flush_pending_data`]：监控数据和流量统计写入数据库
+/// 2. [`shutdown_db_registry`]：停止数据库注册处的清理任务
+/// 3. 等待 JSON-RPC 服务停止，最多 5 秒
+/// 4. 停止 Unix Socket 服务并删除 socket 文件（未启用时跳过）
+///
+/// - `stop_handle`：JSON-RPC 服务的停止句柄
+/// - `unix_server`：Unix Socket 服务（未启用时为 `None`）
+async fn graceful_shutdown(
+    stop_handle: jsonrpsee::server::StopHandle,
+    unix_server: Option<UnixSocketServer>,
+) {
+    flush_pending_data().await;
+    shutdown_db_registry().await;
+
+    // inline await stop_handle.shutdown()，而非 detached spawn。
+    // detached 会让旧 RPC handler 继续执行 ≤5s，与重新进入 run() 后重建的
+    // 全局缓存（TokenCache/MonitoringUuidCache/StaticCache 等）并发共享——
+    // inline 等待 drain 完成后再返回，消除该竞态窗口。
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), stop_handle.shutdown()).await;
+
+    if let Some(server) = unix_server {
+        server.task.abort();
+        cleanup_unix_socket_file(&server.path).await;
+    }
+}
+
+/// 把内存中尚未写库的监控数据和流量统计写入数据库
+///
+/// 服务关闭、配置热重载、自更新重启前都要调用：
+/// 进程重启或退出时内存中的数据不会保留。
+pub async fn flush_pending_data() {
+    ng_monitoring::monitoring_buffer::flush_and_shutdown().await;
+    ng_monitoring::traffic_stats::TrafficStats::flush_and_shutdown().await;
+}
+
+/// 停止数据库注册处的后台清理任务（最多等待 5 秒）
+pub async fn shutdown_db_registry() {
+    ng_db::DbRegistryManager::global()
+        .expect("DbRegistryManager not initialized at shutdown")
+        .shutdown()
+        .await;
 }
 
 /// 构建 ALPN 仅广播 `http/1.1` 的 TLS 配置
@@ -603,6 +414,86 @@ fn is_websocket_upgrade(headers: &axum::http::HeaderMap) -> bool {
     has_upgrade_header && has_connection_upgrade
 }
 
+/// 处理 `/` 与 `/nodeget/rpc` 的请求
+///
+/// 按顺序分流：
+/// 1. WebSocket 升级 → 交给 JSON-RPC 服务
+/// 2. GET → 静态根（已启用时）或着陆页
+/// 3. 其余方法 → 交给 JSON-RPC 服务
+///
+/// - `rpc_service`：jsonrpsee 的 tower service
+/// - `landing_html`：着陆页 HTML
+/// - req：原始 HTTP 请求
+async fn handle_rpc_root<S>(
+    mut rpc_service: S,
+    landing_html: String,
+    req: axum::extract::Request,
+) -> axum::http::Response<jsonrpsee::server::HttpBody>
+where
+    S: Service<
+            axum::extract::Request,
+            Response = axum::http::Response<jsonrpsee::server::HttpBody>,
+        >,
+    S::Error: std::fmt::Display,
+{
+    if is_websocket_upgrade(req.headers()) {
+        // 与下方非 WS 路径一致的错误兜底：upgrade/service 层抛错时
+        // 返回 500 并记录日志，而非 unwrap() 致 handler task panic。
+        return call_rpc(&mut rpc_service, req, "RPC WebSocket upgrade call failed").await;
+    }
+
+    if req.method() == axum::http::Method::GET {
+        // 静态根已启用时提供静态文件；缓存未初始化、未配置或未启用时一律返回着陆页
+        if let Some(cache) = StaticCache::global()
+            && let Some(model) = cache.get_http_root()
+            && model.enable
+        {
+            let path = req.uri().path().to_owned();
+            let method = req.method().clone();
+            let inm = req
+                .headers()
+                .get(axum::http::header::IF_NONE_MATCH)
+                .and_then(|v| v.to_str().ok());
+            return serve_static_file(&model.path, &path, model.cors, &method, inm).await;
+        }
+        return axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .body(jsonrpsee::server::HttpBody::from(landing_html))
+            .expect("Failed to build HTML response");
+    }
+
+    call_rpc(&mut rpc_service, req, "RPC call failed").await
+}
+
+/// 把请求交给 JSON-RPC 服务；服务层出错时记日志并返回 500
+///
+/// 避免 `unwrap()` 导致 handler task panic。
+///
+/// - `rpc_service`：jsonrpsee 的 tower service
+/// - req：原始 HTTP 请求
+/// - `failure_log`：出错时写入日志的说明文字
+async fn call_rpc<S>(
+    rpc_service: &mut S,
+    req: axum::extract::Request,
+    failure_log: &str,
+) -> axum::http::Response<jsonrpsee::server::HttpBody>
+where
+    S: Service<
+            axum::extract::Request,
+            Response = axum::http::Response<jsonrpsee::server::HttpBody>,
+        >,
+    S::Error: std::fmt::Display,
+{
+    rpc_service.call(req).await.unwrap_or_else(|e| {
+        tracing::error!(target: "server", error = %e, "{failure_log}");
+        axum::http::Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(jsonrpsee::server::HttpBody::from("Internal Server Error"))
+            .expect("Failed to build error response")
+    })
+}
+
 /// JS Worker HTTP 路由的请求头结构
 #[derive(Debug, Serialize)]
 struct JsRouteHeader {
@@ -643,6 +534,34 @@ struct JsRouteOutputHeader {
     name: String,
     /// 头字段值
     value: String,
+}
+
+/// 在 `prefix` 下注册 JS Worker HTTP 路由的三种网址形状
+///
+/// - `{prefix}/{route_name}`
+/// - `{prefix}/{route_name}/`
+/// - `{prefix}/{route_name}/{*path}`
+///
+/// 三者都只取 `route_name`，交给 [`worker_route`] 处理。
+fn add_worker_routes(app: axum::Router, prefix: &str) -> axum::Router {
+    app.route(&format!("{prefix}/{{route_name}}"), any(worker_route))
+        .route(&format!("{prefix}/{{route_name}}/"), any(worker_route))
+        .route(
+            &format!("{prefix}/{{route_name}}/{{*path}}"),
+            any(worker_route),
+        )
+}
+
+/// JS Worker HTTP 路由的入口：从网址中取出 `route_name` 后交给 [`handle_js_worker_route`]
+///
+/// 用 `HashMap` 收集所有路径参数，使带或不带 `{*path}` 的路由共用同一个处理函数；
+/// `{*path}` 的内容不使用，直接忽略。
+async fn worker_route(
+    Path(mut params): Path<HashMap<String, String>>,
+    req: axum::extract::Request,
+) -> axum::http::Response<jsonrpsee::server::HttpBody> {
+    let route_name = params.remove("route_name").unwrap_or_default();
+    handle_js_worker_route(route_name, req).await
 }
 
 /// 处理 JS Worker HTTP 路由请求
@@ -1062,6 +981,17 @@ fn build_static_error(
         .expect("Failed to build error response")
 }
 
+/// 已启动的 Unix Socket 服务
+///
+/// 类型在所有平台上都存在，但只有非 Windows 才会真正创建；
+/// Windows 上对应的 `Option` 始终为 `None`。
+struct UnixSocketServer {
+    /// 守着 socket 的后台任务
+    task: tokio::task::JoinHandle<()>,
+    /// socket 文件路径
+    path: String,
+}
+
 /// 绑定 Unix Socket 监听器
 ///
 /// 内部步骤：
@@ -1090,10 +1020,8 @@ async fn bind_unix_listener(path: &str) -> std::io::Result<tokio::net::UnixListe
 /// 清理 Unix Socket 文件
 ///
 /// 服务器关闭时调用，删除 socket 文件以避免残留。
-#[cfg(not(target_os = "windows"))]
-async fn cleanup_unix_socket_file(path: Option<&str>) {
+async fn cleanup_unix_socket_file(path: &str) {
     use std::io::ErrorKind;
-    let Some(path) = path else { return };
     match tokio::fs::remove_file(path).await {
         Ok(()) => {}
         Err(e) if e.kind() == ErrorKind::NotFound => {}
