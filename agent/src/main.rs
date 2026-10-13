@@ -21,6 +21,7 @@ use crate::rpc::handle_error_message;
 use crate::rpc::monitoring_data_report::{
     handle_dynamic_monitoring_data_report, handle_static_monitoring_data_report,
 };
+use crate::stop_signal::StopSignal;
 use crate::tasks::handle_task;
 use log::{Level, info};
 use ng_config::args_parse::agent::AgentArgs;
@@ -39,6 +40,7 @@ pub mod dry_run;
 mod monitoring;
 mod ntp;
 mod rpc;
+mod stop_signal;
 mod tasks;
 
 /// 命令行参数全局单例，启动时设置一次，之后只读。[`AGENT_ARGS`]
@@ -102,7 +104,9 @@ fn abort_handles(handles: &mut Vec<JoinHandle<()>>) {
 /// 4. 首次启动时查询 NTP 偏移
 /// 5. 建立与各服务器的 WebSocket 连接
 /// 6. 启动静态/动态监控数据上报及错误消息/任务处理循环
-/// 7. 监听 Ctrl+C 或热重载信号，前者退出、后者 abort 任务后重新进入循环
+/// 7. 监听停止信号或热重载信号，前者 abort 任务后退出、后者 abort 任务后重新进入循环
+///
+/// 停止信号：Unix 上是 `SIGTERM` 与 `SIGINT`，Windows 上是 Ctrl+C，见 [`StopSignal`]。
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // rustls crypto provider 只能安装一次；`tasks/ip.rs` 懒加载路径也会尝试安装并用
@@ -124,6 +128,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     AGENT_ARGS.set(args).unwrap();
+
+    // 停止信号监听器只创建一次，在整个热重载循环里复用：
+    // 每轮重新创建的话，两轮之间到达的信号会丢失
+    let mut stop_signal = StopSignal::install()
+        .map_err(|e| NodegetError::Other(format!("Failed to install stop signal handlers: {e}")))?;
 
     let mut logger_initialized = false;
 
@@ -180,9 +189,8 @@ async fn main() -> anyhow::Result<()> {
 
         tokio::select! {
             biased;
-            ctrl_c_result = tokio::signal::ctrl_c() => {
-                ctrl_c_result
-                    .map_err(|e| NodegetError::Other(format!("Failed to listen for ctrl_c: {e}")))?;
+            signal_name = stop_signal.recv() => {
+                info!("Stop signal received ({signal_name}), shutting down...");
                 abort_handles(&mut handles);
                 break;
             }
