@@ -382,15 +382,33 @@ where
         let take = chunk_size.min(batch.len());
         let sub_batch: Vec<A> = batch.drain(..take).collect();
         let count = sub_batch.len();
-        // on_conflict_do_nothing：并发同 (uuid_id, data_hash) 等冲突时，DB 跳过冲突行、
-        // 保留非冲突行，整子批不再因一条冲突而整体丢弃（见 REVIEW M11）。
-        // 生成 ON CONFLICT DO NOTHING（SQLite/PostgreSQL 均支持，匹配任意 UNIQUE 约束）。
-        match E::insert_many(sub_batch)
-            .on_conflict_do_nothing()
-            .exec(db)
-            .await
-        {
-            Ok(_) => inserted += count,
+        // on_conflict_do_nothing：并发冲突时跳过冲突行、保留非冲突行（见 REVIEW M11）。
+        // 注意：sea-orm 的 on_conflict_do_nothing() 用 entity 主键生成
+        // `ON CONFLICT (id) DO NOTHING`；TimescaleDB 场景（ng-db timescale.rs）把监控表
+        // 主键扩展成了 `(id, timestamp)`，`ON CONFLICT (id)` 无约束可匹配 → 整批报错
+        // "no unique or exclusion constraint matching the ON CONFLICT specification"。
+        // 因此 PostgreSQL 分支直接插入（id 为 identity 自增，并发同刻冲突概率极低；
+        // 真冲突时整子批报错丢弃，与 DO NOTHING 语义接近）。SQLite 表主键仍是 id，
+        // 保留 on_conflict_do_nothing 防重。
+        // on_conflict_do_nothing() 返回 TryInsert、普通 exec 返回 Insert，二者 Result
+        // 类型不同，故两分支各自 match 成统一的 Result<(), DbErr> 再合并处理。
+        let insert_result: Result<(), sea_orm::DbErr> = if is_sqlite {
+            match E::insert_many(sub_batch)
+                .on_conflict_do_nothing()
+                .exec(db)
+                .await
+            {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e),
+            }
+        } else {
+            match E::insert_many(sub_batch).exec(db).await {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e),
+            }
+        };
+        match insert_result {
+            Ok(()) => inserted += count,
             Err(e) => {
                 error!(
                     target: "monitoring",

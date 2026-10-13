@@ -87,6 +87,10 @@ export default [
                 link: '/guide/data-and-storage/monitoring-data.md'
             },
             {
+                text: 'TimescaleDB 部署',
+                link: '/guide/data-and-storage/timescaledb.md'
+            },
+            {
                 text: 'KV储存',
                 link: '/guide/data-and-storage/kv.md'
             }

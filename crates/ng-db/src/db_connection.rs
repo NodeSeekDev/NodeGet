@@ -5,6 +5,7 @@
 //! 服务端启动流程中由 `serve.rs` 调用 `init_db_connection`。
 
 use crate::set_db;
+use ng_core::config::TimescaleConfig;
 use ng_db_migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectOptions, ConnectionTrait, Database};
 use std::time::Duration;
@@ -27,6 +28,8 @@ pub struct DbConnectionConfig {
     pub max_lifetime_ms: u64,
     /// 连接池最大连接数
     pub max_connections: u32,
+    /// `TimescaleDB` 时序优化配置（可选，仅对安装 `timescaledb` 扩展的 `PostgreSQL` 生效）
+    pub timescale: Option<TimescaleConfig>,
 }
 
 impl Default for DbConnectionConfig {
@@ -38,6 +41,7 @@ impl Default for DbConnectionConfig {
             idle_timeout_ms: 60000,
             max_lifetime_ms: 1_800_000,
             max_connections: 10,
+            timescale: None,
         }
     }
 }
@@ -131,6 +135,10 @@ pub async fn init_db_connection(config: DbConnectionConfig) -> anyhow::Result<()
             .unwrap_or(-1);
         info!(target: "db", "SQLite PRAGMAs applied: WAL, synchronous=NORMAL, busy_timeout=5000, foreign_keys=ON, cache_size=-64000; auto_vacuum={}", auto_vacuum);
     }
+
+    // TimescaleDB: 若主库是安装了 timescaledb 扩展的 PostgreSQL，
+    // 将监控时序表转换为 hypertable 并配置压缩/保留策略（幂等）。
+    crate::timescale::setup_timescale_if_available(&db, config.timescale.as_ref()).await?;
 
     set_db(db);
     Ok(())

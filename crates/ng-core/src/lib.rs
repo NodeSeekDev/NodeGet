@@ -5,6 +5,7 @@
 //! Server 与 Agent 均依赖此 crate；通过 `for-server` / `for-agent`
 //! feature gate 控制各自可见的符号。
 
+pub mod config;
 pub mod error;
 pub mod js_result;
 pub mod monitoring;
