@@ -12,6 +12,7 @@ agent/
     ├── config_access.rs              # 全局 AGENT_CONFIG RwLock 的统一只读访问器
     ├── dry_run.rs                    # --dry-run：采集一轮静态+动态数据并打日志，不联网
     ├── ntp.rs                        # 启动时获取 NTP 偏移（ms），失败回退本地时间
+    ├── stop_signal.rs                # 停止信号监听（Unix：SIGTERM / SIGINT；Windows：Ctrl+C）
     ├── monitoring/
     │   ├── mod.rs                    # 全局 sysinfo/NVML 单例 + Instant 时间跟踪器
     │   ├── impls.rs                  # Monitor trait，组合 Static/DynamicMonitoringData，磁盘/网络速率计算
@@ -45,21 +46,24 @@ agent/
 
 ## 入口与启动流程
 
-`main` (`agent/src/main.rs:107`)，签名 `async fn main() -> anyhow::Result<()>>`：
+`main` (`agent/src/main.rs:111`)，签名 `async fn main() -> anyhow::Result<()>>`：
 
 1. 安装 rustls aws-lc-rs provider（幂等，吞 AlreadyInstalled 错误）。
 2. `AgentArgs::par()` 解析 CLI；处理 `--version`（打印后 `exit(0)`）。
-3. 进入主 `loop`，每次迭代对应一次“配置加载 → 运行 → reload/退出”周期：
-   - `parse_log_level` 把 `config.log_level: Option<String>` 转 `log::Level`，缺失或非法返回 `NodegetError::ParseError`（`main.rs:58`）。
+3. 创建 `StopSignal`（`stop_signal.rs`）：Unix 上注册 `SIGTERM` 与 `SIGINT`，Windows 上是 Ctrl+C。**只在循环之前创建一次**、整个热重载循环复用——每轮重建的话，两轮之间（重读配置的间隙）到达的信号会丢失；注册失败则 `main` 返回错误。
+4. 进入主 `loop`，每次迭代对应一次“配置加载 → 运行 → reload/退出”周期：
+   - `parse_log_level` 把 `config.log_level: Option<String>` 转 `log::Level`，缺失或非法返回 `NodegetError::ParseError`（`main.rs:60`）。
    - logger 初始化：若已初始化则只 `set_max_level`，否则 `simple_logger::init_with_level`。
-   - NTP 校时：仅在 `NTP_INIT_DONE` 为 `None` 时调用一次 `fetch_ntp_offset`，随后置 `true` —— reload 永不重新获取 NTP，避免时间跳变（`main.rs:148`）。
-   - `update_global_config`：若 `AGENT_CONFIG` 已初始化则写替换内部 `Arc`，否则 `OnceLock::set`；RwLock 中毒 -> `NodegetError::Other`（`main.rs:74`）。
+   - NTP 校时：仅在 `NTP_INIT_DONE` 为 `None` 时调用一次 `fetch_ntp_offset`，随后置 `true` —— reload 永不重新获取 NTP，避免时间跳变（`main.rs:157`）。
+   - `update_global_config`：若 `AGENT_CONFIG` 已初始化则写替换内部 `Arc`，否则 `OnceLock::set`；RwLock 中毒 -> `NodegetError::Other`（`main.rs:76`）。
    - `dry_run()`：先执行一轮本地静态+动态监控采集并打日志；若 `--dry-run` 为真则随后 `exit(0)`，否则继续正常启动。
    - `init_connections`：为每个 server 创建 per-server 广播通道并 spawn `connection_manager`。
    - `init_process_count_ticker`：通过 `std::sync::OnceLock` 保证全进程仅启动一次。
    - spawn 4 个服务循环到 `handles: Vec<JoinHandle>`：`handle_static_monitoring_data_report`、`handle_dynamic_monitoring_data_report`、`handle_error_message`、`handle_task`。
-   - `tokio::select! { biased; }` 在 `ctrl_c`（`abort_handles` 后 `break -> Ok(())`）与 `RELOAD_NOTIFY.notified()`（`abort_handles` 后继续 loop）之间选择。
-4. `abort_handles` (`main.rs:91`) 抽干并 `.abort()` 每个 JoinHandle，用于 reload/退出前清理。
+   - `tokio::select! { biased; }` 在停止信号（`stop_signal.recv()`，记录信号名；`abort_handles` 后 `break -> Ok(())`）与 `RELOAD_NOTIFY.notified()`（`abort_handles` 后继续 loop）之间选择，停止信号优先。
+5. `abort_handles` (`main.rs:93`) 抽干并 `.abort()` 每个 JoinHandle，用于 reload/退出前清理。
+
+退出时 `abort_handles` 只中止上面 4 个服务循环；任务执行中的**直接子进程**由 `kill_on_drop(true)` 在 runtime 被丢弃时终止（见 `tasks/execute.rs`）。命令自己再启动的子进程（例如 `bash -c "sleep 300; ..."` 里的 `sleep`）**不会**被终止，会被过继给 1 号进程继续运行——退出路径没有像超时路径那样对整个进程组发信号。若进程被 `SIGTERM` 直接杀死（没有停止信号处理），这些析构都不会运行，直接子进程也会变成孤儿进程。
 
 reload 触发点：`tasks/mod.rs` 中 EditConfig 成功后 `sleep 300ms` 再 `RELOAD_NOTIFY.notify_one()`；SelfUpdate 成功后 `sleep 300ms` 再触发平台重启（Windows `restart_process`，Unix `restart_process_with_exec_v`）。
 
@@ -67,7 +71,7 @@ reload 触发点：`tasks/mod.rs` 中 EditConfig 成功后 `sleep 300ms` 再 `RE
 
 | 名称 | 签名 | 行为 |
 |---|---|---|
-| `main` (`main.rs:107`) | `async fn main() -> anyhow::Result<()>` | 入口；完整流程见上节 |
+| `main` (`main.rs:111`) | `async fn main() -> anyhow::Result<()>` | 入口；完整流程见上节 |
 | `config_access::get_agent_config` (`config_access.rs:26`) | `pub fn get_agent_config() -> Result<Arc<AgentConfig>, NodegetError>` | Arc::clone 返回配置快照，O(1)；未初始化/RwLock 中毒 -> `NodegetError` |
 | `config_access::current_agent_uuid` (`config_access.rs:41`) | `pub fn current_agent_uuid() -> uuid::Uuid` | 直接读 `agent_uuid`；未初始化/中毒 **panic**（不可恢复不变式） |
 | `config_access::current_agent_uuid_string` (`config_access.rs:57`) | `pub fn current_agent_uuid_string() -> String` | 同上，返回 `.to_string()` |
@@ -92,7 +96,7 @@ reload 触发点：`tasks/mod.rs` 中 EditConfig 成功后 `sleep 300ms` 再 `RE
 
 ## 关键类型与常量
 
-### 全局单例（`main.rs:45`）
+### 全局单例（`main.rs:47`）
 
 | 名称 | 类型 | 说明 |
 |---|---|---|
@@ -187,11 +191,11 @@ reload 触发点：`tasks/mod.rs` 中 EditConfig 成功后 `sleep 300ms` 再 `RE
 
 ### 启动/重载生命周期
 
-`main.rs:130-194` 的单个 `loop` 每轮重新读取配置：`parse_log_level` → logger（已初始化则只调 `set_max_level`）→ 仅当 `NTP_INIT_DONE is None` 时获取 NTP（置 true）→ `update_global_config` → `dry_run()`（当前普通启动/重载路径也会执行一轮本地采集与日志输出；若 `--dry-run` 则随后退出）→ `init_connections` → `init_process_count_ticker` → spawn 4 个服务循环 → `tokio::select!{biased; ctrl_c, RELOAD_NOTIFY.notified()}`。reload 由 `tasks/mod.rs:563-569` 的 EditConfig-success 路径触发；SelfUpdate-success 则在短暂 sleep 后直接走平台重启路径。
+`main.rs:139-202` 的单个 `loop` 每轮重新读取配置：`parse_log_level` → logger（已初始化则只调 `set_max_level`）→ 仅当 `NTP_INIT_DONE is None` 时获取 NTP（置 true）→ `update_global_config` → `dry_run()`（当前普通启动/重载路径也会执行一轮本地采集与日志输出；若 `--dry-run` 则随后退出）→ `init_connections` → `init_process_count_ticker` → spawn 4 个服务循环 → `tokio::select!{biased; stop_signal.recv(), RELOAD_NOTIFY.notified()}`。reload 由 `tasks/mod.rs:563-569` 的 EditConfig-success 路径触发；SelfUpdate-success 则在短暂 sleep 后直接走平台重启路径。
 
 ### 全局配置单例
 
-`AGENT_CONFIG = OnceLock<RwLock<Arc<AgentConfig>>>` (`main.rs:47`)。`update_global_config` 写新 Arc 或 set OnceLock；大多数读经 `config_access::get_agent_config()`（读锁 + Arc::clone，O(1)）；热路径 uuid 访问器 panic-on-missing（无可恢复不变式）。当前仍有少数直接读 `AGENT_CONFIG` 的站点（如 `tasks/ip.rs` 读取 `ip_provider_or_default()`，`tasks/pty.rs` 读取 `terminal_shell` 与 `agent_uuid`）。每个上报 tick 都重新读一次配置，立即拾取 server 列表/token/interval 变化。
+`AGENT_CONFIG = OnceLock<RwLock<Arc<AgentConfig>>>` (`main.rs:49`)。`update_global_config` 写新 Arc 或 set OnceLock；大多数读经 `config_access::get_agent_config()`（读锁 + Arc::clone，O(1)）；热路径 uuid 访问器 panic-on-missing（无可恢复不变式）。当前仍有少数直接读 `AGENT_CONFIG` 的站点（如 `tasks/ip.rs` 读取 `ip_provider_or_default()`，`tasks/pty.rs` 读取 `terminal_shell` 与 `agent_uuid`）。每个上报 tick 都重新读一次配置，立即拾取 server 列表/token/interval 变化。
 
 ### 监控采集速率分母
 
@@ -231,7 +235,7 @@ reload 触发点：`tasks/mod.rs` 中 EditConfig 成功后 `sleep 300ms` 再 `RE
 
 ### rustls provider 初始化策略
 
-`main.rs:111` 启动时安装一次 aws-lc-rs `default_provider`，吞 `AlreadyInstalled` 错误（第三方依赖先安装不会 panic）。同样的幂等模式（`OnceLock`/`Once` + `let _ = install`）在 `http_request.rs:43`、`ping/http.rs:22`、`ip.rs:67` 惰性重复执行 —— reqwest 配的是 `rustls-no-provider`、tokio-tungstenite 配的是 `rustls-tls-webpki-roots`，任何 TLS 握手前必须安装 provider。
+`main.rs:115` 启动时安装一次 aws-lc-rs `default_provider`，吞 `AlreadyInstalled` 错误（第三方依赖先安装不会 panic）。同样的幂等模式（`OnceLock`/`Once` + `let _ = install`）在 `http_request.rs:43`、`ping/http.rs:22`、`ip.rs:67` 惰性重复执行 —— reqwest 配的是 `rustls-no-provider`、tokio-tungstenite 配的是 `rustls-tls-webpki-roots`，任何 TLS 握手前必须安装 provider。
 
 ### build.rs getrandom shim
 
@@ -289,7 +293,7 @@ Agent 作为客户端调用/接收的 JSON-RPC（方法名由 server 定义，js
 - `TaskEventResponse` 序列化有三级回退（完整 → 最小错误 ack → 手工 `json!()`）（`tasks/mod.rs:519`），确保序列化失败也不会让任务在 server 侧永久 pending。任何重构**必须**保留 always-ack 属性。
 - `self_update` (`self_update.rs:26`) 在所有失败路径（含 `canonical_exe_path` 为 None）返回 `false`。过去曾 `exit(1)`，导致一次坏任务杀掉整个 agent。**任务中绝不**终止进程，必须返回 false 当作普通任务错误上报。
 - NTP 偏移由 `(us/1000.0).round() as i64` 转 ms（`ntp.rs:72`），**非**整除 —— 小负偏移整除会向零截断并扭曲 ±几十 us 的 LAN 偏移。**保留**四舍五入。
-- NTP 每进程仅获取一次（`NTP_INIT_DONE` 守卫，`main.rs:148`）。reload **故意**不重新获取以避免偏移跳变；新增重取路径必须谨慎 gating。
+- NTP 每进程仅获取一次（`NTP_INIT_DONE` 守卫，`main.rs:157`）。reload **故意**不重新获取以避免偏移跳变；新增重取路径必须谨慎 gating。
 - 上报循环序列化失败时**跳过本轮**（`continue`）而非发 null（`monitoring_data_report.rs:107`）—— 发 null 会欺骗 server、掩盖真实失败。**保留** skip-on-serialize-fail。
 - Unix 子进程以 `process_group(0)` 启动（`execute.rs:60`，`#[cfg(unix)]` 属性在 `:59`），pgid == pid，使超时时 `libc::killpg(pgid, ...)` 能回收孙进程（如 shell fork 的子进程）。移除 `process_group(0)` 会让孙进程在超时后变孤儿；非 Unix 回退 `kill_on_drop`。
 

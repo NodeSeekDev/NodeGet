@@ -8,10 +8,11 @@
 server/
 ├── build.rs                          # 32-bit ARM 目标链接 libatomic（QuickJS 64-bit 原子操作）
 ├── src/
-│   ├── main.rs                       # 进程入口；Tokio runtime；CLI 分发；热重载外层循环
+│   ├── main.rs                       # 进程入口；Tokio runtime；CLI 分发；热重载外层循环；进程退出码
 │   ├── logging/mod.rs                # 四层 tracing 日志（console / JSON 文件 / 内存环 / 实时流）
 │   ├── rpc_nodeget.rs                # nodeget-server RPC 命名空间实现；合并所有 ng-* RPC 模块
 │   ├── rpc_timing.rs                 # RPC 计时中间件（call / batch / notification）
+│   ├── stop_signal.rs                # 停止信号监听（Unix：SIGTERM / SIGINT；Windows：Ctrl+C）
 │   └── subcommands/
 │       ├── mod.rs                    # 子命令模块声明 + init_or_skip_super_token 公共助手
 │       ├── serve.rs                  # serve 子命令；缓存初始化；trait 注入；axum 路由；shutdown
@@ -22,20 +23,20 @@ server/
 
 ## 入口与启动流程
 
-### `main()` — `server/src/main.rs:34`
+### `main()` — `server/src/main.rs:41`
 
-- 在 `dhat-heap` feature 启用时创建 `dhat::Profiler`（`ALLOC` 全局分配器在 `server/src/main.rs:26`）。
+- 在 `dhat-heap` feature 启用时创建 `dhat::Profiler`（`ALLOC` 全局分配器在 `server/src/main.rs:31`）。
 - 打印 `Starting nodeget-server`。
 - 构建多线程 Tokio runtime，使用 `global_queue_interval(3)` 与 `enable_all()`；构建失败直接 `panic`。
-- `block_on(async_main)`。
+- `block_on(async_main)`，其返回的 `ExitCode` 即进程退出码。
 
-### `async_main()` — `server/src/main.rs:59`
+### `async_main()` — `server/src/main.rs:68`
 
 按以下顺序执行：
 
 1. `ng_js_runtime::init_server_runtime(current Handle)` —— 先于一切业务初始化 JS runtime，确保 JS 全局对象在其它 crate 使用前就绪。
 2. 通过 `ServerArgs::par()` 解析 CLI。
-3. **Version 子命令短路**：在解析配置、初始化日志之前就打印 `NodeGetVersion::get()` 并 `return`（`server/src/main.rs:65`）。
+3. **Version 子命令短路**：在解析配置、初始化日志之前就打印 `NodeGetVersion::get()` 并 `return`（`server/src/main.rs:74`）。
 4. 设置 server config path 与 `init_reload_notify`。
 5. `ServerConfig::get_and_parse_config` —— 失败时 `eprintln` + `exit(1)`。
 6. `logging::init(config.logging)`。
@@ -44,17 +45,22 @@ server/
 
 | 子命令       | 处理                                                                                                                                                                       |
 |--------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `Serve`      | `init_db_connection` + 外层热重载循环调用 `serve::run`（见下文「热重载生命周期」）                                                                                          |
+| `Serve`      | `init_db_connection` + 创建 `StopSignal` + 外层热重载循环调用 `serve::run`（见下文「热重载生命周期」）                                                                       |
 | `Init`       | `init_db_connection` 后进入 init 子命令                                                                                                                                    |
 | `RollSuperToken` | `init_db_connection` 后进入 roll_super_token 子命令                                                                                                                    |
 | `GetUuid`    | 不初始化 DB，直接打印                                                                                                                                                       |
 | `Version`    | 打印版本（重复 arm，实际由前面短路处理，不可达）                                                                                                                             |
 
-### 热重载外层循环 — `server/src/main.rs:101`
+### 热重载外层循环 — `server/src/main.rs:120`
 
 ```
+let mut stop_signal = StopSignal::install()?;   // 循环之前创建一次，跨轮复用；失败则以失败状态退出
 loop {
-    serve::run(&config).await;          // 仅在 shutdown 或 reload 信号时返回
+    match serve::run(&config, &mut stop_signal).await {
+        Reload   => {}                          // 继续往下重新解析配置
+        Shutdown => return ExitCode::SUCCESS,   // 收到停止信号，收尾已完成
+        Failed   => return ExitCode::FAILURE,   // 服务自己异常停止，收尾已完成
+    }
     重新解析 config;
     set_server_config;
     ng_static::reload_static_path();
@@ -63,12 +69,14 @@ loop {
 }
 ```
 
+- 循环有两个出口：`Shutdown`（退出码 0）与 `Failed`（退出码 1）。进程不再靠被外部杀掉来结束。
+- `StopSignal` 只在循环之前创建一次：每轮重新创建的话，两轮之间（重读配置的间隙）到达的信号会丢失。
 - 配置解析失败时记录错误并 `continue`（**保留旧 config**）。
 - `set_server_config` 失败时记录错误并 `continue`。
 - 成功时记录 `Config hot reload applied`。
-- 此循环**无退出条件、无重试上限、无 backoff**（见「注意事项」）。
+- 配置有问题导致的 `continue` **无重试上限、无 backoff**（见「注意事项」）。
 
-### `init_db_connection()` — `server/src/main.rs:157`
+### `init_db_connection()` — `server/src/main.rs:185`
 
 - 在读锁下从全局配置读取 `[database]` 段。
 - 构建 `DbConnectionConfig`，对 `None` 字段填入默认值：`connect_timeout` / `acquire_timeout` / `idle_timeout` = **3000ms**，`max_lifetime` = **30000ms**，`max_connections` = **10**。
@@ -81,7 +89,7 @@ loop {
 | `init`            | `run` `server/src/subcommands/init.rs:11` | 调用 `init_or_skip_super_token().await`，记录 `Initialization completed, exiting`（target `server`），随后进程随 `async_main` 返回退出。     |
 | `get_uuid`        | `run` `server/src/subcommands/get_uuid.rs:8` | 同步打印 `config.server_uuid`；不初始化 DB。                                                                                                |
 | `roll_super_token`| `run` `server/src/subcommands/roll_super_token.rs:17` | `prompt_yes_or_no`（`server/src/subcommands/roll_super_token.rs:45`，接受 `y/yes`/`n/no`，无效输入重试）；确认后调用 `ng_token::super_token::roll_super_token`，Ok 时 stdout 打印凭据，Err 时 `panic`。 |
-| `serve`           | `run` `server/src/subcommands/serve.rs:51` | 见下文「serve::run」。                                                                                                                       |
+| `serve`           | `run` `server/src/subcommands/serve.rs:68` | 见下文「serve::run」。                                                                                                                       |
 
 ### `init_or_skip_super_token()` — `server/src/subcommands/mod.rs:22`
 
@@ -90,7 +98,7 @@ loop {
 - `None` 时以 target `server` 记录 `Super Token already exists, skipped`。
 - **凭据绝不走 tracing**（见「注意事项」）。
 
-### `serve::run()` — `server/src/subcommands/serve.rs:51`
+### `serve::run()` — `server/src/subcommands/serve.rs:68`
 
 1. 安装 rustls `aws_lc_rs` default_provider。
 2. `init_or_skip_super_token`。
@@ -101,34 +109,41 @@ loop {
 7. 可选 Unix socket（默认 path `/var/lib/nodeget.sock`）。
 8. `tokio::select!`（biased）等待 `serve_future` 完成或 `reload_notify` 信号。
 
-#### 路由组装 — `server/src/subcommands/serve.rs:144`
+#### 路由组装 — `server/src/subcommands/serve.rs:160`
 
 | 路径                                       | 处理                                                                                                                                                                                                              |
 |--------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `/`、`/nodeget/rpc`（任意 method）         | WS upgrade → `rpc_service.call`；否则 GET → 若 `StaticCache.get_http_root` 启用则 `serve_static_file`，否则 `landing_html`，否则 rpc call                                                                            |
+| `/`、`/nodeget/rpc`（任意 method）         | 两个路径共用同一个路由 `handle_rpc_root`：WS upgrade → `call_rpc`；否则 GET → 若 `StaticCache.get_http_root` 启用则 `serve_static_file`，否则 `landing_html`；其余 method → `call_rpc`                                  |
 | （merge）                                  | `ng_static::router::router()`（静态文件 + WebDAV）                                                                                                                                                                 |
-| `/worker-route/...`、`/nodeget/worker-route/...` | 每个前缀 3 个变体（bare、trailing slash、`{*path}`）→ `handle_js_worker_route`                                                                                                                                       |
+| `/worker-route/...`、`/nodeget/worker-route/...` | `add_worker_routes` 为每个前缀注册 3 个变体（bare、trailing slash、`{*path}`），统一经 `worker_route` 取出 `route_name` → `handle_js_worker_route`                                                                    |
 | （merge）                                  | `ng_terminal::router()`                                                                                                                                                                                           |
-| `.fallback()`                              | WS upgrade → rpc；否则 `StaticCache.get_http_root` → `serve_static_file`，否则 rpc                                                                                                                                  |
+| `.fallback()`                              | WS upgrade → `call_rpc`；否则 `StaticCache.get_http_root` → `serve_static_file`，否则 `call_rpc`                                                                                                                    |
 
-所有 `rpc_service.call` 错误返回 500 + 记录日志（**不** `unwrap` panic）。
+所有对 jsonrpsee service 的调用都经 `call_rpc`：出错返回 500 + 记录日志（**不** `unwrap` panic）。
 
-#### select 循环与 shutdown — `server/src/subcommands/serve.rs:407`
+#### select 循环与 shutdown — `server/src/subcommands/serve.rs:245`
 
 - `tls_enabled = tls_cert.is_some() && tls_key.is_some()`。TLS 分支使用 `axum_server::bind_rustls` + `build_http1_only_tls_config`（加载失败 `panic`）。明文分支使用 `TcpListener::bind`（失败 `panic`）+ `axum::serve` 配合 `into_make_service_with_connect_info::<SocketAddr>`。
-- `tokio::select!` biased：
-  - `serve_future` 完成 → `monitoring_buffer::flush_and_shutdown` + `TrafficStats::flush_and_shutdown` + `DbRegistryManager.shutdown` + 5s 超时的 `stop_handle.shutdown` + abort unix task + 清理 socket 文件。
-  - `reload_notify` 触发 → 同样的 shutdown（含 `TrafficStats::flush_and_shutdown`），但 `stop_handle.shutdown` 改为**非阻塞 spawn**，使 `run()` 立即返回到 `main` 的热重载循环。
-- 两个分支对 `serve_future` 的结果都 `unwrap()`（见「注意事项」）。
+- `tokio::select!` biased，优先级从高到低（两个分支各一份，TLS 与明文写法相同）：
+  1. 停止信号（`stop_signal.recv()`）→ 记录信号名后 `graceful_shutdown`，返回 `ServeExit::Shutdown`。
+  2. `reload_notify` 触发 → 记录日志后 `graceful_shutdown`，返回 `ServeExit::Reload`。
+  3. `serve_future` 完成 → 监听循环正常情况下不会自己结束，结束了就是异常：`log_serve_stopped` 记录错误（带不带 I/O 错误都算）后 `graceful_shutdown`，返回 `ServeExit::Failed`。
+- 三种情况共用 `graceful_shutdown(unix_server)`（`server/src/subcommands/serve.rs:329`），依次执行：
+  1. `flush_pending_data`（`monitoring_buffer::flush_and_shutdown` + `TrafficStats::flush_and_shutdown`）；
+  2. `shutdown_db_registry`（停止 `DbRegistryManager` 的清理循环，最多 5s）；
+  3. abort Unix socket 任务并删除 socket 文件（未启用时跳过）。
+- `graceful_shutdown` **不**等待 jsonrpsee 的停止信号：`stop_channel()` 返回的 `_server_handle` 要到 `run()` 返回时才被丢弃，丢弃才会向 WebSocket 连接发出停止信号，在 `run()` 内部等它只会白等到超时。
+- 自更新重启（`rpc_nodeget.rs` 的 `self_update`）在 `execv` 前直接调用 `flush_pending_data` 与 `shutdown_db_registry`，不经过 `graceful_shutdown`。
+- `run()` 返回的 `ServeExit` 由 `main` 的热重载循环处理（见「热重载外层循环」）。
 
-#### Unix socket — `server/src/subcommands/serve.rs:379`
+#### Unix socket — `server/src/subcommands/serve.rs:214`
 
-- 仅当 `enable_unix_socket`（默认 `false`）开启；默认路径 `/var/lib/nodeget.sock`。
-- `bind_unix_listener`（`server/src/subcommands/serve.rs:1062`，创建父目录、移除已存在的 socket 文件、绑定 `UnixListener`）。
-- spawn axum serve；绑定失败仅记录日志，**不**阻止 TCP 服务。
-- shutdown 时通过 `cleanup_unix_socket_file`（`server/src/subcommands/serve.rs:1084`）移除 socket 文件。
+- 仅当 `enable_unix_socket`（默认 `false`）开启；默认路径 `/var/lib/nodeget.sock`。启动代码仅在非 Windows 上编译。
+- `bind_unix_listener`（`server/src/subcommands/serve.rs:1036`，创建父目录、移除已存在的 socket 文件、绑定 `UnixListener`）。
+- spawn axum serve，并把任务与路径封装为 `UnixSocketServer`（`server/src/subcommands/serve.rs:1022`）；该类型在所有平台都存在，Windows 上对应的 `Option` 始终为 `None`。绑定失败仅记录日志，**不**阻止 TCP 服务。
+- shutdown 时由 `graceful_shutdown` abort 该任务，并通过 `cleanup_unix_socket_file`（`server/src/subcommands/serve.rs:1057`）移除 socket 文件。
 
-#### TLS / ALPN — `build_http1_only_tls_config` `server/src/subcommands/serve.rs:517`
+#### TLS / ALPN — `build_http1_only_tls_config` `server/src/subcommands/serve.rs:372`
 
 - 读取 cert/key PEM，用 rustls `pki_types` 解析，构建无客户端认证的 `rustls::ServerConfig` + `single_cert`，再包装为 `axum_server::tls_rustls::RustlsConfig` 返回。
 - **强制** `alpn_protocols = [b"http/1.1"]`，避免 HTTP/2 协商开销（文档注释中提到 samply 下 HTTP/2 协商消耗 14–33% 的 tokio worker time）。
@@ -140,11 +155,11 @@ loop {
 | 项                                            | 行号 | 说明                                                                                                                                                                              |
 |-----------------------------------------------|------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `lint cfg`                                    | 7    | `#![warn(clippy::all, clippy::pedantic, clippy::nursery)]`；crate 级 allow：`cast_sign_loss`/`cast_precision_loss`/`cast_possible_truncation`/`similar_names`/`dead_code`。         |
-| `ALLOC`                                       | 26   | `#[cfg(feature="dhat-heap")] #[global_allocator]`，切换到 `dhat::Alloc` 用于堆 profile。                                                                                          |
-| `main`                                        | 34   | 见上。                                                                                                                                                                              |
-| `async_main`                                  | 59   | 见上。                                                                                                                                                                              |
-| `(hot-reload loop)`                           | 101  | 见上。                                                                                                                                                                              |
-| `init_db_connection`                          | 157  | 见上；从 poisoned lock 通过 `.expect` 恢复。                                                                                                                                       |
+| `ALLOC`                                       | 31   | `#[cfg(feature="dhat-heap")] #[global_allocator]`，切换到 `dhat::Alloc` 用于堆 profile。                                                                                          |
+| `main`                                        | 41   | 见上。                                                                                                                                                                              |
+| `async_main`                                  | 68   | 见上。                                                                                                                                                                              |
+| `(hot-reload loop)`                           | 120  | 见上。                                                                                                                                                                              |
+| `init_db_connection`                          | 185  | 见上；从 poisoned lock 通过 `.expect` 恢复。                                                                                                                                       |
 
 ### logging/mod.rs
 
@@ -195,16 +210,31 @@ loop {
 | `RpcServiceT::batch`          | 75   | 收集每条 batch 的 method（解析错误为 `'<invalid>'`），用 `,` 连接（或 `'<empty>'`）；记录 `rpc_kind='batch'`、methods、`elapsed_us`、size；level-gated 懒拼接。                                                          |
 | `RpcServiceT::notification`   | 120  | 记录 `rpc_kind='notification'`、method、`elapsed_us`；无 id（notification 无响应）。                                                                                                                  |
 
+### stop_signal.rs
+
+| 项                       | 行号 | 说明                                                                                                                                                            |
+|--------------------------|------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `StopSignal`             | 14   | 停止信号监听器。Unix 上持有 `SIGTERM` 与 `SIGINT` 两个信号流；Windows 上是空结构。在 `main` 里创建一次，跨热重载各轮复用。                                          |
+| `StopSignal::install`    | 31   | 注册信号处理（Unix 版）；注册之后进程不再按这些信号的默认动作立即终止，信号会排队等待 `recv` 取走。失败返回 I/O 错误，`main` 据此以失败状态退出。Windows 版在 45 行，无事可做。 |
+| `StopSignal::recv`       | 51   | 等待下一个停止信号并返回信号名（用于日志）。Unix 版同时等 `SIGTERM` 与 `SIGINT`；Windows 版（61 行）等 Ctrl+C，注册失败时永远等待，不当作收到信号。                  |
+
 ### subcommands/serve.rs（其余）
 
 | 项                                            | 行号  | 说明                                                                                                                                                                                                                               |
 |-----------------------------------------------|-------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `render_root_html`                            | 547   | 硬编码 HTML landing page，插值 `serv_uuid` 与 `serv_version`（`env! CARGO_PKG_VERSION`）；链接 `dash.nodeget.com`、`nodeget.com`、`github.com/nodeseekdev/nodeget`。                                                                                  |
-| `is_websocket_upgrade`                        | 578   | 检查 `Upgrade: websocket`（大小写不敏感）**且** `Connection` 含 `upgrade` 段（大小写不敏感）；用于 `/`、`/nodeget/rpc`、fallback 分支。                                                                                                          |
-| `JsRouteHeader / JsRouteInput / JsRouteOutput / JsRouteOutputHeader` | 597   | JS Worker HTTP 路由桥的 Serde 结构；`JsRouteInput` 带 method/url/headers/body_base64；`JsRouteOutput` 带 status/headers/body_base64；body 经 base64 跨 JS 边界。                                                                                |
-| `handle_js_worker_route`                      | 653   | 见下「JS Worker HTTP 路由管线」。                                                                                                                                                                                                     |
-| `guess_mime_type`                             | 886   | 文件扩展名 → MIME 静态映射；默认 `application/octet-stream`。                                                                                                                                                                       |
-| `serve_static_file`                           | 916   | 仅 GET/HEAD（否则 405 + `ALLOW: GET, HEAD, OPTIONS`）；空/`/` 路径 → `index.html`；`resolve_safe_file_path`（traversal 错误 400）；NotFound 目录回退 `<resolved>/index.html`；ETag = `"\"{mtime_secs}-{len}\""`（weak）；处理 `If-None-Match`（`*` 或逗号分隔、去 `W/`）→ 304 不读文件；HEAD 空 body；可选 CORS `Access-Control-Allow-Origin: *`。 |
+| `ServeExit`                                   | 42    | `run()` 的返回值：`Reload`（热重载，继续循环）、`Shutdown`（收到停止信号，进程正常退出）、`Failed`（服务自己异常停止，进程以失败状态退出）。均已完成收尾。 |
+| `render_root_html`                            | 402   | 硬编码 HTML landing page，插值 `serv_uuid` 与 `serv_version`（`env! CARGO_PKG_VERSION`）；链接 `dash.nodeget.com`、`nodeget.com`、`github.com/nodeseekdev/nodeget`。                                                                                  |
+| `is_websocket_upgrade`                        | 433   | 检查 `Upgrade: websocket`（大小写不敏感）**且** `Connection` 含 `upgrade` 段（大小写不敏感）；用于 `/`、`/nodeget/rpc`、fallback 分支。                                                                                                          |
+| `handle_rpc_root`                             | 461   | `/` 与 `/nodeget/rpc` 共用的入口：WS upgrade → `call_rpc`；GET → 静态根（已启用时）或 landing；其余 → `call_rpc`。                                                                                                                       |
+| `call_rpc`                                    | 510   | 把请求交给 jsonrpsee service；出错时记日志并返回 500，避免 handler task panic。日志说明文字由调用方传入。                                                                                                                              |
+| `add_worker_routes` / `worker_route`          | 580 / 593 | 前者在给定前缀下注册 bare、末尾斜杠、`{*path}` 三种路由；后者把所有路径参数收进 `HashMap`，只取 `route_name` 交给 `handle_js_worker_route`（`{*path}` 不使用）。                                                                    |
+| `graceful_shutdown`                           | 329   | 停止信号、服务自己停止、热重载三种情况共用的收尾，见上文「select 循环与 shutdown」。                                                                                                                                                |
+| `log_serve_stopped`                           | 342   | 记录监听循环意外结束的原因（带不带 I/O 错误都算异常）。 |
+| `flush_pending_data` / `shutdown_db_registry` | 353 / 359 | 前者刷写监控 buffer 与流量统计；后者停止 `DbRegistryManager` 的清理循环。`self_update` 重启前也直接调用这两个。                                                                                                                        |
+| `JsRouteHeader / JsRouteInput / JsRouteOutput / JsRouteOutputHeader` | 533   | JS Worker HTTP 路由桥的 Serde 结构；`JsRouteInput` 带 method/url/headers/body_base64；`JsRouteOutput` 带 status/headers/body_base64；body 经 base64 跨 JS 边界。                                                                                |
+| `handle_js_worker_route`                      | 616   | 见下「JS Worker HTTP 路由管线」。                                                                                                                                                                                                     |
+| `guess_mime_type`                             | 849   | 文件扩展名 → MIME 静态映射；默认 `application/octet-stream`。                                                                                                                                                                       |
+| `serve_static_file`                           | 879   | 仅 GET/HEAD（否则 405 + `ALLOW: GET, HEAD, OPTIONS`）；空/`/` 路径 → `index.html`；`resolve_safe_file_path`（traversal 错误 400）；NotFound 目录回退 `<resolved>/index.html`；ETag = `"\"{mtime_secs}-{len}\""`（weak）；处理 `If-None-Match`（`*` 或逗号分隔、去 `W/`）→ 304 不读文件；HEAD 空 body；可选 CORS `Access-Control-Allow-Origin: *`。 |
 | `build_http_error / build_static_error`       | 1023  | `text/plain` 错误响应；后者可选加 CORS 头以让浏览器可读。                                                                                                                                                                            |
 | `bind_unix_listener`                          | 1062  | `#[cfg(not(target_os="windows"))]`：创建父目录、移除已存在 socket（忽略 NotFound）、绑定 `UnixListener`。                                                                                                                                  |
 | `cleanup_unix_socket_file`                    | 1084  | shutdown 时移除 socket 文件；忽略 NotFound，其他警告。                                                                                                                                                                                |
@@ -226,7 +256,7 @@ loop {
 
 ### 热重载生命周期
 
-`serve::run` biased `select` 在 `serve_future` 完成与 `get_reload_notify().notified()` 之间。shutdown 时：flush `ng_monitoring::monitoring_buffer`、`DbRegistryManager.shutdown`、5s 超时 `stop_handle.shutdown()`、abort Unix socket 任务、移除 socket 文件。reload 时执行同样步骤，但 `stop_handle.shutdown()` **非阻塞 spawn**，使 `run()` 立即返回，让 `main` 的循环重新解析配置并重启。
+`serve::run` biased `select` 在停止信号（`StopSignal::recv`）、`get_reload_notify().notified()`、`serve_future` 完成三者之间，前者优先。三种情况共用 `graceful_shutdown`：flush `ng_monitoring::monitoring_buffer` 与流量统计、`DbRegistryManager.shutdown`、abort Unix socket 任务、移除 socket 文件。随后 `run()` 立即返回对应的 `ServeExit`：`Reload` 让 `main` 的循环重新解析配置并重启，`Shutdown` / `Failed` 让 `main` 返回退出码 0 / 1。`run()` 返回时 `_server_handle` 被丢弃，jsonrpsee 的 WebSocket 连接由此收到停止信号。
 
 ### Trait 注入接线
 
@@ -302,22 +332,22 @@ loop {
 
 ## 注意事项与陷阱
 
-- **维护者必须意识到 `server/src/main.rs:101` 的 Serve 分支是无限循环、无退出条件、无重试上限、无 backoff**。`serve::run` 仅在 shutdown 或 reload 信号时返回；一个不触发 reload 的真正致命错误会让循环空转，每轮重新解析配置。
-- **切勿假设配置热重载解析失败会停服**：`server/src/main.rs:117`（及 `:126` 的 `set_server_config` 失败）失败时 `continue`，立即以**旧** config 再次 `serve::run`。若坏配置持续存在，会无延迟热循环。
+- **维护者必须意识到 `server/src/main.rs:120` 的 Serve 循环只有两个出口：`ServeExit::Shutdown`（收到停止信号，退出码 0）与 `ServeExit::Failed`（监听循环异常停止，退出码 1）**。`Reload` 之后若配置解析失败会 `continue` 再来一轮，无重试上限、无 backoff。新增的退出路径必须先走完 `graceful_shutdown`，再返回对应的 `ServeExit`，不要在中途直接结束进程。
+- **切勿假设配置热重载解析失败会停服**：`server/src/main.rs:143`（及 `:152` 的 `set_server_config` 失败）失败时 `continue`，立即以**旧** config 再次 `serve::run`。若坏配置持续存在，会无延迟热循环。
 - **`server/src/rpc_nodeget.rs:356` 的 `self_update` 是远程代码执行路径**：URL 由用户提供的 `tag` 派生，下载并替换运行中的 server 可执行文件再 exec 新进程。虽 super-token 守卫，下载源（`ng_core::self_update::get_server_url`）与签名模型必须可信；release 源被攻破或下载链路上的 DNS/网络 MITM 即等于攻破 server。
 - **`server/src/rpc_nodeget.rs:485` 的 `exec_sql` 是完全信任 RPC**（trait 声明在 `:93`），在主 DB 上执行任意 SQL（委托 `ng_db::rpc::nodeget::exec_sql`）；SQLite 下 `ATTACH DATABASE` 升级为 server uid 下的任意 FS 读写。CLAUDE.md 文档化为**有意为之**；**切勿**放宽其权限，并在最小权限 uid 下运行 server。
-- **`server/src/subcommands/serve.rs:422`（TLS 分支）与 `:474`（明文分支）的 `select` 两侧都对 `serve_future` 结果 `unwrap()`**：若 `axum::serve` 中途返回 Err（如监听器失败），server 进程在 shutdown 期间 `panic`，外层 `main` 循环随后重启。属刻意 fail-fast，但确是硬 panic。
-- **`server/src/subcommands/serve.rs:121`：`RpcTimingMiddleware` 硬编码为 `tracing::Level::TRACE`**。RPC 计时日志在 TRACE 级别发出，运维若要看到须把 `rpc` target 设为 `trace`（或全局 `trace`），日志量很大，预期容易错位。
-- **`server/src/subcommands/serve.rs:402`：`config.ws_listener` 用 `parse().unwrap_or_else(panic)` 解析**。`config.toml` 中监听地址格式错误会在启动时直接 panic，无回退。
+- **`serve_future`（`axum::serve` / `axum_server`）一旦结束就按异常处理**：TLS 与明文两个 `select` 的 `serve_future` 分支都经 `log_serve_stopped`（`server/src/subcommands/serve.rs:342`）记录错误，走完 `graceful_shutdown` 后返回 `ServeExit::Failed`，进程以退出码 1 结束，**不会**被 `main` 循环自动重启——需要由外部（Docker 重启策略、systemd 等）拉起。监听端口绑定失败、TLS 配置加载失败等启动期错误仍是直接 `panic`。
+- **`server/src/subcommands/serve.rs:142`：`RpcTimingMiddleware` 硬编码为 `tracing::Level::TRACE`**。RPC 计时日志在 TRACE 级别发出，运维若要看到须把 `rpc` target 设为 `trace`（或全局 `trace`），日志量很大，预期容易错位。
+- **`server/src/subcommands/serve.rs:240`：`config.ws_listener` 用 `parse().unwrap_or_else(panic)` 解析**。`config.toml` 中监听地址格式错误会在启动时直接 panic，无回退。
 - **`server/src/logging/mod.rs:134`：`memory_log_capacity = 0` 会禁用内存日志层**（`MemoryLogLayer` 不安装），但 `MEMORY_LOG_CAPACITY` 仍被设为 0，`get_memory_logs()` 返回空。`nodeget-server_log` RPC 会静默返回 `[]`，**不**报错。
 - **`server/src/logging/mod.rs:768`：`StreamLogFilter` 必须作为 per-layer filter（`.with_filter`）使用，绝不可作为全局 subscriber filter**。在 Layered AND 逻辑下，全局 filter 在无订阅者时返回 false 会阻塞**所有**其他层（console、memory、json）。任何重构 subscriber init 的人都必须保留这一点。
-- **`server/src/subcommands/serve.rs:657`：JS Worker HTTP 路由请求 body 上限 `ROUTE_BODY_LIMIT_BYTES = 8 MiB`（超出 400），但响应 body 无上限**——返回超大 base64 body 的 JS worker 会完整缓冲进内存后才响应，可经此 OOM server。
-- **`server/src/subcommands/serve.rs:857`：`handle_js_worker_route` 只转发 `ALLOWED_RESPONSE_HEADERS` 白名单**。JS worker 设置的任何白名单外头部（自定义 `X-`、或被刻意阻断的 `Set-Cookie`/`Location`）会被静默丢弃，依赖这些头部的 worker 不会有清晰错误，看起来像是「坏掉」。
-- **`server/src/subcommands/serve.rs:1114`：`ServerPermissionChecker::check_token_limit` 返回的 future 借用调用方的 `TokenOrAuth`/scopes/permissions（lifetime `'a`）**。调用方必须把它们存活到 awaited future 完成（提前 drop 是编译期借用错误）。设计如此（避免 Vec clone），但约束了 `ng-db`/`ng-kv`/`ng-static` 等的调用模式。
+- **`server/src/subcommands/serve.rs:620`：JS Worker HTTP 路由请求 body 上限 `ROUTE_BODY_LIMIT_BYTES = 8 MiB`（超出 400），但响应 body 无上限**——返回超大 base64 body 的 JS worker 会完整缓冲进内存后才响应，可经此 OOM server。
+- **`server/src/subcommands/serve.rs:812`：`handle_js_worker_route` 只转发 `ALLOWED_RESPONSE_HEADERS` 白名单**。JS worker 设置的任何白名单外头部（自定义 `X-`、或被刻意阻断的 `Set-Cookie`/`Location`）会被静默丢弃，依赖这些头部的 worker 不会有清晰错误，看起来像是「坏掉」。
+- **`server/src/subcommands/serve.rs:1076`：`ServerPermissionChecker::check_token_limit` 返回的 future 借用调用方的 `TokenOrAuth`/scopes/permissions（lifetime `'a`）**。调用方必须把它们存活到 awaited future 完成（提前 drop 是编译期借用错误）。设计如此（避免 Vec clone），但约束了 `ng-db`/`ng-kv`/`ng-static` 等的调用模式。
 - **`server/src/rpc_nodeget.rs:517`：`get_modules()` 在进程级 `OnceLock` 缓存单个合并 `RpcModule` 并 clone**。该模块被共享（含 `JsWorkerServiceImpl` 的 JS→RPC 分发），**切勿**在 module context（类型为 `()`）里存每请求状态。缓存**永不**在热重载间失效——合并的命名空间只反映构建期链接的 crate。
-- **`server/src/main.rs:62`：`Version` 是特殊的提前返回子命令**，在 `async_main` 中于配置解析与日志初始化**之前**短路（`:65`）。新增到 Version 分支的代码不得依赖配置/日志就绪；`:145` 还有一个重复 arm（为完整性），但因提前返回而不可达。
+- **`server/src/main.rs:71`：`Version` 是特殊的提前返回子命令**，在 `async_main` 中于配置解析与日志初始化**之前**短路（`:74`）。新增到 Version 分支的代码不得依赖配置/日志就绪；`:171` 还有一个重复 arm（为完整性），但因提前返回而不可达。
 - **`server/src/subcommands/mod.rs:33`：`init_or_skip_super_token` 与 `roll_super_token` 把 Super Token + Root Password 打印到 stdout，正是为了避开 tracing**。任何对这些值做结构化 tracing 的人都会把凭据泄漏进可经 `nodeget-server_log` RPC 查询的内存日志缓冲与 JSON 日志文件。**绝不可** trace 凭据。
-- **`server/src/subcommands/serve.rs:407`：TLS 当且仅当 `tls_cert` 与 `tls_key` 同时为 `Some` 时启用**。只设置其一会**静默回退到明文 TCP**——一个会泄漏未加密流量的可能误配；仅设置一个时没有 warn。
+- **`server/src/subcommands/serve.rs:245`：TLS 当且仅当 `tls_cert` 与 `tls_key` 同时为 `Some` 时启用**。只设置其一会**静默回退到明文 TCP**——一个会泄漏未加密流量的可能误配；仅设置一个时没有 warn。
 - **`server/build.rs:8`：`build.rs` 仅在 `CARGO_CFG_TARGET_ARCH == "arm"` 时 emit `-latomic`**。其他同样缺 64-bit 原子的 32-bit 非 ARM 目标（如部分 RISC-V 或嵌入式）**不会**得到 `-latomic`，可能链接失败。该检查刻意狭窄，但交叉编译时值得知晓。
 - **`server/src/logging/mod.rs:873`：`StreamLogLayer.on_event` 用 `try_send`，订阅者 512-capacity `mpsc` 满时静默丢弃日志条目（`let _ = tx.try_send(...)`）**。慢的 `stream_log` 订阅者会无任何迹象地丢日志行；容量 **512** 在 `rpc_nodeget.rs::stream_log` 中设置。
 
