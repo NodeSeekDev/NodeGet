@@ -4,7 +4,7 @@
 //! 1. 初始化所有全局缓存和 trait 注入（依赖倒置）
 //! 2. 构建路由表：JSON-RPC、静态文件、WebDAV、JS Worker HTTP 路由、Terminal WebSocket
 //! 3. 启动 TCP 监听（可选 TLS）和 Unix Socket 监听
-//! 4. 监听配置热重载信号，优雅关闭后由 main 循环重启
+//! 4. 监听停止信号与配置热重载信号，优雅关闭后由 main 循环决定退出还是重启
 //!
 //! 同时包含所有 trait 注入的具体实现（ServerPermissionChecker、MonitoringUuidProvider 等），
 //! 这些结构体将 ng-* crate 的抽象接口桥接到 `ng_token` 的具体逻辑。
@@ -36,6 +36,17 @@ use tracing::{debug, error, info, warn};
 
 use crate::rpc_nodeget::get_modules;
 use crate::rpc_timing::RpcTimingMiddleware;
+use crate::stop_signal::StopSignal;
+
+/// [`run`] 返回的原因，决定 `main` 的循环下一步做什么
+pub enum ServeExit {
+    /// 配置热重载：重新解析配置后再次启动服务
+    Reload,
+    /// 收到停止信号：收尾已完成，进程应正常退出
+    Shutdown,
+    /// 服务自己异常停止：收尾已完成，进程应以失败状态退出
+    Failed,
+}
 
 /// 启动服务器主循环
 ///
@@ -46,10 +57,15 @@ use crate::rpc_timing::RpcTimingMiddleware;
 /// 4. 注入所有 trait providers（PermissionChecker、MonitoringUuidProvider 等）
 /// 5. 构建 RPC 模块和 axum 路由表
 /// 6. 启动 TCP（可选 TLS）+ Unix Socket 监听
-/// 7. 通过 `tokio::select!` 同时等待：服务器正常退出 或 热重载信号
+/// 7. 通过 `tokio::select!` 同时等待：停止信号、热重载信号、服务器自己停止
 /// 8. 退出前刷新 monitoring buffer 和流量统计、关闭 DB registry、清理 Unix socket 文件
+///
+/// - `config`：本轮使用的服务器配置
+/// - `stop_signal`：停止信号监听器，由 `main` 创建并在多轮之间复用
+///
+/// 返回值说明退出原因，见 [`ServeExit`]。
 #[allow(clippy::too_many_lines)]
-pub async fn run(config: &ServerConfig) {
+pub async fn run(config: &ServerConfig, stop_signal: &mut StopSignal) -> ServeExit {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     super::init_or_skip_super_token().await;
@@ -238,17 +254,25 @@ pub async fn run(config: &ServerConfig) {
             axum_server::bind_rustls(addr, tls_config).serve(app.into_make_service());
         tokio::pin!(serve_future);
 
+        // biased：停止信号优先于热重载，热重载优先于服务自己停止
         tokio::select! {
             biased;
-            result = &mut serve_future => {
-                result.unwrap();
+            signal_name = stop_signal.recv() => {
+                info!(target: "server", signal = signal_name, "Stop signal received, shutting down TLS server...");
                 graceful_shutdown(unix_server).await;
+                ServeExit::Shutdown
             }
             () = get_reload_notify()
                 .expect("Reload notify not initialized")
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping TLS server...");
                 graceful_shutdown(unix_server).await;
+                ServeExit::Reload
+            }
+            result = &mut serve_future => {
+                log_serve_stopped(result);
+                graceful_shutdown(unix_server).await;
+                ServeExit::Failed
             }
         }
     } else {
@@ -265,17 +289,25 @@ pub async fn run(config: &ServerConfig) {
         ));
         tokio::pin!(serve_future);
 
+        // biased：停止信号优先于热重载，热重载优先于服务自己停止
         tokio::select! {
             biased;
-            result = &mut serve_future => {
-                result.unwrap();
+            signal_name = stop_signal.recv() => {
+                info!(target: "server", signal = signal_name, "Stop signal received, shutting down server...");
                 graceful_shutdown(unix_server).await;
+                ServeExit::Shutdown
             }
             () = get_reload_notify()
                 .expect("Reload notify not initialized")
                 .notified() => {
                 info!(target: "server", "Config reload requested, stopping server for restart...");
                 graceful_shutdown(unix_server).await;
+                ServeExit::Reload
+            }
+            result = &mut serve_future => {
+                log_serve_stopped(result);
+                graceful_shutdown(unix_server).await;
+                ServeExit::Failed
             }
         }
     }
@@ -283,7 +315,7 @@ pub async fn run(config: &ServerConfig) {
 
 /// 优雅关闭：写完内存中的数据，再依次收拾各个监听
 ///
-/// 服务自己停止、配置热重载两种情况共用这套收尾。
+/// 收到停止信号、服务自己停止、配置热重载三种情况共用这套收尾。
 ///
 /// 内部步骤：
 /// 1. [`flush_pending_data`]：监控数据和流量统计写入数据库
@@ -301,6 +333,16 @@ async fn graceful_shutdown(unix_server: Option<UnixSocketServer>) {
     if let Some(server) = unix_server {
         server.task.abort();
         cleanup_unix_socket_file(&server.path).await;
+    }
+}
+
+/// 记录服务循环意外结束的原因
+///
+/// 监听循环正常情况下不会自己结束；结束了就是异常，无论带不带错误。
+fn log_serve_stopped(result: std::io::Result<()>) {
+    match result {
+        Ok(()) => error!(target: "server", "Server loop stopped unexpectedly"),
+        Err(e) => error!(target: "server", error = %e, "Server loop stopped with error"),
     }
 }
 

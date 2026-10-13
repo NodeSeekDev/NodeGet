@@ -15,12 +15,17 @@
 
 use ng_config::args_parse::server::{ServerArgs, ServerCommand};
 use ng_core::utils::version::NodeGetVersion;
+use std::process::ExitCode;
 use tracing::info;
+
+use crate::stop_signal::StopSignal;
+use crate::subcommands::serve::ServeExit;
 
 // 服务器专属模块（不属于任何 ng-* crate）
 mod logging;
 mod rpc_nodeget;
 mod rpc_timing;
+mod stop_signal;
 mod subcommands;
 
 #[cfg(feature = "dhat-heap")]
@@ -31,7 +36,9 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 ///
 /// 构建多线程 Tokio 运行时，然后在异步上下文中执行 [`async_main`]。
 /// - `global_queue_interval(3)`：多线程调度器全局队列轮询间隔，平衡延迟与吞吐
-fn main() {
+///
+/// 返回进程退出码：正常结束（含收到停止信号后的体面退出）为成功，服务异常停止为失败。
+fn main() -> ExitCode {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
     #[cfg(feature = "dhat-heap")]
@@ -45,7 +52,7 @@ fn main() {
         .build()
         .expect("Failed to build Tokio runtime");
 
-    runtime.block_on(async_main());
+    runtime.block_on(async_main())
 }
 
 /// 异步主逻辑：解析参数 → 初始化全局配置 → 按子命令分发
@@ -56,7 +63,9 @@ fn main() {
 /// 3. 设置配置文件路径、热重载信号通道
 /// 4. 解析配置文件并初始化全局 Config
 /// 5. 根据 `ServerCommand` 分发：Serve 进入热重载循环，其余为一次性子命令
-async fn async_main() {
+///
+/// 返回进程退出码，见 [`main`]。
+async fn async_main() -> ExitCode {
     ng_js_runtime::init_server_runtime(tokio::runtime::Handle::current());
 
     let args = ServerArgs::par();
@@ -65,7 +74,7 @@ async fn async_main() {
         if args.command == ServerCommand::Version {
             let version = NodeGetVersion::get();
             println!("{version}");
-            return;
+            return ExitCode::SUCCESS;
         }
     }
 
@@ -97,9 +106,26 @@ async fn async_main() {
     match args.command {
         ServerCommand::Serve { .. } => {
             init_db_connection().await;
-            // 热重载循环：serve 退出后重新解析配置，成功则重启服务
+            // 停止信号监听器只创建一次，在整个热重载循环里复用：
+            // 每轮重新创建的话，两轮之间到达的信号会丢失
+            let mut stop_signal = match StopSignal::install() {
+                Ok(stop_signal) => stop_signal,
+                Err(e) => {
+                    tracing::error!(target: "server", error = %e, "Failed to install stop signal handlers");
+                    return ExitCode::FAILURE;
+                }
+            };
+            // 热重载循环：serve 因热重载退出后重新解析配置，成功则重启服务；
+            // 收到停止信号或服务异常停止则结束循环并退出进程
             loop {
-                subcommands::serve::run(&config).await;
+                match subcommands::serve::run(&config, &mut stop_signal).await {
+                    ServeExit::Reload => {}
+                    ServeExit::Shutdown => {
+                        info!(target: "server", "Server stopped");
+                        return ExitCode::SUCCESS;
+                    }
+                    ServeExit::Failed => return ExitCode::FAILURE,
+                }
 
                 let reloaded_config =
                     match ng_config::config::server::ServerConfig::get_and_parse_config(
@@ -147,6 +173,8 @@ async fn async_main() {
             println!("{version}");
         }
     }
+
+    ExitCode::SUCCESS
 }
 
 /// 初始化数据库连接
